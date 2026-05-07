@@ -152,6 +152,7 @@
 
   <script>
     const state = { view: "activities" };
+    const API_BASE = "https://tdeawork.fangwl591021.workers.dev";
     const title = document.querySelector("#title");
     const content = document.querySelector("#content");
 
@@ -163,7 +164,7 @@
       .replaceAll("'", "&#039;");
 
     async function fetchJson(path) {
-      const res = await fetch(path, { headers: { accept: "application/json" } });
+      const res = await fetch(`${API_BASE}${path}`, { headers: { accept: "application/json" } });
       if (!res.ok) throw new Error("request failed");
       return res.json();
     }
