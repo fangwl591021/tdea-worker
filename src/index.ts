@@ -1,5 +1,5 @@
 type Env = {
-  DB: D1Database;
+  DB?: D1Database;
   ADMIN_EMAILS: string;
   ASSETS: Fetcher;
 };
@@ -42,6 +42,10 @@ async function requireAdmin(request: Request, env: Env) {
 }
 
 async function listActivities(env: Env, activeOnly = false) {
+  if (!env.DB) {
+    return json({ success: true, data: [] });
+  }
+
   const query = activeOnly
     ? "SELECT * FROM activities WHERE status = 'published' ORDER BY created_at DESC"
     : "SELECT * FROM activities ORDER BY created_at DESC";
@@ -53,6 +57,10 @@ async function listActivities(env: Env, activeOnly = false) {
 async function createActivity(request: Request, env: Env) {
   const guard = await requireAdmin(request, env);
   if (guard) return guard;
+
+  if (!env.DB) {
+    return json({ success: false, message: "Database is not configured" }, 503);
+  }
 
   const input = (await request.json()) as ActivityInput;
   const name = input.name?.trim();
@@ -84,6 +92,10 @@ async function createActivity(request: Request, env: Env) {
 }
 
 async function listAssociationMembers(env: Env) {
+  if (!env.DB) {
+    return json({ success: true, data: [] });
+  }
+
   const { results } = await env.DB.prepare(
     "SELECT * FROM association_members ORDER BY created_at DESC"
   ).all();
@@ -91,6 +103,10 @@ async function listAssociationMembers(env: Env) {
 }
 
 async function listVendorMembers(env: Env) {
+  if (!env.DB) {
+    return json({ success: true, data: [] });
+  }
+
   const { results } = await env.DB.prepare(
     "SELECT * FROM vendor_members ORDER BY created_at DESC"
   ).all();
@@ -100,6 +116,10 @@ async function listVendorMembers(env: Env) {
 async function updateAssociationMember(request: Request, env: Env, id: string) {
   const guard = await requireAdmin(request, env);
   if (guard) return guard;
+
+  if (!env.DB) {
+    return json({ success: false, message: "Database is not configured" }, 503);
+  }
 
   const input = await request.json() as Record<string, string>;
   await env.DB.prepare(
@@ -123,6 +143,10 @@ async function updateAssociationMember(request: Request, env: Env, id: string) {
 async function updateVendorMember(request: Request, env: Env, id: string) {
   const guard = await requireAdmin(request, env);
   if (guard) return guard;
+
+  if (!env.DB) {
+    return json({ success: false, message: "Database is not configured" }, 503);
+  }
 
   const input = await request.json() as Record<string, string>;
   await env.DB.prepare(
