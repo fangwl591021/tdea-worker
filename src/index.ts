@@ -19,7 +19,10 @@ const json = (data: unknown, status = 200) =>
     status,
     headers: {
       "content-type": "application/json; charset=utf-8",
-      "cache-control": "no-store"
+      "cache-control": "no-store",
+      "access-control-allow-origin": "*",
+      "access-control-allow-methods": "GET,POST,PUT,OPTIONS",
+      "access-control-allow-headers": "content-type,x-admin-email"
     }
   });
 
@@ -145,6 +148,17 @@ export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);
     const { pathname } = url;
+
+    if (request.method === "OPTIONS") {
+      return new Response(null, {
+        status: 204,
+        headers: {
+          "access-control-allow-origin": "*",
+          "access-control-allow-methods": "GET,POST,PUT,OPTIONS",
+          "access-control-allow-headers": "content-type,x-admin-email"
+        }
+      });
+    }
 
     if (request.method === "GET" && pathname === "/api/activities") {
       return listActivities(env);
