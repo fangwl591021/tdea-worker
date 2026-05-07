@@ -1,0 +1,13 @@
+name = "tdea-worker"
+main = "src/index.ts"
+compatibility_date = "2026-05-08"
+
+assets = { directory = "./public", binding = "ASSETS", not_found_handling = "single-page-application" }
+
+[[d1_databases]]
+binding = "DB"
+database_name = "tdea-db"
+database_id = "REPLACE_WITH_D1_DATABASE_ID"
+
+[vars]
+ADMIN_EMAILS = "admin@example.com"
