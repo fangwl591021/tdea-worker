@@ -1,4 +1,4 @@
-name = "tdea-worker"
+name = "tdeawork"
 main = "src/index.ts"
 compatibility_date = "2026-05-08"
 
