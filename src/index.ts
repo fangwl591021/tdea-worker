@@ -77,18 +77,20 @@ function constantTimeEqual(a: string, b: string) {
 }
 
 async function verifyLineSignature(rawBody: string, signature: string | null, channelSecret?: string) {
-  if (!signature || !channelSecret) return false;
+  const cleanSignature = signature?.trim();
+  const cleanSecret = channelSecret?.trim();
+  if (!cleanSignature || !cleanSecret) return false;
   const encoder = new TextEncoder();
   const key = await crypto.subtle.importKey(
     "raw",
-    encoder.encode(channelSecret),
+    encoder.encode(cleanSecret),
     { name: "HMAC", hash: "SHA-256" },
     false,
     ["sign"]
   );
   const digest = await crypto.subtle.sign("HMAC", key, encoder.encode(rawBody));
   const expected = btoa(String.fromCharCode(...new Uint8Array(digest)));
-  return constantTimeEqual(expected, signature);
+  return constantTimeEqual(expected, cleanSignature);
 }
 
 async function forwardToWebhook(rawBody: string, signature: string | null, env: Env) {
@@ -141,8 +143,8 @@ async function hubTest(env: Env) {
   const checks: Record<string, unknown> = {
     mode: "worker-only",
     env: {
-      LINE_CHANNEL_SECRET: Boolean(env.LINE_CHANNEL_SECRET),
-      LINE_CHANNEL_ACCESS_TOKEN: Boolean(env.LINE_CHANNEL_ACCESS_TOKEN),
+      LINE_CHANNEL_SECRET: Boolean(env.LINE_CHANNEL_SECRET?.trim()),
+      LINE_CHANNEL_ACCESS_TOKEN: Boolean(env.LINE_CHANNEL_ACCESS_TOKEN?.trim()),
       FORWARD_WEBHOOK_URL: Boolean(env.FORWARD_WEBHOOK_URL),
       ASSETS_BUCKET: Boolean(env.ASSETS_BUCKET)
     }
@@ -161,10 +163,10 @@ async function hubTest(env: Env) {
     }
   }
 
-  if (env.LINE_CHANNEL_ACCESS_TOKEN) {
+  if (env.LINE_CHANNEL_ACCESS_TOKEN?.trim()) {
     try {
       const response = await fetch("https://api.line.me/v2/bot/info", {
-        headers: { "authorization": `Bearer ${env.LINE_CHANNEL_ACCESS_TOKEN}` }
+        headers: { "authorization": `Bearer ${env.LINE_CHANNEL_ACCESS_TOKEN.trim()}` }
       });
       const body = await response.json().catch(() => ({}));
       checks.lineBot = { ok: response.ok, status: response.status, body };
