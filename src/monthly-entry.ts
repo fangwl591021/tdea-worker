@@ -30,12 +30,14 @@ type MonthlyConfig = {
   keyword?: string;
   month?: string;
   altText?: string;
+  detailBaseUrl?: string;
   pages?: MonthlyPage[];
   updatedAt?: string;
 };
 
 const monthlyKey = "flex/monthly-activity.json";
 const workerBaseUrl = "https://tdeawork.fangwl591021.workers.dev";
+const fixedKeyword = "TDEA每月活動";
 const headers = {
   "access-control-allow-origin": "*",
   "access-control-allow-methods": "GET,POST,PUT,OPTIONS",
@@ -54,7 +56,7 @@ function requireAdmin(request: Request, env: Env) {
 
 async function readMonthly(env: Env): Promise<MonthlyConfig> {
   const object = env.ASSETS_BUCKET ? await env.ASSETS_BUCKET.get(monthlyKey) : null;
-  if (!object) return { enabled: false, keyword: "TDEA每月活動", month: "", altText: "TDEA 每月活動", pages: [] };
+  if (!object) return { enabled: false, keyword: fixedKeyword, month: "", altText: "TDEA 每月活動", detailBaseUrl: "", pages: [] };
   const data = await object.json().catch(() => ({}));
   return normalizeConfig(data as MonthlyConfig);
 }
@@ -71,9 +73,10 @@ function normalizeConfig(config: MonthlyConfig): MonthlyConfig {
   const pages = Array.isArray(config.pages) ? config.pages : [];
   return {
     enabled: Boolean(config.enabled),
-    keyword: String(config.keyword || "TDEA每月活動").trim() || "TDEA每月活動",
+    keyword: fixedKeyword,
     month: String(config.month || "").trim(),
     altText: String(config.altText || "TDEA 每月活動").trim() || "TDEA 每月活動",
+    detailBaseUrl: String(config.detailBaseUrl || "").trim(),
     updatedAt: config.updatedAt,
     pages: pages.slice(0, 12).map((page, index) => ({
       id: String(page.id || crypto.randomUUID()),
@@ -84,8 +87,21 @@ function normalizeConfig(config: MonthlyConfig): MonthlyConfig {
       formUrl: String(page.formUrl || "").trim(),
       shareUrl: String(page.shareUrl || "").trim(),
       order: Number(page.order ?? index)
-    })).filter((page) => page.imageUrl || page.formUrl || page.detailText)
+    })).filter((page) => page.imageUrl || page.formUrl || page.detailText || page.detailUrl)
   };
+}
+
+function appendIdToUrl(baseUrl: string | undefined, pageId: string | undefined) {
+  const raw = String(baseUrl || "").trim();
+  if (!raw) return "";
+  const encoded = encodeURIComponent(String(pageId || ""));
+  if (raw.includes("{id}")) return raw.replaceAll("{id}", encoded);
+  return raw + (raw.includes("?") ? "&" : "?") + "id=" + encoded;
+}
+
+function detailUrlForPage(page: MonthlyPage, config: MonthlyConfig) {
+  const id = encodeURIComponent(String(page.id || ""));
+  return page.detailUrl || appendIdToUrl(config.detailBaseUrl, String(page.id || "")) || `${workerBaseUrl}/monthly-detail/${id}`;
 }
 
 function buildMonthlyFlex(config: MonthlyConfig) {
@@ -95,14 +111,13 @@ function buildMonthlyFlex(config: MonthlyConfig) {
     altText: normalized.altText || "TDEA 每月活動",
     contents: {
       type: "carousel",
-      contents: (normalized.pages || []).map((page) => buildMonthlyBubble(page))
+      contents: (normalized.pages || []).map((page) => buildMonthlyBubble(page, normalized))
     }
   };
 }
 
-function buildMonthlyBubble(page: MonthlyPage) {
-  const id = encodeURIComponent(String(page.id || ""));
-  const detailUri = page.detailUrl || `${workerBaseUrl}/monthly-detail/${id}`;
+function buildMonthlyBubble(page: MonthlyPage, config: MonthlyConfig) {
+  const detailUri = detailUrlForPage(page, config);
   const formUri = page.formUrl || workerBaseUrl;
   const shareUri = page.shareUrl || detailUri;
   return {
@@ -206,7 +221,7 @@ function rebuildRequest(request: Request, rawBody: string) {
 async function handleMonthlyWebhook(request: Request, env: Env, rawBody: string) {
   let payload: unknown;
   try { payload = JSON.parse(rawBody); } catch (_) { return null; }
-  const events = extractLineEvents(payload).filter((event) => normalizeKeyword(extractTriggerText(event)) === "TDEA每月活動");
+  const events = extractLineEvents(payload).filter((event) => normalizeKeyword(extractTriggerText(event)) === normalizeKeyword(fixedKeyword));
   if (!events.length) return null;
   const signature = request.headers.get("x-line-signature");
   if (!await verifyLineSignature(rawBody, signature, env.LINE_CHANNEL_SECRET)) return new Response("Invalid Signature", { status: 403, headers });
@@ -216,7 +231,7 @@ async function handleMonthlyWebhook(request: Request, env: Env, rawBody: string)
     ? buildMonthlyFlex(config) as Record<string, unknown>
     : { type: "text", text: "TDEA每月活動尚未發布，請稍後再試。" };
   const lineReplies = await Promise.all(events.map((event) => event.replyToken ? replyToLine(event.replyToken, [message], env) : Promise.resolve({ ok: false, status: 400, message: "Missing replyToken" })));
-  return json({ success: true, mode: "monthly-activity", matched: ["TDEA每月活動"], forwarded: false, lineReplies });
+  return json({ success: true, mode: "monthly-activity", matched: [fixedKeyword], forwarded: false, lineReplies });
 }
 
 async function monthlyDetail(env: Env, id: string) {
