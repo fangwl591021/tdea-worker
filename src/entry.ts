@@ -80,6 +80,11 @@ function parseUidPointKeyword(text: string) {
   return match?.[1] || "";
 }
 
+function hasPointRows(result: Record<string, unknown>) {
+  const data = result.data as { list?: unknown[] } | undefined;
+  return result.success === true && Array.isArray(data?.list) && data.list.length > 0;
+}
+
 async function replyToLine(replyToken: string, text: string, env: Env) {
   const token = env.LINE_CHANNEL_ACCESS_TOKEN?.trim();
   if (!token) return { ok: false, status: 503, message: "LINE token is not configured" };
@@ -91,30 +96,31 @@ async function replyToLine(replyToken: string, text: string, env: Env) {
   return { ok: response.ok, status: response.status, body: await response.text().catch(() => "") };
 }
 
-async function queryPointsByUid(lineUserId: string, env: Env) {
+async function wetwPointQuery(payload: Record<string, unknown>, env: Env) {
   const apiKey = env.WETW_POINT_API_KEY?.trim();
   if (!apiKey) return { success: false, code: "missing_api_key", message: "WETW_POINT_API_KEY is not configured" };
   const response = await fetch(`${pointApiBase}/query-user-point-list`, {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({
-      api_key: apiKey,
-      LINE_user_id: lineUserId,
-      shop_id: Number(env.WETW_SHOP_ID || 35),
-      point_type: env.WETW_POINT_TYPE || "system_point",
-      page: 1,
-      per_page: 5
-    })
+    body: JSON.stringify({ api_key: apiKey, ...payload, page: 1, per_page: 5 })
   });
   const body = await response.json().catch(() => ({ success: false, message: "Invalid JSON response" }));
   return { httpStatus: response.status, ...(body as Record<string, unknown>) };
+}
+
+async function queryPointsByUid(lineUserId: string, env: Env) {
+  const withShop = await wetwPointQuery({ LINE_user_id: lineUserId, shop_id: Number(env.WETW_SHOP_ID || 35) }, env);
+  if (hasPointRows(withShop) || withShop.success !== true) return withShop;
+
+  const uidOnly = await wetwPointQuery({ LINE_user_id: lineUserId }, env);
+  return { ...uidOnly, fallbackTried: true, firstQuery: { shop_id: Number(env.WETW_SHOP_ID || 35), message: withShop.message } };
 }
 
 function formatPointReply(result: Record<string, unknown>, uid: string) {
   if (result.success !== true) return `${uid} 點數查詢失敗：${String(result.message || result.code || "未知錯誤")}`;
   const data = result.data as { list?: Array<Record<string, unknown>> } | undefined;
   const list = Array.isArray(data?.list) ? data.list : [];
-  if (!list.length) return `${uid} 目前查不到點數紀錄。`;
+  if (!list.length) return `${uid} 會員存在，但目前查不到點數異動紀錄。\n\n已改用 UID 查詢，並已排除 point_type / shop_id 篩選；若仍為空，代表舊點數 API 沒有這位會員的點數流水紀錄。`;
   const balance = list[0].point_balance ?? "未提供";
   const rows = list.slice(0, 3).map((item) => `${item.created_at || ""} ${item.event_name || "點數異動"} ${item.get_point || 0} 點`).join("\n");
   return `${uid} 目前點數餘額：${balance}\n\n最近紀錄：\n${rows}`;
