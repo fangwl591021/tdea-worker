@@ -2,6 +2,7 @@ type Env = {
   DB?: D1Database;
   ADMIN_EMAILS: string;
   ASSETS: Fetcher;
+  ASSETS_BUCKET?: R2Bucket;
 };
 
 type ActivityInput = {
@@ -39,6 +40,80 @@ async function requireAdmin(request: Request, env: Env) {
   }
 
   return null;
+}
+
+function extensionFromType(type: string) {
+  const map: Record<string, string> = {
+    "image/jpeg": "jpg",
+    "image/png": "png",
+    "image/webp": "webp",
+    "image/gif": "gif",
+    "application/pdf": "pdf"
+  };
+  return map[type] ?? "bin";
+}
+
+async function uploadFile(request: Request, env: Env) {
+  const guard = await requireAdmin(request, env);
+  if (guard) return guard;
+
+  if (!env.ASSETS_BUCKET) {
+    return json({ success: false, message: "R2 bucket is not configured" }, 503);
+  }
+
+  const form = await request.formData();
+  const file = form.get("file");
+  const purpose = String(form.get("purpose") || "activity").replace(/[^a-z0-9_-]/gi, "").toLowerCase() || "activity";
+  const activityId = String(form.get("activityId") || "draft").replace(/[^a-z0-9_-]/gi, "").toLowerCase() || "draft";
+
+  if (!(file instanceof File)) {
+    return json({ success: false, message: "File is required" }, 400);
+  }
+
+  const allowedTypes = ["image/jpeg", "image/png", "image/webp", "image/gif", "application/pdf"];
+  if (!allowedTypes.includes(file.type)) {
+    return json({ success: false, message: "Unsupported file type" }, 400);
+  }
+
+  if (file.size > 10 * 1024 * 1024) {
+    return json({ success: false, message: "File is larger than 10MB" }, 400);
+  }
+
+  const key = `${purpose}/${activityId}/${crypto.randomUUID()}.${extensionFromType(file.type)}`;
+  await env.ASSETS_BUCKET.put(key, file.stream(), {
+    httpMetadata: {
+      contentType: file.type,
+      cacheControl: "public, max-age=31536000"
+    },
+    customMetadata: {
+      originalName: file.name
+    }
+  });
+
+  return json({
+    success: true,
+    key,
+    url: `/api/uploads/${encodeURIComponent(key)}`,
+    contentType: file.type,
+    size: file.size
+  }, 201);
+}
+
+async function getUploadedFile(env: Env, key: string) {
+  if (!env.ASSETS_BUCKET) {
+    return notFound();
+  }
+
+  const object = await env.ASSETS_BUCKET.get(key);
+  if (!object) {
+    return notFound();
+  }
+
+  const headers = new Headers();
+  object.writeHttpMetadata(headers);
+  headers.set("etag", object.httpEtag);
+  headers.set("cache-control", "public, max-age=31536000");
+  return new Response(object.body, { headers });
 }
 
 async function listActivities(env: Env, activeOnly = false) {
@@ -182,6 +257,15 @@ export default {
           "access-control-allow-headers": "content-type,x-admin-email"
         }
       });
+    }
+
+    if (request.method === "POST" && pathname === "/api/uploads") {
+      return uploadFile(request, env);
+    }
+
+    const uploadMatch = pathname.match(/^\/api\/uploads\/(.+)$/);
+    if (request.method === "GET" && uploadMatch) {
+      return getUploadedFile(env, decodeURIComponent(uploadMatch[1]));
     }
 
     if (request.method === "GET" && pathname === "/api/activities") {
