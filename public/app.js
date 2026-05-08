@@ -65,7 +65,7 @@
     const live = a.filter(x => x.status === "上架").length;
     const reg = a.reduce((s, x) => s + Number(x.reg || 0), 0);
     const chk = a.reduce((s, x) => s + Number(x.check || 0), 0);
-    return `<div class="grid stats">${stat("活動數", a.length)}${stat("上架中", live)}${stat("報名人數", reg)}${stat("簽到人數", chk)}</div><section class="panel"><div class="panel-head"><h2 class="panel-title">活動清單</h2><button class="btn" data-seed>匯入範例</button></div>${a.length ? activityTable(a) : empty("目前沒有活動")}</section>`;
+    return `<div class="grid stats">${stat("活動數", a.length)}${stat("上架中", live)}${stat("報名人數", reg)}${stat("簽到人數", chk)}</div><section class="panel"><div class="panel-head"><h2 class="panel-title">活動清單</h2><button class="btn" data-load-roster>載入名冊</button></div>${a.length ? activityTable(a) : empty("目前沒有活動")}</section>`;
   }
   function stat(label, value) { return `<div class="stat"><span>${label}</span><strong>${n(value)}</strong></div>`; }
   function activityTable(rows) {
@@ -145,12 +145,29 @@
     const ea = document.querySelector("#drawer-activity"); if (ea) ea.onsubmit = e => { e.preventDefault(); const d = Object.fromEntries(new FormData(ea)); const x = state.data.activities.find(r => r.id === d.id); if (x) Object.assign(x, { name: d.name, type: d.type, courseTime: d.courseTime, deadline: d.deadline, capacity: Number(d.capacity || 0), reg: Number(d.reg || 0), check: Number(d.check || 0), status: d.status, formUrl: d.formUrl }); state.drawer = ""; save(); render(); toast("活動已儲存"); };
     const mf = document.querySelector("#drawer-member"); if (mf) mf.onsubmit = e => { e.preventDefault(); const type = mf.dataset.type; const d = Object.fromEntries(new FormData(mf)); const rows = state.data[type]; const old = rows.find(r => r.id === d.id); const item = { ...d, id: d.id || uid() }; old ? Object.assign(old, item) : rows.unshift(item); state.drawer = ""; save(); render(); toast("名冊已儲存"); };
     const im = document.querySelector("#import-form"); if (im) im.onsubmit = e => { e.preventDefault(); const d = Object.fromEntries(new FormData(im)); const count = importRows(im.dataset.type, d.csv || ""); state.drawer = ""; render(); toast(`已導入 ${count} 筆資料`); };
-    const seed = document.querySelector("[data-seed]"); if (seed) seed.onclick = () => { state.data.association = [{ id: uid(), memberNo: "A001", identity: "理事", name: "王小明", gender: "男", qualification: "Y", note: "" }, { id: uid(), memberNo: "A002", identity: "會員", name: "陳美玲", gender: "女", qualification: "Y", note: "可協助活動報到" }]; state.data.vendor = [{ id: uid(), memberNo: "V001", companyName: "數位教育股份有限公司", taxId: "12345678", owner: "林先生", contact: "Amy", qualification: "Y", note: "" }]; save(); render(); toast("範例資料已匯入"); };
+    const loadRoster = document.querySelector("[data-load-roster]"); if (loadRoster) loadRoster.onclick = () => loadRosterSeed(true);
     const worker = document.querySelector("[data-worker]"); if (worker) worker.onclick = async () => { try { const r = await fetch(api + "/api/activities"); const j = await r.json(); toast(j.success ? "Worker API 連線正常" : "Worker API 回應異常"); } catch (_) { toast("Worker API 無法連線"); } };
     const exp = document.querySelector("[data-export]"); if (exp) exp.onclick = () => { navigator.clipboard.writeText(JSON.stringify(state.data, null, 2)); toast("備份 JSON 已複製"); };
     const copy = document.querySelector("[data-copy]"); if (copy) copy.onclick = () => { navigator.clipboard.writeText(location.href); toast("預覽網址已複製"); };
     const reset = document.querySelector("[data-reset]"); if (reset) reset.onclick = () => { const f = document.querySelector("#activity-form"); if (f) f.reset(); };
   }
+  async function loadRosterSeed(force = false) {
+    if (!force && (state.data.association.length || state.data.vendor.length)) return;
+    try {
+      const res = await fetch("roster.json", { cache: "no-store" });
+      if (!res.ok) return;
+      const seed = await res.json();
+      const association = Array.isArray(seed.association) ? seed.association : (seed.a || []).map(x => ({ id: "association-" + x[0], memberNo: x[0] || "", identity: x[1] || "", name: x[2] || "", gender: x[3] || "", qualification: x[4] || "Y", note: x[5] || "" }));
+      const vendor = Array.isArray(seed.vendor) ? seed.vendor : (seed.v || []).map(x => ({ id: "vendor-" + x[0], memberNo: x[0] || "", companyName: x[1] || "", taxId: x[2] || "", owner: x[3] || "", contact: x[4] || "", qualification: x[5] || "Y", note: x[6] || "" }));
+      if (!association.length && !vendor.length) return;
+      state.data.association = association;
+      state.data.vendor = vendor;
+      save();
+      render();
+      toast(`已載入名冊 ${association.length + vendor.length} 筆`);
+    } catch (_) {}
+  }
   function toast(text) { const el = document.querySelector("#toast"); if (!el) return; el.textContent = text; el.classList.add("show"); setTimeout(() => el.classList.remove("show"), 1800); }
   render();
+  loadRosterSeed();
 })();
