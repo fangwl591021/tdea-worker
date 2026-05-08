@@ -18,11 +18,28 @@ type ActivityInput = {
   formUrl?: string;
 };
 
+type LineEvent = {
+  type?: string;
+  replyToken?: string;
+  message?: { type?: string; text?: string };
+  postback?: { data?: string };
+};
+
+type KeywordRule = {
+  keyword: string;
+  aliases: string[];
+  altText: string;
+  messages: Array<Record<string, unknown>>;
+};
+
 const corsHeaders = {
   "access-control-allow-origin": "*",
   "access-control-allow-methods": "GET,POST,PUT,OPTIONS",
   "access-control-allow-headers": "content-type,x-admin-email,x-line-signature"
 };
+
+const publicBaseUrl = "https://tdeawork.fangwl591021.workers.dev";
+const pagesBaseUrl = "https://fangwl591021.github.io/tdea-worker/";
 
 const json = (data: unknown, status = 200) =>
   new Response(JSON.stringify(data), {
@@ -93,6 +110,153 @@ async function verifyLineSignature(rawBody: string, signature: string | null, ch
   return constantTimeEqual(expected, cleanSignature);
 }
 
+function normalizeKeyword(value: string) {
+  return value.trim().replace(/\s+/g, "").toUpperCase();
+}
+
+function flexMessage(altText: string, contents: Record<string, unknown>) {
+  return {
+    type: "flex",
+    altText,
+    contents
+  };
+}
+
+function tdeaMainFlex() {
+  return flexMessage("TDEA 會員專區", {
+    type: "bubble",
+    size: "mega",
+    header: {
+      type: "box",
+      layout: "vertical",
+      paddingAll: "20px",
+      backgroundColor: "#06C755",
+      contents: [
+        { type: "text", text: "TDEA 會員專區", weight: "bold", size: "xl", color: "#FFFFFF" },
+        { type: "text", text: "活動、會員與點數功能入口", size: "sm", color: "#E9FFF1", margin: "sm" }
+      ]
+    },
+    body: {
+      type: "box",
+      layout: "vertical",
+      spacing: "md",
+      contents: [
+        { type: "text", text: "請選擇要前往的服務。", wrap: true, color: "#344054", size: "sm" },
+        {
+          type: "button",
+          style: "primary",
+          color: "#06C755",
+          action: { type: "uri", label: "查看活動", uri: pagesBaseUrl }
+        },
+        {
+          type: "button",
+          style: "secondary",
+          action: { type: "message", label: "活動關鍵字", text: "TDEA活動" }
+        },
+        {
+          type: "button",
+          style: "secondary",
+          action: { type: "message", label: "使用說明", text: "TDEA說明" }
+        }
+      ]
+    }
+  });
+}
+
+function tdeaActivityFlex() {
+  return flexMessage("TDEA 活動資訊", {
+    type: "bubble",
+    body: {
+      type: "box",
+      layout: "vertical",
+      spacing: "md",
+      paddingAll: "20px",
+      contents: [
+        { type: "text", text: "TDEA 活動資訊", weight: "bold", size: "xl", color: "#111827" },
+        { type: "text", text: "活動查詢與報名頁會逐步搬到新版 Worker 系統。", wrap: true, color: "#667085", size: "sm" },
+        {
+          type: "button",
+          style: "primary",
+          color: "#06C755",
+          action: { type: "uri", label: "開啟活動頁", uri: pagesBaseUrl }
+        }
+      ]
+    }
+  });
+}
+
+function tdeaHelpText() {
+  return {
+    type: "text",
+    text: "TDEA 關鍵字：\nTDEA會員專區\nTDEA活動\nTDEA說明\n\n沒有 TDEA 前綴的訊息會交給原本系統處理。"
+  };
+}
+
+function builtInKeywordRules(): KeywordRule[] {
+  return [
+    {
+      keyword: "TDEA會員專區",
+      aliases: ["TDEA會員", "TDEA會員中心", "TDEA專區"],
+      altText: "TDEA 會員專區",
+      messages: [tdeaMainFlex()]
+    },
+    {
+      keyword: "TDEA活動",
+      aliases: ["TDEA活動查詢", "TDEA報名", "TDEA課程"],
+      altText: "TDEA 活動資訊",
+      messages: [tdeaActivityFlex()]
+    },
+    {
+      keyword: "TDEA說明",
+      aliases: ["TDEAHELP", "TDEA幫助"],
+      altText: "TDEA 關鍵字說明",
+      messages: [tdeaHelpText()]
+    }
+  ];
+}
+
+function extractLineEvents(payload: unknown): LineEvent[] {
+  if (!payload || typeof payload !== "object") return [];
+  const events = (payload as { events?: unknown }).events;
+  return Array.isArray(events) ? events as LineEvent[] : [];
+}
+
+function extractTriggerText(event: LineEvent) {
+  if (event.message?.type === "text" && event.message.text) return event.message.text;
+  if (event.postback?.data) return event.postback.data;
+  return "";
+}
+
+function findKeywordRule(text: string) {
+  const normalized = normalizeKeyword(text);
+  return builtInKeywordRules().find((rule) => {
+    const candidates = [rule.keyword, ...rule.aliases].map(normalizeKeyword);
+    return candidates.includes(normalized);
+  });
+}
+
+async function replyToLine(replyToken: string, messages: Array<Record<string, unknown>>, env: Env) {
+  const token = env.LINE_CHANNEL_ACCESS_TOKEN?.trim();
+  if (!token) {
+    return { ok: false, status: 503, message: "LINE token is not configured" };
+  }
+
+  const response = await fetch("https://api.line.me/v2/bot/message/reply", {
+    method: "POST",
+    headers: {
+      "authorization": `Bearer ${token}`,
+      "content-type": "application/json"
+    },
+    body: JSON.stringify({ replyToken, messages })
+  });
+
+  return {
+    ok: response.ok,
+    status: response.status,
+    body: await response.text().catch(() => "")
+  };
+}
+
 async function forwardToWebhook(rawBody: string, signature: string | null, env: Env) {
   if (!env.FORWARD_WEBHOOK_URL) {
     return { skipped: true, message: "FORWARD_WEBHOOK_URL is not configured" };
@@ -122,10 +286,34 @@ async function handleLineWebhook(request: Request, env: Env, ctx: ExecutionConte
     return new Response("Invalid Signature", { status: 403, headers: corsHeaders });
   }
 
+  let linePayload: unknown;
   try {
-    JSON.parse(rawBody);
+    linePayload = JSON.parse(rawBody);
   } catch (_) {
     return json({ success: false, message: "Invalid JSON" }, 400);
+  }
+
+  const events = extractLineEvents(linePayload);
+  const matches = events
+    .map((event) => ({ event, rule: findKeywordRule(extractTriggerText(event)) }))
+    .filter((match): match is { event: LineEvent; rule: KeywordRule } => Boolean(match.rule));
+
+  if (matches.length > 0) {
+    const lineReplies = await Promise.all(matches.map((match) => {
+      if (!match.event.replyToken) {
+        return Promise.resolve({ ok: false, status: 400, message: "Missing replyToken", keyword: match.rule.keyword });
+      }
+      return replyToLine(match.event.replyToken, match.rule.messages, env)
+        .then((result) => ({ ...result, keyword: match.rule.keyword }));
+    }));
+
+    return json({
+      success: true,
+      mode: "worker-keyword",
+      matched: matches.map((match) => match.rule.keyword),
+      forwarded: false,
+      lineReplies
+    });
   }
 
   ctx.waitUntil(
@@ -135,13 +323,15 @@ async function handleLineWebhook(request: Request, env: Env, ctx: ExecutionConte
   return json({
     success: true,
     mode: "worker-only",
+    matched: [],
     forwarded: Boolean(env.FORWARD_WEBHOOK_URL)
   });
 }
 
 async function hubTest(env: Env) {
   const checks: Record<string, unknown> = {
-    mode: "worker-only",
+    mode: "worker-only-with-tdea-keywords",
+    keywords: builtInKeywordRules().map((rule) => [rule.keyword, ...rule.aliases]),
     env: {
       LINE_CHANNEL_SECRET: Boolean(env.LINE_CHANNEL_SECRET?.trim()),
       LINE_CHANNEL_ACCESS_TOKEN: Boolean(env.LINE_CHANNEL_ACCESS_TOKEN?.trim()),
@@ -397,6 +587,10 @@ export default {
 
     if (request.method === "GET" && pathname === "/hub-test") {
       return hubTest(env);
+    }
+
+    if (request.method === "GET" && pathname === "/line-keywords") {
+      return json({ success: true, keywords: builtInKeywordRules().map((rule) => ({ keyword: rule.keyword, aliases: rule.aliases, altText: rule.altText })) });
     }
 
     if (request.method === "POST" && pathname === "/api/uploads") {
