@@ -38,6 +38,7 @@ type KeywordRule = {
 
 type PointQueryInput = {
   LINE_user_id?: string;
+  member_no?: string;
   shop_id?: number;
   point_type?: string;
   date_start?: string;
@@ -59,12 +60,23 @@ type PointInsertInput = {
   shop_remark?: string;
 };
 
+type RosterMember = {
+  memberNo: string;
+  role: string;
+  name: string;
+  gender: string;
+  qualification: string;
+  note: string;
+  lineUserId?: string;
+};
+
 const corsHeaders = {
   "access-control-allow-origin": "*",
   "access-control-allow-methods": "GET,POST,PUT,OPTIONS",
   "access-control-allow-headers": "content-type,x-admin-email,x-line-signature"
 };
 
+const workerBaseUrl = "https://tdeawork.fangwl591021.workers.dev";
 const pagesBaseUrl = "https://fangwl591021.github.io/tdea-worker/";
 const pointApiBase = "https://aiwe.cc/index.php/wp-json/wetw-point/v1";
 
@@ -177,7 +189,7 @@ function tdeaActivityFlex() {
 function tdeaHelpText() {
   return {
     type: "text",
-    text: "TDEA 關鍵字：\nTDEA會員專區\nTDEA活動\nTDEA點數\nTDEA說明\n\n沒有 TDEA 前綴的訊息會交給原本系統處理。"
+    text: "TDEA 關鍵字：\nTDEA會員專區\nTDEA活動\nTDEA點數\nTDEA點數+會員編號\nTDEA說明\n\n沒有 TDEA 前綴的訊息會交給原本系統處理。"
   };
 }
 
@@ -206,8 +218,11 @@ function findKeywordRule(text: string) {
   return builtInKeywordRules().find((rule) => [rule.keyword, ...rule.aliases].map(normalizeKeyword).includes(normalized));
 }
 
-function isPointQueryKeyword(text: string) {
-  return ["TDEA點數", "TDEA查點", "TDEA點數查詢", "TDEA紅利"].includes(normalizeKeyword(text));
+function parsePointQueryKeyword(text: string) {
+  const trimmed = text.trim();
+  const match = trimmed.match(/^TDEA\s*點數(?:\s*[+＋]\s*|\s+)?([A-Z]\d{7}|[A-Z]{1,2}\d{5,8})?$/i);
+  if (!match) return null;
+  return { memberNo: match[1]?.toUpperCase() || "" };
 }
 
 async function replyToLine(replyToken: string, messages: Array<Record<string, unknown>>, env: Env) {
@@ -239,6 +254,7 @@ async function queryMemberPoints(input: PointQueryInput, env: Env) {
     per_page: Math.min(Number(input.per_page || 20), 100)
   };
   if (input.LINE_user_id) payload.LINE_user_id = input.LINE_user_id;
+  else if (input.member_no) payload.LINE_user_id = input.member_no;
   if (input.shop_id || env.WETW_SHOP_ID) payload.shop_id = Number(input.shop_id || env.WETW_SHOP_ID);
   if (input.point_type) payload.point_type = input.point_type;
   if (input.date_start) payload.date_start = input.date_start;
@@ -265,20 +281,52 @@ async function insertMemberPoint(input: PointInsertInput, env: Env) {
   return wetwRequest("insert-user-point", payload, env);
 }
 
-function formatPointReply(result: Record<string, unknown>) {
+async function getRosterMember(memberNo: string): Promise<RosterMember | null> {
+  try {
+    const response = await fetch(`${workerBaseUrl}/roster.json`, { headers: { "cache-control": "no-cache" } });
+    const roster = await response.json() as { a?: unknown[][] };
+    const row = roster.a?.find((item) => String(item[0] || "").toUpperCase() === memberNo.toUpperCase());
+    if (!row) return null;
+    return {
+      memberNo: String(row[0] || ""),
+      role: String(row[1] || ""),
+      name: String(row[2] || ""),
+      gender: String(row[3] || ""),
+      qualification: String(row[4] || ""),
+      note: String(row[5] || ""),
+      lineUserId: String(row[6] || "") || undefined
+    };
+  } catch (_) {
+    return null;
+  }
+}
+
+function formatPointReply(result: Record<string, unknown>, label = "你的") {
   if (result.success !== true) {
-    return `點數查詢失敗：${String(result.message || result.code || "未知錯誤")}`;
+    return `${label}點數查詢失敗：${String(result.message || result.code || "未知錯誤")}`;
   }
   const data = result.data as { list?: Array<Record<string, unknown>>; pagination?: { total?: number } } | undefined;
   const list = Array.isArray(data?.list) ? data.list : [];
-  if (!list.length) return "目前查不到你的點數紀錄。";
+  if (!list.length) return `${label}目前查不到點數紀錄。`;
   const balance = list[0].point_balance ?? "未提供";
   const rows = list.slice(0, 3).map((item) => `${item.created_at || ""} ${item.event_name || "點數異動"} ${item.get_point || 0} 點`).join("\n");
-  return `你的目前點數餘額：${balance}\n\n最近紀錄：\n${rows}`;
+  return `${label}目前點數餘額：${balance}\n\n最近紀錄：\n${rows}`;
 }
 
-async function handlePointKeyword(event: LineEvent, env: Env) {
+async function handlePointKeyword(event: LineEvent, memberNo: string, env: Env) {
   if (!event.replyToken) return { ok: false, status: 400, message: "Missing replyToken" };
+  if (memberNo) {
+    const member = await getRosterMember(memberNo);
+    const queryId = member?.lineUserId || memberNo;
+    const result = await queryMemberPoints({ member_no: queryId, page: 1, per_page: 5 }, env) as Record<string, unknown>;
+    const label = member ? `${member.name}（${member.memberNo}）` : `${memberNo} `;
+    let text = formatPointReply(result, label);
+    if (member && !member.lineUserId && result.success !== true) {
+      text += "\n\n名冊有此會員，但目前名冊沒有 LINE userId 欄位；此查詢暫以會員編號送出。若舊系統不是用會員編號當登入 ID，就會查不到。";
+    }
+    return replyToLine(event.replyToken, [{ type: "text", text }], env);
+  }
+
   const lineUserId = event.source?.userId;
   if (!lineUserId) {
     return replyToLine(event.replyToken, [{ type: "text", text: "無法取得 LINE userId，請從一對一聊天再試一次。" }], env);
@@ -313,9 +361,11 @@ async function handleLineWebhook(request: Request, env: Env, ctx: ExecutionConte
   }
 
   const events = extractLineEvents(linePayload);
-  const pointEvents = events.filter((event) => isPointQueryKeyword(extractTriggerText(event)));
+  const pointEvents = events
+    .map((event) => ({ event, query: parsePointQueryKeyword(extractTriggerText(event)) }))
+    .filter((match): match is { event: LineEvent; query: { memberNo: string } } => Boolean(match.query));
   if (pointEvents.length > 0) {
-    const lineReplies = await Promise.all(pointEvents.map((event) => handlePointKeyword(event, env)));
+    const lineReplies = await Promise.all(pointEvents.map((match) => handlePointKeyword(match.event, match.query.memberNo, env)));
     return json({ success: true, mode: "worker-point-keyword", matched: ["TDEA點數"], forwarded: false, lineReplies });
   }
 
@@ -338,7 +388,7 @@ async function handleLineWebhook(request: Request, env: Env, ctx: ExecutionConte
 async function hubTest(env: Env) {
   const checks: Record<string, unknown> = {
     mode: "worker-only-with-tdea-keywords-and-points",
-    keywords: [...builtInKeywordRules().map((rule) => [rule.keyword, ...rule.aliases]), ["TDEA點數", "TDEA查點", "TDEA點數查詢", "TDEA紅利"]],
+    keywords: [...builtInKeywordRules().map((rule) => [rule.keyword, ...rule.aliases]), ["TDEA點數", "TDEA點數+會員編號", "TDEA查點", "TDEA點數查詢", "TDEA紅利"]],
     env: {
       LINE_CHANNEL_SECRET: Boolean(env.LINE_CHANNEL_SECRET?.trim()),
       LINE_CHANNEL_ACCESS_TOKEN: Boolean(env.LINE_CHANNEL_ACCESS_TOKEN?.trim()),
@@ -464,7 +514,7 @@ export default {
     if (request.method === "OPTIONS") return new Response(null, { status: 204, headers: corsHeaders });
     if (pathname === "/line-webhook") return handleLineWebhook(request, env, ctx);
     if (request.method === "GET" && pathname === "/hub-test") return hubTest(env);
-    if (request.method === "GET" && pathname === "/line-keywords") return json({ success: true, keywords: [...builtInKeywordRules().map((rule) => ({ keyword: rule.keyword, aliases: rule.aliases, altText: rule.altText })), { keyword: "TDEA點數", aliases: ["TDEA查點", "TDEA點數查詢", "TDEA紅利"], altText: "TDEA 點數查詢" }] });
+    if (request.method === "GET" && pathname === "/line-keywords") return json({ success: true, keywords: [...builtInKeywordRules().map((rule) => ({ keyword: rule.keyword, aliases: rule.aliases, altText: rule.altText })), { keyword: "TDEA點數", aliases: ["TDEA點數+會員編號", "TDEA查點", "TDEA點數查詢", "TDEA紅利"], altText: "TDEA 點數查詢" }] });
     if (request.method === "POST" && pathname === "/api/points/query") {
       const guard = await requireAdmin(request, env);
       if (guard) return guard;
