@@ -1,5 +1,6 @@
 (() => {
   const key = "tdea-manager-v3";
+  const apiBase = location.hostname.endsWith("github.io") ? "https://tdeawork.fangwl591021.workers.dev" : "";
 
   function load() {
     try { return JSON.parse(localStorage.getItem(key) || "{}"); } catch (_) { return {}; }
@@ -7,6 +8,36 @@
 
   function save(data) {
     localStorage.setItem(key, JSON.stringify(data));
+  }
+
+  function getAdminEmail() {
+    let email = localStorage.getItem("tdea-admin-email") || "";
+    if (!email) {
+      email = prompt("請輸入管理者 Email，用於上傳活動圖片")?.trim() || "";
+      if (email) localStorage.setItem("tdea-admin-email", email);
+    }
+    return email;
+  }
+
+  async function uploadPoster(file, activityId) {
+    const email = getAdminEmail();
+    if (!email) throw new Error("未輸入管理者 Email");
+
+    const body = new FormData();
+    body.append("file", file);
+    body.append("purpose", "posters");
+    body.append("activityId", activityId || "draft");
+
+    const response = await fetch(`${apiBase}/api/uploads`, {
+      method: "POST",
+      headers: { "x-admin-email": email },
+      body
+    });
+    const result = await response.json().catch(() => ({}));
+    if (!response.ok || !result.success) {
+      throw new Error(result.message || "圖片上傳失敗");
+    }
+    return result;
   }
 
   function enhanceCreatorForm() {
@@ -20,8 +51,13 @@
     block.innerHTML = `
       <div class="form-builder-title">Google 表單設定</div>
       <div class="field">
+        <label>活動圖片 / 海報上傳</label>
+        <input name="posterFile" type="file" accept="image/png,image/jpeg,image/webp,image/gif,application/pdf">
+        <small class="form-builder-hint">可上傳到 Cloudflare R2；未設定 R2 前會保留為待上傳。</small>
+      </div>
+      <div class="field">
         <label>活動圖片 / 海報連結</label>
-        <input name="posterUrl" type="url" placeholder="貼上圖片網址，之後可放在 Google 表單說明或活動頁">
+        <input name="posterUrl" type="url" placeholder="若已有圖片網址也可貼上；R2 上傳完成會自動回填">
       </div>
       <div class="field">
         <label>YouTube 影片網址</label>
@@ -61,7 +97,8 @@
       <div class="form-schema-preview">
         <strong>預設表單欄位</strong>
         <span>姓名、手機、Email、公司/單位、會員編號、性別、是否為會員、用餐選項、備註</span>
-      </div>`;
+      </div>
+      <div class="form-upload-status" aria-live="polite"></div>`;
 
     submit?.insertAdjacentElement("beforebegin", block);
     submit.textContent = "建立 Google 表單設定";
@@ -71,8 +108,11 @@
     const form = event.target;
     if (!(form instanceof HTMLFormElement) || form.id !== "activity-form") return;
 
+    const posterFile = form.posterFile?.files?.[0] || null;
+    const status = form.querySelector(".form-upload-status");
     const settings = {
       posterUrl: form.posterUrl?.value?.trim() || "",
+      posterR2Key: "",
       youtubeUrl: form.youtubeUrl?.value?.trim() || "",
       requireImageUpload: form.requireImageUpload?.value || "N",
       genderField: form.genderField?.value || "required",
@@ -101,16 +141,35 @@
     }
     settings.fields.push({ key: "note", label: "備註", type: "paragraph", required: false });
 
-    setTimeout(() => {
+    setTimeout(async () => {
       const data = load();
       data.formSettings ||= {};
       const latest = data.activities?.[0];
       if (!latest) return;
+
       data.formSettings[latest.id] = settings;
       latest.formMode = "google_form";
       latest.posterUrl = settings.posterUrl;
       latest.youtubeUrl = settings.youtubeUrl;
       save(data);
+
+      if (!posterFile) return;
+      try {
+        if (status) status.textContent = "活動圖片上傳中...";
+        const uploaded = await uploadPoster(posterFile, latest.id);
+        const nextData = load();
+        const nextActivity = nextData.activities?.find(activity => activity.id === latest.id);
+        nextData.formSettings ||= {};
+        nextData.formSettings[latest.id] ||= settings;
+        nextData.formSettings[latest.id].posterUrl = uploaded.url;
+        nextData.formSettings[latest.id].posterR2Key = uploaded.key;
+        if (nextActivity) nextActivity.posterUrl = uploaded.url;
+        save(nextData);
+        if (form.posterUrl) form.posterUrl.value = uploaded.url;
+        if (status) status.textContent = "活動圖片已上傳到 R2。";
+      } catch (error) {
+        if (status) status.textContent = `活動圖片尚未上傳：${error.message}`;
+      }
     }, 0);
   }, true);
 
@@ -119,7 +178,8 @@
     .form-builder-block{display:grid;gap:16px;border:1px solid #dbeafe;border-radius:8px;padding:16px;background:#f8fbff}
     .form-builder-title{font-weight:800;color:#1d4ed8}
     .form-schema-preview{display:grid;gap:6px;border:1px dashed #bfdbfe;border-radius:8px;padding:12px;background:#fff;color:#344054}
-    .form-schema-preview span{color:#667085;font-size:13px;line-height:1.6}
+    .form-schema-preview span,.form-builder-hint{color:#667085;font-size:13px;line-height:1.6}
+    .form-upload-status{min-height:18px;color:#2563eb;font-size:13px}
   `;
   document.head.appendChild(style);
 
