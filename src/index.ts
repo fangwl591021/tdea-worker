@@ -3,7 +3,6 @@ type Env = {
   ADMIN_EMAILS: string;
   ASSETS: Fetcher;
   ASSETS_BUCKET?: R2Bucket;
-  GAS_URL?: string;
   LINE_CHANNEL_SECRET?: string;
   LINE_CHANNEL_ACCESS_TOKEN?: string;
   FORWARD_WEBHOOK_URL?: string;
@@ -17,11 +16,6 @@ type ActivityInput = {
   capacity?: number;
   status?: string;
   formUrl?: string;
-};
-
-type LineReplyPayload = {
-  replyToken: string;
-  messages: Array<Record<string, unknown>>;
 };
 
 const corsHeaders = {
@@ -97,55 +91,7 @@ async function verifyLineSignature(rawBody: string, signature: string | null, ch
   return constantTimeEqual(expected, signature);
 }
 
-function hasReplyPayload(value: unknown): value is LineReplyPayload {
-  if (!value || typeof value !== "object") return false;
-  const payload = value as LineReplyPayload;
-  return typeof payload.replyToken === "string" && Array.isArray(payload.messages);
-}
-
-async function callLineReplyApi(replyPayload: LineReplyPayload, env: Env) {
-  if (!env.LINE_CHANNEL_ACCESS_TOKEN) {
-    return { ok: false, status: 503, message: "LINE token is not configured" };
-  }
-
-  const response = await fetch("https://api.line.me/v2/bot/message/reply", {
-    method: "POST",
-    headers: {
-      "authorization": `Bearer ${env.LINE_CHANNEL_ACCESS_TOKEN}`,
-      "content-type": "application/json"
-    },
-    body: JSON.stringify(replyPayload)
-  });
-
-  return {
-    ok: response.ok,
-    status: response.status,
-    body: await response.text().catch(() => "")
-  };
-}
-
-async function forwardToGas(linePayload: unknown, env: Env) {
-  if (!env.GAS_URL) {
-    return { ok: false, skipped: true, status: 503, message: "GAS_URL is not configured" };
-  }
-
-  const response = await fetch(env.GAS_URL, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ action: "LINE_WEBHOOK", payload: linePayload })
-  });
-  const text = await response.text();
-  let result: Record<string, unknown> = {};
-  try {
-    result = JSON.parse(text) as Record<string, unknown>;
-  } catch (_) {
-    result = { raw: text };
-  }
-
-  return { ok: response.ok, status: response.status, result };
-}
-
-async function forwardToSecondWebhook(rawBody: string, signature: string | null, env: Env) {
+async function forwardToWebhook(rawBody: string, signature: string | null, env: Env) {
   if (!env.FORWARD_WEBHOOK_URL) {
     return { skipped: true, message: "FORWARD_WEBHOOK_URL is not configured" };
   }
@@ -174,50 +120,33 @@ async function handleLineWebhook(request: Request, env: Env, ctx: ExecutionConte
     return new Response("Invalid Signature", { status: 403, headers: corsHeaders });
   }
 
-  let linePayload: unknown;
   try {
-    linePayload = JSON.parse(rawBody);
+    JSON.parse(rawBody);
   } catch (_) {
     return json({ success: false, message: "Invalid JSON" }, 400);
   }
 
   ctx.waitUntil(
-    forwardToSecondWebhook(rawBody, signature, env).catch((error) => ({ ok: false, message: String(error) }))
+    forwardToWebhook(rawBody, signature, env).catch((error) => ({ ok: false, message: String(error) }))
   );
 
-  const gas = await forwardToGas(linePayload, env);
-  const replyPayload = (gas.result as { data?: { replyPayload?: unknown }; replyPayload?: unknown } | undefined)?.data?.replyPayload
-    ?? (gas.result as { replyPayload?: unknown } | undefined)?.replyPayload;
-  const lineReply = hasReplyPayload(replyPayload)
-    ? await callLineReplyApi(replyPayload, env)
-    : { skipped: true, message: "No replyPayload returned" };
-
-  return json({ success: true, gas, lineReply });
+  return json({
+    success: true,
+    mode: "worker-only",
+    forwarded: Boolean(env.FORWARD_WEBHOOK_URL)
+  });
 }
 
 async function hubTest(env: Env) {
   const checks: Record<string, unknown> = {
+    mode: "worker-only",
     env: {
-      GAS_URL: Boolean(env.GAS_URL),
       LINE_CHANNEL_SECRET: Boolean(env.LINE_CHANNEL_SECRET),
       LINE_CHANNEL_ACCESS_TOKEN: Boolean(env.LINE_CHANNEL_ACCESS_TOKEN),
       FORWARD_WEBHOOK_URL: Boolean(env.FORWARD_WEBHOOK_URL),
       ASSETS_BUCKET: Boolean(env.ASSETS_BUCKET)
     }
   };
-
-  if (env.GAS_URL) {
-    try {
-      const response = await fetch(env.GAS_URL, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ action: "GET_SETTINGS" })
-      });
-      checks.gas = { ok: response.ok, status: response.status };
-    } catch (error) {
-      checks.gas = { ok: false, message: String(error) };
-    }
-  }
 
   if (env.FORWARD_WEBHOOK_URL) {
     try {
