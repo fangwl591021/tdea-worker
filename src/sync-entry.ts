@@ -101,7 +101,7 @@ async function fetchWpUsers(env: Env, page: number, perPage: number, search: str
   const password = env.AIWE_WP_APP_PASSWORD?.trim();
   if (!user || !password) throw new Error("AIWE_WP_USER or AIWE_WP_APP_PASSWORD is not configured");
 
-  const url = new URL("https://aiwe.cc/wp-json/wp/v2/users");
+  const url = new URL("https://aiwe.cc/index.php/wp-json/wp/v2/users");
   url.searchParams.set("context", "edit");
   url.searchParams.set("per_page", String(perPage));
   url.searchParams.set("page", String(page));
