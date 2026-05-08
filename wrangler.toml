@@ -10,3 +10,4 @@ bucket_name = "assets-bucket"
 
 [vars]
 ADMIN_EMAILS = "admin@example.com"
+FORWARD_WEBHOOK_URL = "https://aiwe.cc/index.php/line_login/1311/"
