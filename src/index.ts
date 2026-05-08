@@ -3,6 +3,10 @@ type Env = {
   ADMIN_EMAILS: string;
   ASSETS: Fetcher;
   ASSETS_BUCKET?: R2Bucket;
+  GAS_URL?: string;
+  LINE_CHANNEL_SECRET?: string;
+  LINE_CHANNEL_ACCESS_TOKEN?: string;
+  FORWARD_WEBHOOK_URL?: string;
 };
 
 type ActivityInput = {
@@ -15,15 +19,24 @@ type ActivityInput = {
   formUrl?: string;
 };
 
+type LineReplyPayload = {
+  replyToken: string;
+  messages: Array<Record<string, unknown>>;
+};
+
+const corsHeaders = {
+  "access-control-allow-origin": "*",
+  "access-control-allow-methods": "GET,POST,PUT,OPTIONS",
+  "access-control-allow-headers": "content-type,x-admin-email,x-line-signature"
+};
+
 const json = (data: unknown, status = 200) =>
   new Response(JSON.stringify(data), {
     status,
     headers: {
       "content-type": "application/json; charset=utf-8",
       "cache-control": "no-store",
-      "access-control-allow-origin": "*",
-      "access-control-allow-methods": "GET,POST,PUT,OPTIONS",
-      "access-control-allow-headers": "content-type,x-admin-email"
+      ...corsHeaders
     }
   });
 
@@ -40,6 +53,198 @@ async function requireAdmin(request: Request, env: Env) {
   }
 
   return null;
+}
+
+function base64ToBytes(value: string) {
+  const binary = atob(value);
+  const bytes = new Uint8Array(binary.length);
+  for (let index = 0; index < binary.length; index += 1) {
+    bytes[index] = binary.charCodeAt(index);
+  }
+  return bytes;
+}
+
+function constantTimeEqual(a: string, b: string) {
+  let left: Uint8Array;
+  let right: Uint8Array;
+  try {
+    left = base64ToBytes(a);
+    right = base64ToBytes(b);
+  } catch (_) {
+    return false;
+  }
+
+  if (left.length !== right.length) return false;
+  let diff = 0;
+  for (let index = 0; index < left.length; index += 1) {
+    diff |= left[index] ^ right[index];
+  }
+  return diff === 0;
+}
+
+async function verifyLineSignature(rawBody: string, signature: string | null, channelSecret?: string) {
+  if (!signature || !channelSecret) return false;
+  const encoder = new TextEncoder();
+  const key = await crypto.subtle.importKey(
+    "raw",
+    encoder.encode(channelSecret),
+    { name: "HMAC", hash: "SHA-256" },
+    false,
+    ["sign"]
+  );
+  const digest = await crypto.subtle.sign("HMAC", key, encoder.encode(rawBody));
+  const expected = btoa(String.fromCharCode(...new Uint8Array(digest)));
+  return constantTimeEqual(expected, signature);
+}
+
+function hasReplyPayload(value: unknown): value is LineReplyPayload {
+  if (!value || typeof value !== "object") return false;
+  const payload = value as LineReplyPayload;
+  return typeof payload.replyToken === "string" && Array.isArray(payload.messages);
+}
+
+async function callLineReplyApi(replyPayload: LineReplyPayload, env: Env) {
+  if (!env.LINE_CHANNEL_ACCESS_TOKEN) {
+    return { ok: false, status: 503, message: "LINE token is not configured" };
+  }
+
+  const response = await fetch("https://api.line.me/v2/bot/message/reply", {
+    method: "POST",
+    headers: {
+      "authorization": `Bearer ${env.LINE_CHANNEL_ACCESS_TOKEN}`,
+      "content-type": "application/json"
+    },
+    body: JSON.stringify(replyPayload)
+  });
+
+  return {
+    ok: response.ok,
+    status: response.status,
+    body: await response.text().catch(() => "")
+  };
+}
+
+async function forwardToGas(linePayload: unknown, env: Env) {
+  if (!env.GAS_URL) {
+    return { ok: false, skipped: true, status: 503, message: "GAS_URL is not configured" };
+  }
+
+  const response = await fetch(env.GAS_URL, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ action: "LINE_WEBHOOK", payload: linePayload })
+  });
+  const text = await response.text();
+  let result: Record<string, unknown> = {};
+  try {
+    result = JSON.parse(text) as Record<string, unknown>;
+  } catch (_) {
+    result = { raw: text };
+  }
+
+  return { ok: response.ok, status: response.status, result };
+}
+
+async function forwardToSecondWebhook(rawBody: string, signature: string | null, env: Env) {
+  if (!env.FORWARD_WEBHOOK_URL) {
+    return { skipped: true, message: "FORWARD_WEBHOOK_URL is not configured" };
+  }
+
+  const response = await fetch(env.FORWARD_WEBHOOK_URL, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      ...(signature ? { "x-line-signature": signature } : {})
+    },
+    body: rawBody
+  });
+
+  return { ok: response.ok, status: response.status };
+}
+
+async function handleLineWebhook(request: Request, env: Env, ctx: ExecutionContext) {
+  if (request.method !== "POST") {
+    return json({ success: false, message: "Method not allowed" }, 405);
+  }
+
+  const rawBody = await request.text();
+  const signature = request.headers.get("x-line-signature");
+  const isValid = await verifyLineSignature(rawBody, signature, env.LINE_CHANNEL_SECRET);
+  if (!isValid) {
+    return new Response("Invalid Signature", { status: 403, headers: corsHeaders });
+  }
+
+  let linePayload: unknown;
+  try {
+    linePayload = JSON.parse(rawBody);
+  } catch (_) {
+    return json({ success: false, message: "Invalid JSON" }, 400);
+  }
+
+  ctx.waitUntil(
+    forwardToSecondWebhook(rawBody, signature, env).catch((error) => ({ ok: false, message: String(error) }))
+  );
+
+  const gas = await forwardToGas(linePayload, env);
+  const replyPayload = (gas.result as { data?: { replyPayload?: unknown }; replyPayload?: unknown } | undefined)?.data?.replyPayload
+    ?? (gas.result as { replyPayload?: unknown } | undefined)?.replyPayload;
+  const lineReply = hasReplyPayload(replyPayload)
+    ? await callLineReplyApi(replyPayload, env)
+    : { skipped: true, message: "No replyPayload returned" };
+
+  return json({ success: true, gas, lineReply });
+}
+
+async function hubTest(env: Env) {
+  const checks: Record<string, unknown> = {
+    env: {
+      GAS_URL: Boolean(env.GAS_URL),
+      LINE_CHANNEL_SECRET: Boolean(env.LINE_CHANNEL_SECRET),
+      LINE_CHANNEL_ACCESS_TOKEN: Boolean(env.LINE_CHANNEL_ACCESS_TOKEN),
+      FORWARD_WEBHOOK_URL: Boolean(env.FORWARD_WEBHOOK_URL),
+      ASSETS_BUCKET: Boolean(env.ASSETS_BUCKET)
+    }
+  };
+
+  if (env.GAS_URL) {
+    try {
+      const response = await fetch(env.GAS_URL, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ action: "GET_SETTINGS" })
+      });
+      checks.gas = { ok: response.ok, status: response.status };
+    } catch (error) {
+      checks.gas = { ok: false, message: String(error) };
+    }
+  }
+
+  if (env.FORWARD_WEBHOOK_URL) {
+    try {
+      const response = await fetch(env.FORWARD_WEBHOOK_URL, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ events: [], source: "hub-test" })
+      });
+      checks.forwardWebhook = { ok: response.ok, status: response.status };
+    } catch (error) {
+      checks.forwardWebhook = { ok: false, message: String(error) };
+    }
+  }
+
+  if (env.LINE_CHANNEL_ACCESS_TOKEN) {
+    try {
+      const response = await fetch("https://api.line.me/v2/bot/info", {
+        headers: { "authorization": `Bearer ${env.LINE_CHANNEL_ACCESS_TOKEN}` }
+      });
+      const body = await response.json().catch(() => ({}));
+      checks.lineBot = { ok: response.ok, status: response.status, body };
+    } catch (error) {
+      checks.lineBot = { ok: false, message: String(error) };
+    }
+  }
+
+  return json({ success: true, checks });
 }
 
 function extensionFromType(type: string) {
@@ -244,19 +449,23 @@ async function updateVendorMember(request: Request, env: Env, id: string) {
 }
 
 export default {
-  async fetch(request: Request, env: Env): Promise<Response> {
+  async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
     const url = new URL(request.url);
     const { pathname } = url;
 
     if (request.method === "OPTIONS") {
       return new Response(null, {
         status: 204,
-        headers: {
-          "access-control-allow-origin": "*",
-          "access-control-allow-methods": "GET,POST,PUT,OPTIONS",
-          "access-control-allow-headers": "content-type,x-admin-email"
-        }
+        headers: corsHeaders
       });
+    }
+
+    if (pathname === "/line-webhook") {
+      return handleLineWebhook(request, env, ctx);
+    }
+
+    if (request.method === "GET" && pathname === "/hub-test") {
+      return hubTest(env);
     }
 
     if (request.method === "POST" && pathname === "/api/uploads") {
