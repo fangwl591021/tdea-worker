@@ -1,5 +1,5 @@
 name = "tdeawork"
-main = "src/index.ts"
+main = "src/entry.ts"
 compatibility_date = "2026-05-08"
 
 assets = { directory = "./public", binding = "ASSETS", not_found_handling = "single-page-application" }
