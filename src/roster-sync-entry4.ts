@@ -1,10 +1,10 @@
 import syncEntry from "./sync-entry";
 
-type Env = { ADMIN_EMAILS?: string; ASSETS_BUCKET?: R2Bucket; AIWE_WP_USER?: string; AIWE_WP_APP_PASSWORD?: string };
+type Env = { ADMIN_EMAILS?: string; ASSETS_BUCKET?: R2Bucket; AIWE_WP_USER?: string; AIWE_WP_APP_PASSWORD?: string; AIWE_READ_TOKEN?: string };
 type Member = Record<string, unknown>;
 type Target = { rosterType: "association" | "vendor"; memberNo: string; name: string; role: string; searchTerms: string[] };
 
-const headers = { "access-control-allow-origin": "*", "access-control-allow-methods": "GET,POST,PUT,OPTIONS", "access-control-allow-headers": "content-type,x-admin-email,x-line-signature" };
+const headers = { "access-control-allow-origin": "*", "access-control-allow-methods": "GET,POST,PUT,OPTIONS", "access-control-allow-headers": "content-type,x-admin-email,x-aiwe-token,x-line-signature" };
 const storeKey = "aiwe/members.json";
 const rosterUrl = "https://raw.githubusercontent.com/fangwl591021/tdea-worker/main/public/roster.json";
 const uidRe = /U[0-9a-f]{32}/i;
@@ -19,6 +19,12 @@ function requireAdmin(request: Request, env: Env) {
   const allowed = (env.ADMIN_EMAILS || "admin@example.com").split(",").map((item) => item.trim().toLowerCase()).filter(Boolean);
   const email = request.headers.get("x-admin-email")?.trim().toLowerCase();
   return email && allowed.includes(email) ? null : json({ success: false, message: "Unauthorized" }, 401);
+}
+
+function requireReadToken(request: Request, env: Env) {
+  const expected = env.AIWE_READ_TOKEN?.trim();
+  const provided = request.headers.get("x-aiwe-token")?.trim();
+  return expected && provided && expected === provided ? null : json({ success: false, message: "Unauthorized" }, 401);
 }
 
 async function readStore(env: Env): Promise<Member[]> {
@@ -140,10 +146,18 @@ async function syncRoster(request: Request, env: Env) {
   return json({ success: true, type: kind, start, limit, checked: batch.length, matched: matched.length, missed: misses.length, totalRoster: allTargets.length, totalStored: merged.length, nextStart: start + batch.length, done: start + batch.length >= allTargets.length, sample: matched.slice(0, 10), misses: misses.slice(0, 20), errors });
 }
 
+async function readMembersByToken(request: Request, env: Env) {
+  const guard = requireReadToken(request, env);
+  if (guard) return guard;
+  const members = await readStore(env);
+  return json({ success: true, total: members.length, data: members });
+}
+
 export default {
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
     const url = new URL(request.url);
     if (request.method === "OPTIONS") return new Response(null, { status: 204, headers });
+    if (request.method === "GET" && url.pathname === "/api/aiwe-members-public") return readMembersByToken(request, env);
     if ((request.method === "POST" || request.method === "GET") && url.pathname === "/api/aiwe-sync-roster") {
       try { return await syncRoster(request, env); }
       catch (error) { return json({ success: false, message: String((error as Error).message || error), stack: String((error as Error).stack || "").slice(0, 800) }, 500); }
