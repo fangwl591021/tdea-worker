@@ -1,6 +1,8 @@
 import app from "./index";
 
 type Env = {
+  ADMIN_EMAILS?: string;
+  ASSETS_BUCKET?: R2Bucket;
   LINE_CHANNEL_SECRET?: string;
   LINE_CHANNEL_ACCESS_TOKEN?: string;
   WETW_POINT_API_KEY?: string;
@@ -15,6 +17,19 @@ type LineEvent = {
   postback?: { data?: string };
 };
 
+type AiweMember = {
+  lineUserId?: string;
+  email?: string;
+  memberNo?: string;
+  name?: string;
+  companyName?: string;
+  role?: string;
+  registeredAt?: string;
+  expiresAt?: string;
+  sourceUrl?: string;
+  importedAt?: string;
+};
+
 const corsHeaders = {
   "access-control-allow-origin": "*",
   "access-control-allow-methods": "GET,POST,PUT,OPTIONS",
@@ -22,12 +37,83 @@ const corsHeaders = {
 };
 
 const pointApiBase = "https://aiwe.cc/index.php/wp-json/wetw-point/v1";
+const aiweMembersKey = "aiwe/members.json";
 
 function json(data: unknown, status = 200) {
   return new Response(JSON.stringify(data), {
     status,
     headers: { "content-type": "application/json; charset=utf-8", "cache-control": "no-store", ...corsHeaders }
   });
+}
+
+function requireAdmin(request: Request, env: Env) {
+  const allowed = (env.ADMIN_EMAILS || "admin@example.com").split(",").map((item) => item.trim().toLowerCase()).filter(Boolean);
+  const email = request.headers.get("x-admin-email")?.trim().toLowerCase();
+  if (!email || !allowed.includes(email)) return json({ success: false, message: "Unauthorized" }, 401);
+  return null;
+}
+
+function normalizeMember(input: AiweMember): AiweMember {
+  const lineUserId = String(input.lineUserId || "").trim();
+  const email = String(input.email || "").trim();
+  const memberNo = String(input.memberNo || "").trim().toUpperCase();
+  return {
+    lineUserId,
+    email,
+    memberNo,
+    name: String(input.name || "").trim(),
+    companyName: String(input.companyName || "").trim(),
+    role: String(input.role || "").trim(),
+    registeredAt: String(input.registeredAt || "").trim(),
+    expiresAt: String(input.expiresAt || "").trim(),
+    sourceUrl: String(input.sourceUrl || "").trim(),
+    importedAt: new Date().toISOString()
+  };
+}
+
+function memberKey(member: AiweMember) {
+  return (member.lineUserId || member.memberNo || member.email || member.name || crypto.randomUUID()).toLowerCase();
+}
+
+async function readAiweMembers(env: Env): Promise<AiweMember[]> {
+  if (!env.ASSETS_BUCKET) return [];
+  const object = await env.ASSETS_BUCKET.get(aiweMembersKey);
+  if (!object) return [];
+  const data = await object.json().catch(() => []);
+  return Array.isArray(data) ? data as AiweMember[] : [];
+}
+
+async function writeAiweMembers(env: Env, members: AiweMember[]) {
+  if (!env.ASSETS_BUCKET) return false;
+  await env.ASSETS_BUCKET.put(aiweMembersKey, JSON.stringify(members, null, 2), {
+    httpMetadata: { contentType: "application/json; charset=utf-8", cacheControl: "no-store" }
+  });
+  return true;
+}
+
+async function importAiweMembers(request: Request, env: Env) {
+  const guard = requireAdmin(request, env);
+  if (guard) return guard;
+  if (!env.ASSETS_BUCKET) return json({ success: false, message: "R2 bucket is not configured" }, 503);
+  const body = await request.json().catch(() => ({})) as { members?: AiweMember[]; source?: string };
+  const incoming = Array.isArray(body.members) ? body.members.map((item) => normalizeMember({ ...item, sourceUrl: item.sourceUrl || body.source || "" })) : [];
+  if (!incoming.length) return json({ success: false, message: "No members to import" }, 400);
+  const existing = await readAiweMembers(env);
+  const map = new Map(existing.map((item) => [memberKey(item), item]));
+  for (const member of incoming) map.set(memberKey(member), { ...(map.get(memberKey(member)) || {}), ...member });
+  const merged = Array.from(map.values()).sort((a, b) => String(a.memberNo || a.name).localeCompare(String(b.memberNo || b.name), "zh-Hant"));
+  await writeAiweMembers(env, merged);
+  return json({ success: true, imported: incoming.length, total: merged.length, data: merged.slice(0, 20) });
+}
+
+async function listAiweMembers(request: Request, env: Env) {
+  const guard = requireAdmin(request, env);
+  if (guard) return guard;
+  const members = await readAiweMembers(env);
+  const url = new URL(request.url);
+  const q = url.searchParams.get("q")?.trim().toLowerCase() || "";
+  const filtered = q ? members.filter((item) => [item.lineUserId, item.email, item.memberNo, item.name, item.companyName].some((value) => String(value || "").toLowerCase().includes(q))) : members;
+  return json({ success: true, total: members.length, data: filtered.slice(0, 500) });
 }
 
 function base64ToBytes(value: string) {
@@ -133,6 +219,9 @@ function rebuildRequest(request: Request, rawBody: string) {
 export default {
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
     const url = new URL(request.url);
+    if (request.method === "OPTIONS") return new Response(null, { status: 204, headers: corsHeaders });
+    if (request.method === "GET" && url.pathname === "/api/aiwe-members") return listAiweMembers(request, env);
+    if (request.method === "POST" && url.pathname === "/api/aiwe-members/import") return importAiweMembers(request, env);
     if (request.method !== "POST" || url.pathname !== "/line-webhook") return app.fetch(request, env, ctx);
 
     const rawBody = await request.text();
