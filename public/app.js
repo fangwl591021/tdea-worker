@@ -154,8 +154,12 @@
   async function loadRosterSeed(force = false) {
     if (!force && (state.data.association.length || state.data.vendor.length)) return;
     try {
-      const res = await fetch("roster.json", { cache: "no-store" });
-      if (!res.ok) return;
+      let res = null;
+      for (const url of ["roster.json", "public/roster.json"]) {
+        res = await fetch(url, { cache: "no-store" });
+        if (res.ok) break;
+      }
+      if (!res || !res.ok) return;
       const seed = await res.json();
       const association = Array.isArray(seed.association) ? seed.association : (seed.a || []).map(x => ({ id: "association-" + x[0], memberNo: x[0] || "", identity: x[1] || "", name: x[2] || "", gender: x[3] || "", qualification: x[4] || "Y", note: x[5] || "" }));
       const vendor = Array.isArray(seed.vendor) ? seed.vendor : (seed.v || []).map(x => ({ id: "vendor-" + x[0], memberNo: x[0] || "", companyName: x[1] || "", taxId: x[2] || "", owner: x[3] || "", contact: x[4] || "", qualification: x[5] || "Y", note: x[6] || "" }));
