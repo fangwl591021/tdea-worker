@@ -24,6 +24,10 @@
         <input name="posterUrl" type="url" placeholder="貼上圖片網址，之後可放在 Google 表單說明或活動頁">
       </div>
       <div class="field">
+        <label>YouTube 影片網址</label>
+        <input name="youtubeUrl" type="url" placeholder="可放活動介紹、回顧或直播連結">
+      </div>
+      <div class="field">
         <label>圖片上傳欄位</label>
         <select name="requireImageUpload">
           <option value="N">不需要</option>
@@ -46,9 +50,17 @@
           <option value="login">之後由 Login 自動判定</option>
         </select>
       </div>
+      <div class="field">
+        <label>用餐選項</label>
+        <select name="mealField">
+          <option value="required">需要，必填</option>
+          <option value="optional">需要，選填</option>
+          <option value="none">不需要</option>
+        </select>
+      </div>
       <div class="form-schema-preview">
         <strong>預設表單欄位</strong>
-        <span>姓名、手機、Email、公司/單位、會員編號、性別、是否為會員、備註</span>
+        <span>姓名、手機、Email、公司/單位、會員編號、性別、是否為會員、用餐選項、備註</span>
       </div>`;
 
     submit?.insertAdjacentElement("beforebegin", block);
@@ -61,9 +73,11 @@
 
     const settings = {
       posterUrl: form.posterUrl?.value?.trim() || "",
+      youtubeUrl: form.youtubeUrl?.value?.trim() || "",
       requireImageUpload: form.requireImageUpload?.value || "N",
       genderField: form.genderField?.value || "required",
       memberField: form.memberField?.value || "required",
+      mealField: form.mealField?.value || "required",
       fields: [
         { key: "name", label: "姓名", type: "text", required: true },
         { key: "phone", label: "手機", type: "text", required: true },
@@ -79,6 +93,9 @@
     if (settings.memberField !== "login") {
       settings.fields.push({ key: "isMember", label: "是否為會員", type: "choice", options: ["是", "否", "不確定"], required: settings.memberField === "required" });
     }
+    if (settings.mealField !== "none") {
+      settings.fields.push({ key: "meal", label: "用餐選項", type: "choice", options: ["葷", "素"], required: settings.mealField === "required" });
+    }
     if (settings.requireImageUpload === "Y") {
       settings.fields.push({ key: "imageUpload", label: "圖片/附件上傳", type: "file", required: false });
     }
@@ -92,6 +109,7 @@
       data.formSettings[latest.id] = settings;
       latest.formMode = "google_form";
       latest.posterUrl = settings.posterUrl;
+      latest.youtubeUrl = settings.youtubeUrl;
       save(data);
     }, 0);
   }, true);
