@@ -19,12 +19,7 @@
   }
 
   function getToken() {
-    let token = sessionStorage.getItem(tokenKey) || "";
-    if (!token) {
-      token = window.prompt("請輸入 AIWE UID 讀取 Token") || "";
-      if (token) sessionStorage.setItem(tokenKey, token);
-    }
-    return token;
+    return sessionStorage.getItem(tokenKey) || "";
   }
 
   async function loadUidMap() {
@@ -39,7 +34,6 @@
       if (response.status === 401) {
         sessionStorage.removeItem(tokenKey);
         uidMapPromise = null;
-        alert("AIWE UID 讀取 Token 不正確，請重新整理後再輸入一次。");
         return new Map();
       }
       if (!response.ok) throw new Error(`AIWE UID 讀取失敗：HTTP ${response.status}`);
@@ -85,11 +79,11 @@
     for (const row of bodyRows) {
       const td = document.createElement("td");
       td.className = "aiwe-uid-cell";
-      td.textContent = "讀取中";
+      td.textContent = "-";
       td.style.fontFamily = "ui-monospace, SFMono-Regular, Consolas, monospace";
       td.style.fontSize = "12px";
       td.style.whiteSpace = "nowrap";
-      td.style.color = "#64748b";
+      td.style.color = "#94a3b8";
       row.insertBefore(td, row.children[2] || null);
     }
 
@@ -101,7 +95,7 @@
       const cell = row.querySelector(".aiwe-uid-cell");
       if (!cell) continue;
       cell.textContent = displayUid(uid);
-      cell.title = uid || "尚未比對到 UID";
+      cell.title = uid || "登入後顯示 UID";
       cell.style.color = uid ? "#0f172a" : "#94a3b8";
       if (uid) row.dataset.lineUid = uid;
     }
