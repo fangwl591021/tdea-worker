@@ -2,6 +2,7 @@
   const dataKey = "tdea-manager-v3";
   const adminKey = "tdea-admin-email";
   const apiBase = location.hostname.endsWith("github.io") ? "https://tdeawork.fangwl591021.workers.dev" : "";
+  const engineInactiveMessage = "表單引擎尚未啟用。現在可先貼上既有 Google 表單公開網址，系統仍會自動連動。";
 
   const trim = (value) => String(value ?? "").trim();
   const esc = (value) => String(value ?? "")
@@ -102,7 +103,8 @@
       });
       const result = await response.json().catch(() => ({}));
       if (!response.ok || !result.success) {
-        setStatus(form, result.message || "表單引擎尚未啟用。現在可先貼上既有 Google 表單公開網址，系統仍會自動連動。", "warn");
+        const message = response.status === 404 || result.message === "Not found" ? engineInactiveMessage : (result.message || engineInactiveMessage);
+        setStatus(form, message, "warn");
         return;
       }
       const formUrl = result.formUrl || result.responderUri || result.data?.formUrl || result.data?.responderUri;
@@ -113,7 +115,7 @@
       persistFormUrl(form, formUrl);
       setStatus(form, "報名表已產生並寫回活動資料。", "ok");
     } catch (_) {
-      setStatus(form, "表單引擎尚未啟用。現在可先貼上既有 Google 表單公開網址，系統仍會自動連動。", "warn");
+      setStatus(form, engineInactiveMessage, "warn");
     }
   }
 
