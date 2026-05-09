@@ -79,7 +79,7 @@
   }
 
   function creator() {
-    return `<div class="split"><form class="form-card form-grid" id="activity-form">${field("活動名稱", "name", "", "例如：AI 教學工作坊", true)}${select("活動類型", "type", ["講座類", "教學類", "聯誼類"])}${field("課程時間", "courseTime", "", "YYYY/MM/DD HH:MM")}${field("報名截止", "deadline", "", "YYYY/MM/DD")}${field("人數限制", "capacity", 0, "", false, "number")}${select("狀態", "status", ["下架", "上架"])}<button class="btn primary" type="submit">建立活動</button></form><section class="panel"><div class="panel-head"><h2 class="panel-title">最近活動</h2></div>${state.data.activities.length ? activityTable(state.data.activities.slice(0, 5)) : empty("尚未建立活動")}</section></div>`;
+    return `<form class="form-card form-grid creator-form-wide" id="activity-form">${field("活動名稱", "name", "", "例如：AI 教學工作坊", true)}${select("活動類型", "type", ["講座類", "教學類", "聯誼類"])}${field("課程時間", "courseTime", "", "YYYY/MM/DD HH:MM")}${field("報名截止", "deadline", "", "YYYY/MM/DD")}${field("人數限制", "capacity", 0, "", false, "number")}${select("狀態", "status", ["下架", "上架"])}<button class="btn primary" type="submit">建立活動</button></form>`;
   }
   function preview() {
     const rows = state.data.activities.filter(x => x.status === "上架");
