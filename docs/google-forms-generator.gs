@@ -10,10 +10,13 @@ function doPost(e) {
     if (CONFIG.SHARED_SECRET && body.sharedSecret !== CONFIG.SHARED_SECRET) {
       return jsonOutput({ success: false, code: "invalid_secret", message: "Invalid shared secret" });
     }
-    if (body.action !== "CREATE_GOOGLE_FORM") {
-      return jsonOutput({ success: false, code: "unknown_action", message: "Unknown action" });
+    if (body.action === "CREATE_GOOGLE_FORM") {
+      return jsonOutput(createGoogleForm(body));
     }
-    return jsonOutput(createGoogleForm(body));
+    if (body.action === "SYNC_FORM_RESPONSES") {
+      return jsonOutput(syncFormResponses(body));
+    }
+    return jsonOutput({ success: false, code: "unknown_action", message: "Unknown action" });
   } catch (error) {
     return jsonOutput({
       success: false,
@@ -234,6 +237,66 @@ function handleFormSubmit(e) {
       answers: answers
     })
   });
+}
+
+function syncFormResponses(body) {
+  const activity = body.activity || {};
+  const form = findForm(body.formId, activity);
+  if (!form) {
+    return { success: false, code: "form_not_found", message: "找不到對應的 Google 表單" };
+  }
+  const formId = form.getId();
+  const metadata = JSON.parse(PropertiesService.getScriptProperties().getProperty("FORM_" + formId) || "{}");
+  const submissions = form.getResponses().map(function(response, index) {
+    const answers = {};
+    response.getItemResponses().forEach(function(itemResponse) {
+      answers[itemResponse.getItem().getTitle()] = itemResponse.getResponse();
+    });
+    const responseId = response.getId ? response.getId() : formId + "_" + response.getTimestamp().getTime() + "_" + index;
+    return {
+      responseId: responseId,
+      formId: formId,
+      activity: metadata.activity || activity || {},
+      submittedAt: response.getTimestamp().toISOString(),
+      answers: answers
+    };
+  });
+  return {
+    success: true,
+    formId: formId,
+    formTitle: form.getTitle(),
+    count: submissions.length,
+    submissions: submissions
+  };
+}
+
+function findForm(formId, activity) {
+  const id = clean(formId);
+  if (id) {
+    try {
+      return FormApp.openById(id);
+    } catch (error) {
+      // Fall back to title lookup below.
+    }
+  }
+  const name = clean(activity && activity.name);
+  if (!name || !CONFIG.DRIVE_FOLDER_ID) return null;
+  const folder = DriveApp.getFolderById(CONFIG.DRIVE_FOLDER_ID);
+  const exact = folder.getFilesByName(name);
+  while (exact.hasNext()) {
+    try {
+      return FormApp.openById(exact.next().getId());
+    } catch (error) {}
+  }
+  const files = folder.getFiles();
+  while (files.hasNext()) {
+    const file = files.next();
+    if (file.getName() !== name) continue;
+    try {
+      return FormApp.openById(file.getId());
+    } catch (error) {}
+  }
+  return null;
 }
 
 function authorizeTriggerScope() {

@@ -1,12 +1,12 @@
 import baseEntry from "./roster-sync-entry4";
 
-type Env = { ADMIN_EMAILS?: string; ASSETS_BUCKET?: R2Bucket; LINE_CHANNEL_SECRET?: string; LINE_CHANNEL_ACCESS_TOKEN?: string; GOOGLE_FORMS_SHARED_SECRET?: string };
+type Env = { ADMIN_EMAILS?: string; ASSETS_BUCKET?: R2Bucket; LINE_CHANNEL_SECRET?: string; LINE_CHANNEL_ACCESS_TOKEN?: string; GOOGLE_FORMS_SCRIPT_URL?: string; GOOGLE_FORMS_SHARED_SECRET?: string };
 type LineEvent = { type?: string; replyToken?: string; message?: { type?: string; text?: string }; postback?: { data?: string } };
 type MonthlyPage = { id?: string; activityNo?: string; imageUrl?: string; detailTitle?: string; detailText?: string; detailUrl?: string; formUrl?: string; shareUrl?: string; order?: number };
 type MonthlyConfig = { enabled?: boolean; keyword?: string; month?: string; altText?: string; detailBaseUrl?: string; pages?: MonthlyPage[]; updatedAt?: string };
 type RegistrationRecord = { activityId?: string; activityNo?: string; activityName?: string; formId?: string; count: number; lastSubmittedAt?: string };
 type RegistrationSummary = { updatedAt?: string; activities: Record<string, RegistrationRecord> };
-type RegistrationEntry = { id: string; formId?: string; submittedAt?: string; activity?: Record<string, unknown>; answers?: Record<string, unknown> };
+type RegistrationEntry = { id: string; sourceId?: string; formId?: string; submittedAt?: string; activity?: Record<string, unknown>; answers?: Record<string, unknown> };
 
 const monthlyKey = "flex/monthly-activity.json";
 const registrationSummaryKey = "registrations/summary.json";
@@ -73,11 +73,16 @@ async function readRegistrationList(env: Env, key: string): Promise<Registration
 
 async function appendRegistrationList(env: Env, keys: string[], entry: RegistrationEntry) {
   if (!env.ASSETS_BUCKET) return;
+  let maxCount = 0;
   for (const key of keys) {
     const list = await readRegistrationList(env, key);
-    list.unshift(entry);
-    await env.ASSETS_BUCKET.put(registrationListKey(key), JSON.stringify(list.slice(0, 1000), null, 2), { httpMetadata: { contentType: "application/json; charset=utf-8", cacheControl: "no-store" } });
+    const sourceId = entry.sourceId || entry.id;
+    const exists = list.some((item) => (item.sourceId || item.id) === sourceId);
+    const nextList = exists ? list : [entry, ...list];
+    maxCount = Math.max(maxCount, nextList.length);
+    await env.ASSETS_BUCKET.put(registrationListKey(key), JSON.stringify(nextList.slice(0, 1000), null, 2), { httpMetadata: { contentType: "application/json; charset=utf-8", cacheControl: "no-store" } });
   }
+  return maxCount;
 }
 
 async function listRegistrations(request: Request, env: Env) {
@@ -112,25 +117,65 @@ async function handleFormSubmission(request: Request, env: Env) {
     activityNo: String(activity.activityNo || existing?.activityNo || "").trim(),
     activityName: String(activity.name || existing?.activityName || "").trim(),
     formId: formId || existing?.formId || "",
-    count: Number(existing?.count || 0) + 1,
+    count: Number(existing?.count || 0),
     lastSubmittedAt: String(body.submittedAt || new Date().toISOString())
   };
 
-  for (const key of keys) summary.activities[key] = record;
-  await writeRegistrationSummary(env, summary);
-
   const entry: RegistrationEntry = {
     id: crypto.randomUUID(),
+    sourceId: String(body.responseId || body.submissionId || body.editResponseUrl || `${formId}:${record.lastSubmittedAt}`).trim(),
     formId,
     submittedAt: record.lastSubmittedAt,
     activity,
     answers: (body.answers && typeof body.answers === "object" ? body.answers : {}) as Record<string, unknown>
   };
-  await appendRegistrationList(env, keys, entry);
+  const count = await appendRegistrationList(env, keys, entry);
+  record.count = Math.max(Number(existing?.count || 0), Number(count || 0));
+
+  for (const key of keys) summary.activities[key] = record;
+  await writeRegistrationSummary(env, summary);
 
   const eventKey = `registrations/events/${Date.now()}-${crypto.randomUUID()}.json`;
   await env.ASSETS_BUCKET.put(eventKey, JSON.stringify(body, null, 2), { httpMetadata: { contentType: "application/json; charset=utf-8", cacheControl: "no-store" } });
   return json({ success: true, data: record });
+}
+
+async function syncGoogleFormResponses(request: Request, env: Env) {
+  const guard = requireAdmin(request, env);
+  if (guard) return guard;
+  const scriptUrl = env.GOOGLE_FORMS_SCRIPT_URL?.trim();
+  if (!scriptUrl) return json({ success: false, message: "GOOGLE_FORMS_SCRIPT_URL is not configured" }, 503);
+  const input = await request.json().catch(() => ({})) as Record<string, unknown>;
+  const activities = Array.isArray(input.activities) ? input.activities as Array<Record<string, unknown>> : [];
+  const results = [];
+  let imported = 0;
+
+  for (const activity of activities) {
+    const response = await fetch(scriptUrl, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        action: "SYNC_FORM_RESPONSES",
+        sharedSecret: env.GOOGLE_FORMS_SHARED_SECRET || "",
+        formId: activity.formId || activity.googleFormId || "",
+        activity
+      })
+    });
+    const result = await response.json().catch(() => ({ success: false, message: "Invalid Apps Script JSON" })) as Record<string, unknown>;
+    if (!response.ok || result.success === false) {
+      results.push({ activity: activity.name || activity.id, success: false, message: result.message || "Sync failed" });
+      continue;
+    }
+    const submissions = Array.isArray(result.submissions) ? result.submissions as Array<Record<string, unknown>> : [];
+    for (const submission of submissions) {
+      const submissionRequest = new Request(request.url, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ action: "FORM_SUBMISSION", ...submission, activity: submission.activity || activity }) });
+      await handleFormSubmission(submissionRequest, env);
+      imported += 1;
+    }
+    results.push({ activity: activity.name || activity.id, success: true, formId: result.formId, count: submissions.length });
+  }
+
+  return json({ success: true, imported, results, data: await readRegistrationSummary(env) });
 }
 
 function normalizeConfig(config: MonthlyConfig): MonthlyConfig {
@@ -231,6 +276,7 @@ export default {
     if ((request.method === "PUT" || request.method === "POST") && url.pathname === "/api/monthly-activity") { const guard = requireAdmin(request, env); if (guard) return guard; if (!env.ASSETS_BUCKET) return json({ success: false, message: "R2 bucket is not configured" }, 503); const config = await request.json().catch(() => ({})) as MonthlyConfig; await writeMonthly(env, config); return json({ success: true, data: await readMonthly(env), flex: buildMonthlyFlex(config) }); }
     if (request.method === "GET" && url.pathname === "/api/monthly-activity/flex") { const config = await readMonthly(env); return json({ success: true, flex: buildMonthlyFlex(config), data: config }); }
     if (request.method === "POST" && url.pathname === "/api/google-forms/submission") return handleFormSubmission(request, env);
+    if (request.method === "POST" && url.pathname === "/api/google-forms/sync") return syncGoogleFormResponses(request, env);
     if (request.method === "GET" && url.pathname === "/api/registrations/summary") return json({ success: true, data: await readRegistrationSummary(env) });
     if (request.method === "GET" && url.pathname === "/api/registrations/list") return listRegistrations(request, env);
     const detailMatch = url.pathname.match(/^\/monthly-detail\/([^/]+)$/);

@@ -90,7 +90,7 @@
     }).filter((field) => field.label);
   }
 
-  function persistFormUrl(form, url) {
+  function persistFormUrl(form, url, meta = {}) {
     const formUrl = trim(url);
     if (!formUrl) return null;
     if (form.formUrl) form.formUrl.value = formUrl;
@@ -101,7 +101,14 @@
     if (!activity) return null;
 
     data.formSettings[activity.id] ||= {};
-    Object.assign(data.formSettings[activity.id], currentSettings(form), { formUrl, googleFormUrl: formUrl });
+    Object.assign(data.formSettings[activity.id], currentSettings(form), {
+      formUrl,
+      googleFormUrl: formUrl,
+      formId: meta.formId || meta.data?.formId || "",
+      googleFormId: meta.formId || meta.data?.formId || "",
+      editUrl: meta.editUrl || meta.data?.editUrl || "",
+      sheetUrl: meta.sheetUrl || meta.data?.sheetUrl || ""
+    });
     if (activity.activityNo) {
       data.formSettings[activity.activityNo] ||= {};
       Object.assign(data.formSettings[activity.activityNo], data.formSettings[activity.id]);
@@ -109,6 +116,10 @@
     activity.formMode = "google_form";
     activity.formUrl = formUrl;
     activity.googleFormUrl = formUrl;
+    activity.formId = meta.formId || meta.data?.formId || activity.formId || "";
+    activity.googleFormId = meta.formId || meta.data?.formId || activity.googleFormId || "";
+    activity.googleFormEditUrl = meta.editUrl || meta.data?.editUrl || activity.googleFormEditUrl || "";
+    activity.googleSheetUrl = meta.sheetUrl || meta.data?.sheetUrl || activity.googleSheetUrl || "";
     save(data);
     return activity;
   }
@@ -166,7 +177,7 @@
         return null;
       }
 
-      persistFormUrl(form, formUrl);
+      persistFormUrl(form, formUrl, result);
       setStatus(form, options.auto ? "活動已建立，報名表已自動產生。" : "報名表已產生並寫回活動資料。", "ok");
       return formUrl;
     } catch (_) {

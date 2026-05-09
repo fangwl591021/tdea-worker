@@ -39,6 +39,7 @@
     if (registrationSyncing || state.view !== "dashboard") return;
     registrationSyncing = true;
     try {
+      if (showMessage || autoSyncEnabled()) await pullGoogleResponses(showMessage);
       const res = await fetch(api + "/api/registrations/summary", { cache: "no-store" });
       const result = await res.json().catch(() => ({}));
       const records = result?.data?.activities || {};
@@ -64,6 +65,32 @@
     } finally {
       registrationSyncing = false;
     }
+  }
+
+  async function pullGoogleResponses(showMessage = false) {
+    const email = localStorage.getItem("tdea-admin-email") || sessionStorage.getItem("tdea-admin-email") || "";
+    if (!email) {
+      if (showMessage) toast("缺少管理者 Email，無法向 GAS 拉取表單回覆");
+      return;
+    }
+    const activities = (state.data.activities || []).map(activity => ({
+      id: activity.id || "",
+      activityNo: activity.activityNo || "",
+      name: activity.name || "",
+      formId: activity.formId || activity.googleFormId || "",
+      googleFormId: activity.googleFormId || activity.formId || "",
+      formUrl: activity.formUrl || activity.googleFormUrl || "",
+      googleFormUrl: activity.googleFormUrl || activity.formUrl || ""
+    })).filter(activity => activity.name || activity.formId || activity.formUrl);
+    if (!activities.length) return;
+    const response = await fetch(api + "/api/google-forms/sync", {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-admin-email": email },
+      body: JSON.stringify({ activities })
+    });
+    const result = await response.json().catch(() => ({}));
+    if (!response.ok || !result.success) throw new Error(result.message || "Google 表單同步失敗");
+    if (showMessage) toast(`已同步 ${Number(result.imported || 0)} 筆表單回覆`);
   }
 
   function render() {

@@ -205,6 +205,12 @@
       return `<button class="monthly-page-btn ${index === selected ? "active" : ""}" data-monthly-select="${index}"><span>第 ${index + 1} 頁</span><strong>${esc(label)}</strong></button>`;
     }).join("");
   }
+
+  function formIdFor(activity) {
+    if (!activity) return "";
+    const settings = formSettingsFor(activity);
+    return trim(activity.formId) || trim(activity.googleFormId) || trim(settings.formId) || trim(settings.googleFormId);
+  }
   function basicFields() {
     return `<div class="monthly-basic-grid"><div class="field"><label>月份</label><input name="month" data-monthly-basic value="${esc(config.month || "")}" placeholder="2026-05"></div><div class="monthly-keyword-pill"><span>觸發關鍵字</span><strong>${fixedKeyword}</strong></div><label class="monthly-enabled"><input type="checkbox" name="enabled" data-monthly-enabled ${config.enabled ? "checked" : ""}> 啟用此關鍵字</label></div>`;
   }
@@ -277,7 +283,7 @@
     };
   }
 
-  function persistGeneratedFormUrl(activity, formUrl) {
+  function persistGeneratedFormUrl(activity, formUrl, meta = {}) {
     const data = localData();
     data.formSettings ||= {};
     const row = Array.isArray(data.activities)
@@ -287,8 +293,12 @@
     target.formMode = "google_form";
     target.formUrl = formUrl;
     target.googleFormUrl = formUrl;
+    target.formId = meta.formId || target.formId || "";
+    target.googleFormId = meta.formId || target.googleFormId || "";
+    target.googleFormEditUrl = meta.editUrl || target.googleFormEditUrl || "";
+    target.googleSheetUrl = meta.sheetUrl || target.googleSheetUrl || "";
     data.formSettings[target.id] ||= {};
-    Object.assign(data.formSettings[target.id], formSettingsFor(activity), { formUrl, googleFormUrl: formUrl });
+    Object.assign(data.formSettings[target.id], formSettingsFor(activity), { formUrl, googleFormUrl: formUrl, formId: target.formId, googleFormId: target.googleFormId, editUrl: target.googleFormEditUrl, sheetUrl: target.googleSheetUrl });
     if (target.activityNo) {
       data.formSettings[target.activityNo] ||= {};
       Object.assign(data.formSettings[target.activityNo], data.formSettings[target.id]);
@@ -313,7 +323,7 @@
     }
     const formUrl = result.formUrl || result.responderUri || result.data?.formUrl || result.data?.responderUri;
     if (!formUrl) throw new Error("Google 報名表已建立，但沒有收到公開報名網址");
-    return formUrl;
+    return { formUrl, formId: result.formId || result.data?.formId || "", editUrl: result.editUrl || result.data?.editUrl || "", sheetUrl: result.sheetUrl || result.data?.sheetUrl || "" };
   }
 
   async function ensureFormUrls(email) {
@@ -324,8 +334,8 @@
       if (!activity) return `第 ${index + 1} 頁尚未選擇活動`;
       toast(`第 ${index + 1} 頁正在自動產生報名表...`);
       try {
-        const formUrl = await generateFormForActivity(activity, email);
-        const saved = persistGeneratedFormUrl(activity, formUrl);
+        const generated = await generateFormForActivity(activity, email);
+        const saved = persistGeneratedFormUrl(activity, generated.formUrl, generated);
         applyActivityToPage(config.pages[index], saved);
       } catch (error) {
         return `第 ${index + 1} 頁報名表自動產生失敗：${error.message}`;
