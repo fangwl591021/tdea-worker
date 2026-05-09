@@ -50,7 +50,7 @@
     if (state.view === "vendor") return `<button class="btn" data-import="vendor">匯入 CSV</button><button class="btn primary" data-drawer="vendor:new">新增廠商會員</button>`;
     if (state.view === "creator") return `<button class="btn" data-reset>清空表單</button>`;
     if (state.view === "preview") return `<button class="btn" data-copy>複製預覽網址</button>`;
-    return `<button class="btn" data-worker>檢查 Worker</button><button class="btn primary" data-nav="creator">新增活動</button>`;
+    return `<button class="btn" data-worker>檢查 Worker</button><button class="btn danger" data-clear-test>清空測試資料</button><button class="btn primary" data-nav="creator">新增活動</button>`;
   }
   function body() {
     if (state.view === "association") return members("association");
@@ -69,13 +69,13 @@
   }
   function stat(label, value) { return `<div class="stat"><span>${label}</span><strong>${n(value)}</strong></div>`; }
   function activityTable(rows) {
-    return `<div class="table-wrap"><table><thead><tr><th>活動名稱</th><th>類型</th><th>課程時間</th><th>報名</th><th>簽到</th><th>狀態</th><th>操作</th></tr></thead><tbody>${rows.map(x => `<tr><td><strong>${esc(x.name)}</strong></td><td>${esc(x.type)}</td><td>${esc(x.courseTime || "-")}</td><td>${n(x.reg)}</td><td>${n(x.check)}</td><td><span class="badge ${x.status === "上架" ? "live" : "off"}">${esc(x.status)}</span></td><td><button class="link" data-drawer="activity:${x.id}">編輯</button><span class="muted"> / </span><button class="link" data-toggle="${x.id}">${x.status === "上架" ? "下架" : "上架"}</button></td></tr>`).join("")}</tbody></table></div>`;
+    return `<div class="table-wrap"><table><thead><tr><th>活動名稱</th><th>類型</th><th>課程時間</th><th>報名</th><th>簽到</th><th>狀態</th><th>操作</th></tr></thead><tbody>${rows.map(x => `<tr><td><strong>${esc(x.name)}</strong></td><td>${esc(x.type)}</td><td>${esc(x.courseTime || "-")}</td><td>${n(x.reg)}</td><td>${n(x.check)}</td><td><span class="badge ${x.status === "上架" ? "live" : "off"}">${esc(x.status)}</span></td><td><button class="link" data-drawer="activity:${x.id}">編輯</button><span class="muted"> / </span><button class="link" data-toggle="${x.id}">${x.status === "上架" ? "下架" : "上架"}</button><span class="muted"> / </span><button class="link danger-link" data-delete-activity="${x.id}">刪除</button></td></tr>`).join("")}</tbody></table></div>`;
   }
 
   function members(type) {
     const rows = state.data[type], vendor = type === "vendor";
     if (!rows.length) return `<section class="panel"><div class="panel-head"><h2 class="panel-title">${vendor ? "廠商會員" : "協會會員"}</h2><button class="btn" data-import="${type}">匯入 CSV</button></div>${empty(`目前沒有${vendor ? "廠商會員" : "協會會員"}資料`)}</section>`;
-    return `<section class="panel"><div class="panel-head"><h2 class="panel-title">${vendor ? "廠商會員" : "協會會員"}</h2><div class="actions"><button class="btn" data-import="${type}">匯入 CSV</button><button class="btn" data-export>匯出備份</button></div></div><div class="table-wrap"><table><thead><tr><th>會員編號</th><th>${vendor ? "公司名稱" : "姓名"}</th><th>${vendor ? "統編" : "身分"}</th><th>${vendor ? "聯絡窗口" : "性別"}</th><th>資格</th><th>備註</th><th>操作</th></tr></thead><tbody>${rows.map(x => `<tr><td>${esc(x.memberNo)}</td><td><strong>${esc(vendor ? x.companyName : x.name)}</strong></td><td>${esc(vendor ? x.taxId : x.identity)}</td><td>${esc(vendor ? x.contact : x.gender)}</td><td><span class="badge ${x.qualification === "Y" ? "live" : "off"}">${esc(x.qualification)}</span></td><td>${esc(x.note)}</td><td><button class="link" data-drawer="${type}:${x.id}">編輯</button></td></tr>`).join("")}</tbody></table></div></section>`;
+    return `<section class="panel"><div class="panel-head"><h2 class="panel-title">${vendor ? "廠商會員" : "協會會員"}</h2><div class="actions"><button class="btn" data-import="${type}">匯入 CSV</button><button class="btn" data-export>匯出備份</button></div></div><div class="table-wrap"><table><thead><tr><th>會員編號</th><th>${vendor ? "公司名稱" : "姓名"}</th><th>${vendor ? "統編" : "身分"}</th><th>${vendor ? "聯絡窗口" : "性別"}</th><th>資格</th><th>備註</th><th>操作</th></tr></thead><tbody>${rows.map(x => `<tr><td>${esc(x.memberNo)}</td><td><strong>${esc(vendor ? x.companyName : x.name)}</strong></td><td>${esc(vendor ? x.taxId : x.identity)}</td><td>${esc(vendor ? x.contact : x.gender)}</td><td><span class="badge ${x.qualification === "Y" ? "live" : "off"}">${esc(x.qualification)}</span></td><td>${esc(x.note)}</td><td><button class="link" data-drawer="${type}:${x.id}">編輯</button><span class="muted"> / </span><button class="link danger-link" data-delete-member="${type}:${x.id}">刪除</button></td></tr>`).join("")}</tbody></table></div></section>`;
   }
 
   function creator() {
@@ -134,12 +134,51 @@
     state.data[type] = mapped.concat(state.data[type]); save(); return mapped.length;
   }
 
+  function deleteActivity(rowId) {
+    const row = state.data.activities.find(x => x.id === rowId);
+    if (!row || !confirm(`確定刪除活動「${row.name || rowId}」？`)) return;
+    state.data.activities = state.data.activities.filter(x => x.id !== rowId);
+    if (state.data.formSettings) {
+      delete state.data.formSettings[rowId];
+      if (row.activityNo) delete state.data.formSettings[row.activityNo];
+    }
+    save();
+    render();
+    toast("活動已刪除");
+  }
+
+  function deleteMember(token) {
+    const [type, rowId] = String(token || "").split(":");
+    const rows = state.data[type];
+    if (!Array.isArray(rows)) return;
+    const row = rows.find(x => x.id === rowId);
+    const label = type === "vendor" ? (row?.companyName || row?.memberNo || rowId) : (row?.name || row?.memberNo || rowId);
+    if (!row || !confirm(`確定刪除「${label}」？`)) return;
+    state.data[type] = rows.filter(x => x.id !== rowId);
+    save();
+    render();
+    toast("資料已刪除");
+  }
+
+  function clearTestData() {
+    if (!confirm("確定清空目前測試資料？\n\n會刪除：活動、協會名冊、廠商名冊、表單設定與每月活動設定。")) return;
+    state.data = { activities: [], association: [], vendor: [], formSettings: {}, monthlyActivity: null };
+    save();
+    state.drawer = "";
+    state.view = "dashboard";
+    render();
+    toast("測試資料已清空");
+  }
+
   function bind() {
     document.querySelectorAll("[data-nav]").forEach(b => b.onclick = () => { state.view = b.dataset.nav; state.drawer = ""; render(); });
     document.querySelectorAll("[data-drawer]").forEach(b => b.onclick = () => { state.drawer = b.dataset.drawer; render(); });
     document.querySelectorAll("[data-import]").forEach(b => b.onclick = () => { state.drawer = "import-" + b.dataset.import + ":new"; render(); });
     document.querySelectorAll("[data-close]").forEach(b => b.onclick = () => { state.drawer = ""; render(); });
     document.querySelectorAll("[data-toggle]").forEach(b => b.onclick = () => { const x = state.data.activities.find(r => r.id === b.dataset.toggle); if (x) x.status = x.status === "上架" ? "下架" : "上架"; save(); render(); });
+    document.querySelectorAll("[data-delete-activity]").forEach(b => b.onclick = () => deleteActivity(b.dataset.deleteActivity));
+    document.querySelectorAll("[data-delete-member]").forEach(b => b.onclick = () => deleteMember(b.dataset.deleteMember));
+    const clearTest = document.querySelector("[data-clear-test]"); if (clearTest) clearTest.onclick = clearTestData;
     document.querySelectorAll("[data-register]").forEach(b => b.onclick = () => { const x = state.data.activities.find(r => r.id === b.dataset.register); if (x) x.reg = Number(x.reg || 0) + 1; save(); toast("已模擬新增一筆報名"); render(); });
     const af = document.querySelector("#activity-form"); if (af) af.onsubmit = e => { e.preventDefault(); const d = Object.fromEntries(new FormData(af)); state.data.activities.unshift({ id: uid(), name: d.name.trim(), type: d.type, courseTime: d.courseTime, deadline: d.deadline, capacity: Number(d.capacity || 0), reg: 0, check: 0, status: d.status, formUrl: "" }); save(); state.view = "dashboard"; render(); toast("活動已建立"); };
     const ea = document.querySelector("#drawer-activity"); if (ea) ea.onsubmit = e => { e.preventDefault(); const d = Object.fromEntries(new FormData(ea)); const x = state.data.activities.find(r => r.id === d.id); if (x) Object.assign(x, { name: d.name, type: d.type, courseTime: d.courseTime, deadline: d.deadline, capacity: Number(d.capacity || 0), reg: Number(d.reg || 0), check: Number(d.check || 0), status: d.status, formUrl: d.formUrl }); state.drawer = ""; save(); render(); toast("活動已儲存"); };
