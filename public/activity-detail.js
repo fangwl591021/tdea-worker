@@ -1,8 +1,7 @@
 (() => {
   const key = "tdea-manager-v3";
-  let pendingNewDetail = "";
-  let pendingDrawer = null;
   const esc = (value) => String(value ?? "").replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;").replaceAll("'", "&#039;");
+  const uid = () => "id-" + Math.random().toString(36).slice(2) + Date.now().toString(36);
 
   function load() {
     try { return JSON.parse(localStorage.getItem(key) || "{}"); } catch (_) { return {}; }
@@ -19,6 +18,21 @@
     const prefix = `ACT-${todayCode()}`;
     const count = (data.activities || []).filter((item) => String(item.activityNo || "").startsWith(prefix)).length + 1;
     return `${prefix}-${String(count).padStart(3, "0")}`;
+  }
+
+  function ensureData(data) {
+    data.activities ||= [];
+    data.association ||= [];
+    data.vendor ||= [];
+    return data;
+  }
+
+  function toast(text) {
+    const el = document.querySelector("#toast");
+    if (!el) return;
+    el.textContent = text;
+    el.classList.add("show");
+    setTimeout(() => el.classList.remove("show"), 1800);
   }
 
   function ensureStyle() {
@@ -66,8 +80,8 @@
     const form = document.querySelector("#drawer-activity");
     if (!form) return;
     const id = form.querySelector("input[name='id']")?.value || "";
-    const data = load();
-    const activity = data.activities?.find((item) => item.id === id) || {};
+    const data = ensureData(load());
+    const activity = data.activities.find((item) => item.id === id) || {};
     const nameField = form.querySelector("input[name='name']")?.closest(".field");
     const formUrlField = form.querySelector("input[name='formUrl']")?.closest(".field");
     const submit = form.querySelector("button[type='submit']");
@@ -88,8 +102,8 @@
   }
 
   function annotatePreviewCards() {
-    const data = load();
-    const map = new Map((data.activities || []).map((item) => [item.id, item]));
+    const data = ensureData(load());
+    const map = new Map(data.activities.map((item) => [item.id, item]));
     document.querySelectorAll("[data-register]").forEach((button) => {
       const card = button.closest(".activity-card");
       if (!card) return;
@@ -103,35 +117,8 @@
     });
   }
 
-  function persistNewDetail() {
-    const detail = pendingNewDetail.trim();
-    if (!detail) return;
-    const data = load();
-    const latest = data.activities?.[0];
-    if (!latest) return;
-    if (!latest.activityNo) latest.activityNo = nextActivityNo(data);
-    latest.detailText = detail;
-    save(data);
-  }
-
-  function persistDrawerDetail() {
-    if (!pendingDrawer) return;
-    const data = load();
-    const activity = data.activities?.find((item) => item.id === pendingDrawer.id);
-    if (!activity) return;
-    if (!activity.activityNo) activity.activityNo = nextActivityNo(data);
-    activity.detailText = pendingDrawer.detail.trim();
-    save(data);
-  }
-
-  function repeatPersist(fn) {
-    fn();
-    [50, 200, 600, 1200].forEach((ms) => setTimeout(fn, ms));
-  }
-
   function backfillActivityNumbers() {
-    const data = load();
-    if (!Array.isArray(data.activities)) return;
+    const data = ensureData(load());
     let changed = false;
     data.activities.forEach((activity) => {
       if (!activity.activityNo) {
@@ -142,23 +129,64 @@
     if (changed) save(data);
   }
 
+  function createActivity(form) {
+    const data = ensureData(load());
+    const d = Object.fromEntries(new FormData(form));
+    const item = {
+      id: uid(),
+      activityNo: nextActivityNo(data),
+      name: String(d.name || "").trim(),
+      type: d.type || "講座類",
+      courseTime: d.courseTime || "",
+      deadline: d.deadline || "",
+      capacity: Number(d.capacity || 0),
+      reg: 0,
+      check: 0,
+      status: d.status || "下架",
+      formUrl: "",
+      detailText: String(d.detailText || "").trim(),
+      posterUrl: String(d.posterUrl || "").trim(),
+      youtubeUrl: String(d.youtubeUrl || "").trim()
+    };
+    data.activities.unshift(item);
+    save(data);
+    form.reset();
+    toast("活動已建立，詳細說明已儲存");
+    setTimeout(() => location.reload(), 500);
+  }
+
+  function updateActivity(form) {
+    const data = ensureData(load());
+    const d = Object.fromEntries(new FormData(form));
+    const activity = data.activities.find((item) => item.id === d.id);
+    if (!activity) return;
+    Object.assign(activity, {
+      activityNo: activity.activityNo || nextActivityNo(data),
+      name: d.name || "",
+      type: d.type || "講座類",
+      courseTime: d.courseTime || "",
+      deadline: d.deadline || "",
+      capacity: Number(d.capacity || 0),
+      reg: Number(d.reg || 0),
+      check: Number(d.check || 0),
+      status: d.status || "下架",
+      formUrl: d.formUrl || "",
+      detailText: String(d.detailText || "").trim()
+    });
+    save(data);
+    toast("活動已儲存，詳細說明已更新");
+    setTimeout(() => location.reload(), 500);
+  }
+
   document.addEventListener("submit", (event) => {
     const form = event.target;
     if (!(form instanceof HTMLFormElement)) return;
-    if (form.id === "activity-form") {
-      pendingNewDetail = form.detailText?.value || "";
-      repeatPersist(persistNewDetail);
-    }
-    if (form.id === "drawer-activity") {
-      pendingDrawer = { id: form.querySelector("input[name='id']")?.value || "", detail: form.detailText?.value || "" };
-      repeatPersist(persistDrawerDetail);
-    }
+    if (form.id !== "activity-form" && form.id !== "drawer-activity") return;
+    event.preventDefault();
+    event.stopImmediatePropagation();
+    if (form.id === "activity-form") createActivity(form);
+    if (form.id === "drawer-activity") updateActivity(form);
   }, true);
-
-  window.addEventListener("storage", () => {
-    if (pendingNewDetail) repeatPersist(persistNewDetail);
-    if (pendingDrawer) repeatPersist(persistDrawerDetail);
-  });
 
   function run() {
     ensureStyle();
