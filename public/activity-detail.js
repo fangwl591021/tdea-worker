@@ -110,24 +110,9 @@
 
   function persistTextarea(textarea) {
     const form = textarea.closest("form");
+    if (form?.id !== "drawer-activity") return;
     const data = ensureData(load());
-    let activity = findActivity(data, form);
-    if (!activity && form?.id === "activity-form") {
-      activity = {
-        id: uid(),
-        activityNo: nextActivityNo(data),
-        name: formActivityName(form),
-        type: form.querySelector("select[name='type']")?.value || "講座類",
-        courseTime: form.querySelector("input[name='courseTime']")?.value || "",
-        deadline: form.querySelector("input[name='deadline']")?.value || "",
-        capacity: Number(form.querySelector("input[name='capacity']")?.value || 0),
-        reg: 0,
-        check: 0,
-        status: form.querySelector("select[name='status']")?.value || "下架",
-        formUrl: ""
-      };
-      data.activities.unshift(activity);
-    }
+    const activity = findActivity(data, form);
     if (!activity) return;
     if (!activity.activityNo) activity.activityNo = nextActivityNo(data);
     activity.detailText = textarea.value;
@@ -169,18 +154,26 @@
     save(data);
   }
 
+  function finishActivitySave(form) {
+    saveForm(form);
+    setTimeout(() => location.reload(), 120);
+  }
+
   document.addEventListener("submit", (event) => {
     const form = event.target;
     if (!(form instanceof HTMLFormElement)) return;
     if (form.id !== "activity-form" && form.id !== "drawer-activity") return;
-    saveForm(form);
+    event.preventDefault();
+    event.stopImmediatePropagation();
+    finishActivitySave(form);
   }, true);
 
   document.addEventListener("click", (event) => {
     const button = event.target.closest("button");
     if (!button || !/儲存|建立/.test(button.textContent || "")) return;
     const form = button.closest("form");
-    if (form?.id === "activity-form" || form?.id === "drawer-activity") saveForm(form);
+    if (form?.id !== "activity-form" && form?.id !== "drawer-activity") return;
+    saveForm(form);
   }, true);
 
   function annotatePreviewCards() {
