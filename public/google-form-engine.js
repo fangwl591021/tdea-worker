@@ -159,8 +159,11 @@
   function editPanel() {
     return `<div class="form-engine-panel" data-form-engine-panel>
       <strong>報名表</strong>
-      <span>這個活動若還沒有報名表，可按下方按鈕產生；若已經有既有表單，也可以貼在下方網址欄。</span>
-      <button class="btn" type="button" data-generate-google-form>產生 / 重新產生報名表</button>
+      <span>這個活動若還沒有報名表，按下方按鈕產生即可。既有 Google 表單只在特殊情況才需要貼網址。</span>
+      <div class="form-engine-actions">
+        <button class="btn" type="button" data-generate-google-form>產生 / 重新產生報名表</button>
+        <button class="btn" type="button" data-toggle-form-url>貼上既有網址</button>
+      </div>
       <div class="form-engine-status" data-form-engine-status data-tone="info">產生後會自動寫回活動資料。</div>
     </div>`;
   }
@@ -186,8 +189,13 @@
     const label = formUrlField.querySelector("label");
     if (label) label.textContent = "既有報名表網址（選填）";
     if (formUrlInput) formUrlInput.placeholder = "已有 Google 表單時貼這裡；沒有就按上方產生";
+    formUrlField.hidden = true;
     formUrlField.insertAdjacentHTML("beforebegin", editPanel());
     form.querySelector("[data-generate-google-form]")?.addEventListener("click", () => generateForm(form));
+    form.querySelector("[data-toggle-form-url]")?.addEventListener("click", () => {
+      formUrlField.hidden = !formUrlField.hidden;
+      if (!formUrlField.hidden) formUrlInput?.focus();
+    });
   }
 
   function enhanceForm(form) {
@@ -206,6 +214,7 @@
       .form-engine-panel strong{display:block;color:#064e3b}
       .form-engine-panel span{display:block;color:#166534;font-size:13px;line-height:1.5}
       .form-engine-panel .btn{width:max-content}
+      .form-engine-actions{display:flex;flex-wrap:wrap;gap:8px}
       .form-engine-status{font-size:13px;line-height:1.5;color:#166534}
       .form-engine-status[data-tone="warn"]{color:#b45309}
       .form-engine-status[data-tone="ok"]{color:#027a48;font-weight:700}
