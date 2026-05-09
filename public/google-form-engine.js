@@ -2,15 +2,9 @@
   const dataKey = "tdea-manager-v3";
   const adminKey = "tdea-admin-email";
   const apiBase = location.hostname.endsWith("github.io") ? "https://tdeawork.fangwl591021.workers.dev" : "";
-  const engineInactiveMessage = "表單引擎尚未啟用。現在可先貼上既有 Google 表單公開網址，系統仍會自動連動。";
+  const engineInactiveMessage = "Google 表單引擎目前尚未啟用，請稍後再試，或先貼上既有報名表網址。";
 
   const trim = (value) => String(value ?? "").trim();
-  const esc = (value) => String(value ?? "")
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;")
-    .replaceAll('"', "&quot;")
-    .replaceAll("'", "&#039;");
 
   function load() {
     try { return JSON.parse(localStorage.getItem(dataKey) || "{}"); } catch (_) { return {}; }
@@ -24,7 +18,15 @@
     return sessionStorage.getItem(adminKey) || localStorage.getItem(adminKey) || "";
   }
 
-  function latestActivity(data) {
+  function formRowId(form) {
+    return trim(form.elements?.id?.value);
+  }
+
+  function targetActivity(data, form) {
+    const id = formRowId(form);
+    if (id && Array.isArray(data.activities)) {
+      return data.activities.find((activity) => String(activity.id) === id) || null;
+    }
     return Array.isArray(data.activities) ? data.activities[0] : null;
   }
 
@@ -45,9 +47,12 @@
     return [...form.querySelectorAll("[data-custom-field]")].map((row, index) => {
       const type = row.querySelector("[name='customType']")?.value || "text";
       const optionInputs = [...row.querySelectorAll("[name='customOption']")]
-        .map(input => input.value.trim())
+        .map((input) => input.value.trim())
         .filter(Boolean);
-      const legacyOptions = String(row.querySelector("[name='customOptions']")?.value || "").split(/\n|,/).map(item => item.trim()).filter(Boolean);
+      const legacyOptions = String(row.querySelector("[name='customOptions']")?.value || "")
+        .split(/\n|,/)
+        .map((item) => item.trim())
+        .filter(Boolean);
       return {
         key: "custom_" + (index + 1),
         label: row.querySelector("[name='customLabel']")?.value?.trim() || "",
@@ -55,18 +60,18 @@
         options: optionInputs.length ? optionInputs : legacyOptions,
         required: Boolean(row.querySelector("[name='customRequired']")?.checked)
       };
-    }).filter(field => field.label);
+    }).filter((field) => field.label);
   }
 
   function persistFormUrl(form, url) {
     const formUrl = trim(url);
-    if (!formUrl) return;
+    if (!formUrl) return null;
     if (form.formUrl) form.formUrl.value = formUrl;
 
     const data = load();
     data.formSettings ||= {};
-    const activity = latestActivity(data);
-    if (!activity) return;
+    const activity = targetActivity(data, form);
+    if (!activity) return null;
 
     data.formSettings[activity.id] ||= {};
     Object.assign(data.formSettings[activity.id], currentSettings(form), { formUrl, googleFormUrl: formUrl });
@@ -78,6 +83,7 @@
     activity.formUrl = formUrl;
     activity.googleFormUrl = formUrl;
     save(data);
+    return activity;
   }
 
   function setStatus(form, message, tone = "info") {
@@ -89,11 +95,11 @@
 
   function payloadFor(form) {
     const data = load();
-    const activity = latestActivity(data) || {};
+    const activity = targetActivity(data, form) || {};
     const settings = currentSettings(form);
     return {
       activity: {
-        id: activity.id || "",
+        id: activity.id || formRowId(form) || "",
         activityNo: activity.activityNo || "",
         name: trim(activity.name) || trim(form.name?.value),
         type: trim(activity.type) || trim(form.type?.value),
@@ -106,13 +112,14 @@
     };
   }
 
-  async function generateForm(form) {
+  async function generateForm(form, options = {}) {
     const email = adminEmail();
     if (!email) {
-      setStatus(form, "尚未登入管理者，之後接 LINE Login 後會自動帶入權限。", "warn");
-      return;
+      setStatus(form, "尚未取得管理者權限，之後接 LINE Login 後會自動帶入。", "warn");
+      return null;
     }
-    setStatus(form, "正在連接表單引擎...", "info");
+
+    setStatus(form, "正在產生 Google 報名表...", "info");
     try {
       const response = await fetch(`${apiBase}/api/google-forms/create`, {
         method: "POST",
@@ -123,70 +130,71 @@
       if (!response.ok || !result.success) {
         const message = response.status === 404 || result.message === "Not found" ? engineInactiveMessage : (result.message || engineInactiveMessage);
         setStatus(form, message, "warn");
-        return;
+        return null;
       }
+
       const formUrl = result.formUrl || result.responderUri || result.data?.formUrl || result.data?.responderUri;
       if (!formUrl) {
         setStatus(form, "表單已建立，但沒有收到公開報名網址。", "warn");
-        return;
+        return null;
       }
+
       persistFormUrl(form, formUrl);
-      setStatus(form, "報名表已產生並寫回活動資料。", "ok");
+      setStatus(form, options.auto ? "活動已建立，報名表已自動產生。" : "報名表已產生並寫回活動資料。", "ok");
+      return formUrl;
     } catch (_) {
       setStatus(form, engineInactiveMessage, "warn");
+      return null;
     }
   }
 
-  function enginePanel() {
+  function createPanel() {
     return `<div class="form-engine-panel" data-form-engine-panel>
-      <div>
-        <strong>報名表設定</strong>
-        <span>按下按鈕後，系統會依下方欄位設定產生 Google 報名表，並自動把報名網址寫回活動。</span>
-      </div>
-      <button class="btn" type="button" data-generate-google-form>產生 Google 報名表</button>
-      <div class="form-engine-status" data-form-engine-status data-tone="info">API 尚未啟用前，也可以先把既有 Google 表單網址貼到「報名表公開網址」。</div>
+      <strong>報名表會自動建立</strong>
+      <span>請先填完活動資料與下方題目設定，最後按「建立活動與產生報名表」。系統會建立活動、產生 Google 報名表，並把報名網址寫回活動。</span>
+      <div class="form-engine-status" data-form-engine-status data-tone="info">不需要手填網址；若已有既有表單，可在備援欄位貼上。</div>
     </div>`;
+  }
+
+  function editPanel() {
+    return `<div class="form-engine-panel" data-form-engine-panel>
+      <strong>報名表</strong>
+      <span>這個活動若還沒有報名表，可按下方按鈕產生；若已經有既有表單，也可以貼在下方網址欄。</span>
+      <button class="btn" type="button" data-generate-google-form>產生 / 重新產生報名表</button>
+      <div class="form-engine-status" data-form-engine-status data-tone="info">產生後會自動寫回活動資料。</div>
+    </div>`;
+  }
+
+  function enhanceCreateForm(form) {
+    const submit = form.querySelector("button[type='submit']");
+    const formUrlField = form.querySelector("input[name='formUrl']")?.closest(".field");
+    if (formUrlField) {
+      formUrlField.classList.add("form-url-backup");
+      formUrlField.hidden = true;
+    }
+    if (submit && !form.querySelector("[data-form-engine-panel]")) {
+      submit.insertAdjacentHTML("beforebegin", createPanel());
+    }
+    if (submit) submit.textContent = "建立活動與產生報名表";
+  }
+
+  function enhanceEditForm(form) {
+    const formUrlInput = form.querySelector("input[name='formUrl']");
+    const formUrlField = formUrlInput?.closest(".field");
+    if (!formUrlField || form.querySelector("[data-form-engine-panel]")) return;
+
+    const label = formUrlField.querySelector("label");
+    if (label) label.textContent = "既有報名表網址（選填）";
+    if (formUrlInput) formUrlInput.placeholder = "已有 Google 表單時貼這裡；沒有就按上方產生";
+    formUrlField.insertAdjacentHTML("beforebegin", editPanel());
+    form.querySelector("[data-generate-google-form]")?.addEventListener("click", () => generateForm(form));
   }
 
   function enhanceForm(form) {
     if (!form || form.dataset.googleFormEngineReady) return;
     form.dataset.googleFormEngineReady = "true";
-
-    const block = form.querySelector(".form-builder-block");
-    if (block) {
-      const title = block.querySelector(".form-builder-title");
-      if (title) title.textContent = "報名表欄位設定";
-    }
-
-    const formUrlInput = form.querySelector("input[name='formUrl']");
-    const formUrlField = formUrlInput?.closest(".field");
-    if (formUrlField) {
-      const label = formUrlField.querySelector("label");
-      const hint = formUrlField.querySelector("small");
-      if (label) label.textContent = "報名表公開網址";
-      if (formUrlInput) formUrlInput.placeholder = "系統產生後會自動回填；也可貼上既有 Google 表單網址";
-      if (hint) hint.textContent = "使用者會從 TDEA 活動頁進入報名，不會直接看到後台設定流程。";
-      formUrlField.insertAdjacentHTML("beforebegin", enginePanel());
-    }
-
-    const submit = form.querySelector("button[type='submit']");
-    if (submit && /Google|表單設定/.test(submit.textContent || "")) submit.textContent = "建立活動與報名流程";
-
-    form.querySelector("[data-generate-google-form]")?.addEventListener("click", () => generateForm(form));
-  }
-
-  function softenMonthlyWarnings() {
-    return;
-    document.querySelectorAll(".monthly-warning").forEach((warning) => {
-      const text = warning.textContent || "";
-      if (!text.includes("Google") && !text.includes("表單連結")) return;
-      warning.textContent = "此活動尚未完成報名表連動。若已建立表單，請回到活動編輯確認報名表公開網址已寫入。";
-    });
-    document.querySelectorAll(".monthly-linked-box span").forEach((span) => {
-      if ((span.textContent || "").includes("Google 表單網址")) {
-        span.textContent = "報名網址：尚未完成報名表連動";
-      }
-    });
+    if (form.id === "activity-form") enhanceCreateForm(form);
+    if (form.id === "drawer-activity") enhanceEditForm(form);
   }
 
   function ensureStyle() {
@@ -194,8 +202,8 @@
     const style = document.createElement("style");
     style.id = "google-form-engine-style";
     style.textContent = `
-      .form-engine-panel{display:grid;gap:10px;border:1px solid #bbf7d0;background:#f0fdf4;border-radius:8px;padding:14px;color:#064e3b}
-      .form-engine-panel strong{display:block;color:#064e3b;margin-bottom:3px}
+      .form-engine-panel{display:grid;gap:8px;border:1px solid #bbf7d0;background:#f0fdf4;border-radius:8px;padding:14px;color:#064e3b}
+      .form-engine-panel strong{display:block;color:#064e3b}
       .form-engine-panel span{display:block;color:#166534;font-size:13px;line-height:1.5}
       .form-engine-panel .btn{width:max-content}
       .form-engine-status{font-size:13px;line-height:1.5;color:#166534}
@@ -207,13 +215,22 @@
 
   function install() {
     ensureStyle();
-    document.querySelectorAll("#activity-form").forEach(enhanceForm);
-    softenMonthlyWarnings();
+    document.querySelectorAll("#activity-form,#drawer-activity").forEach(enhanceForm);
   }
 
   document.addEventListener("submit", (event) => {
     const form = event.target;
-    if (form instanceof HTMLFormElement && form.id === "activity-form") {
+    if (!(form instanceof HTMLFormElement)) return;
+
+    if (form.id === "activity-form") {
+      const url = trim(form.formUrl?.value);
+      setTimeout(() => {
+        if (url) persistFormUrl(form, url);
+        else generateForm(form, { auto: true });
+      }, 80);
+    }
+
+    if (form.id === "drawer-activity") {
       const url = trim(form.formUrl?.value);
       if (url) setTimeout(() => persistFormUrl(form, url), 0);
     }
