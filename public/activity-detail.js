@@ -1,15 +1,14 @@
 (() => {
   const key = "tdea-manager-v3";
   let pendingNewDetail = "";
+  let pendingDrawer = null;
   const esc = (value) => String(value ?? "").replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;").replaceAll("'", "&#039;");
 
   function load() {
     try { return JSON.parse(localStorage.getItem(key) || "{}"); } catch (_) { return {}; }
   }
 
-  function save(data) {
-    localStorage.setItem(key, JSON.stringify(data));
-  }
+  function save(data) { localStorage.setItem(key, JSON.stringify(data)); }
 
   function todayCode() {
     const d = new Date();
@@ -106,22 +105,28 @@
 
   function persistNewDetail() {
     const detail = pendingNewDetail.trim();
-    pendingNewDetail = "";
+    if (!detail) return;
     const data = load();
     const latest = data.activities?.[0];
     if (!latest) return;
     if (!latest.activityNo) latest.activityNo = nextActivityNo(data);
-    if (detail) latest.detailText = detail;
+    latest.detailText = detail;
     save(data);
   }
 
-  function persistDrawerDetail(id, detail) {
+  function persistDrawerDetail() {
+    if (!pendingDrawer) return;
     const data = load();
-    const activity = data.activities?.find((item) => item.id === id);
+    const activity = data.activities?.find((item) => item.id === pendingDrawer.id);
     if (!activity) return;
     if (!activity.activityNo) activity.activityNo = nextActivityNo(data);
-    activity.detailText = detail.trim();
+    activity.detailText = pendingDrawer.detail.trim();
     save(data);
+  }
+
+  function repeatPersist(fn) {
+    fn();
+    [50, 200, 600, 1200].forEach((ms) => setTimeout(fn, ms));
   }
 
   function backfillActivityNumbers() {
@@ -142,14 +147,18 @@
     if (!(form instanceof HTMLFormElement)) return;
     if (form.id === "activity-form") {
       pendingNewDetail = form.detailText?.value || "";
-      setTimeout(persistNewDetail, 0);
+      repeatPersist(persistNewDetail);
     }
     if (form.id === "drawer-activity") {
-      const id = form.querySelector("input[name='id']")?.value || "";
-      const detail = form.detailText?.value || "";
-      setTimeout(() => persistDrawerDetail(id, detail), 0);
+      pendingDrawer = { id: form.querySelector("input[name='id']")?.value || "", detail: form.detailText?.value || "" };
+      repeatPersist(persistDrawerDetail);
     }
   }, true);
+
+  window.addEventListener("storage", () => {
+    if (pendingNewDetail) repeatPersist(persistNewDetail);
+    if (pendingDrawer) repeatPersist(persistDrawerDetail);
+  });
 
   function run() {
     ensureStyle();
