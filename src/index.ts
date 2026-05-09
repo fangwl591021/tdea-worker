@@ -9,6 +9,8 @@ type Env = {
   WETW_POINT_API_KEY?: string;
   WETW_SHOP_ID?: string;
   WETW_POINT_TYPE?: string;
+  GOOGLE_FORMS_SCRIPT_URL?: string;
+  GOOGLE_FORMS_SHARED_SECRET?: string;
 };
 
 type ActivityInput = {
@@ -58,6 +60,20 @@ type PointInsertInput = {
   child_shop_name?: string;
   child_shop_renew?: number;
   shop_remark?: string;
+};
+
+type GoogleFormCreateInput = {
+  activity?: {
+    id?: string;
+    activityNo?: string;
+    name?: string;
+    type?: string;
+    courseTime?: string;
+    deadline?: string;
+    capacity?: number;
+    detailText?: string;
+  };
+  settings?: Record<string, unknown>;
 };
 
 type RosterMember = {
@@ -473,6 +489,47 @@ async function createActivity(request: Request, env: Env) {
   return json({ success: true, id }, 201);
 }
 
+async function createGoogleForm(request: Request, env: Env) {
+  const guard = await requireAdmin(request, env);
+  if (guard) return guard;
+  const scriptUrl = env.GOOGLE_FORMS_SCRIPT_URL?.trim();
+  if (!scriptUrl) {
+    return json({
+      success: false,
+      code: "google_forms_engine_not_configured",
+      message: "表單產生器尚未設定。請先設定 GOOGLE_FORMS_SCRIPT_URL；目前可先貼上既有 Google 表單公開網址。"
+    }, 503);
+  }
+
+  const input = await request.json() as GoogleFormCreateInput;
+  const response = await fetch(scriptUrl, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      ...(env.GOOGLE_FORMS_SHARED_SECRET ? { "x-tdea-forms-secret": env.GOOGLE_FORMS_SHARED_SECRET } : {})
+    },
+    body: JSON.stringify({ action: "CREATE_GOOGLE_FORM", sharedSecret: env.GOOGLE_FORMS_SHARED_SECRET || "", ...input })
+  });
+  const result = await response.json().catch(() => ({ success: false, message: "表單產生器回應格式不是 JSON" })) as Record<string, unknown>;
+  if (!response.ok || result.success === false) {
+    return json({
+      success: false,
+      code: result.code || "google_forms_engine_failed",
+      message: result.message || "Google 表單產生失敗",
+      detail: result
+    }, response.ok ? 502 : response.status);
+  }
+  const data = result.data as Record<string, unknown> | undefined;
+  return json({
+    success: true,
+    formUrl: result.formUrl || result.responderUri || data?.formUrl || data?.responderUri,
+    editUrl: result.editUrl || data?.editUrl,
+    formId: result.formId || data?.formId,
+    sheetUrl: result.sheetUrl || data?.sheetUrl,
+    data: result
+  }, 201);
+}
+
 async function listAssociationMembers(env: Env) {
   if (!env.DB) return json({ success: true, data: [] });
   const { results } = await env.DB.prepare("SELECT * FROM association_members ORDER BY created_at DESC").all();
@@ -528,6 +585,7 @@ export default {
     if (request.method === "POST" && pathname === "/api/uploads") return uploadFile(request, env);
     const uploadMatch = pathname.match(/^\/api\/uploads\/(.+)$/);
     if (request.method === "GET" && uploadMatch) return getUploadedFile(env, decodeURIComponent(uploadMatch[1]));
+    if (request.method === "POST" && pathname === "/api/google-forms/create") return createGoogleForm(request, env);
     if (request.method === "GET" && pathname === "/api/activities") return listActivities(env);
     if (request.method === "GET" && pathname === "/api/activities/active") return listActivities(env, true);
     if (request.method === "POST" && pathname === "/api/activities") return createActivity(request, env);
