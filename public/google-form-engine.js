@@ -176,6 +176,7 @@
   }
 
   function softenMonthlyWarnings() {
+    return;
     document.querySelectorAll(".monthly-warning").forEach((warning) => {
       const text = warning.textContent || "";
       if (!text.includes("Google") && !text.includes("表單連結")) return;
