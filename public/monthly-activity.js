@@ -12,7 +12,7 @@
   const id = () => "monthly-" + Math.random().toString(36).slice(2) + Date.now().toString(36);
   const trim = (value) => String(value ?? "").trim();
 
-  function adminEmail() { return sessionStorage.getItem(adminKey) || ""; }
+  function adminEmail() { return sessionStorage.getItem(adminKey) || localStorage.getItem(adminKey) || ""; }
 
   function localData() {
     try { return JSON.parse(localStorage.getItem(dataKey) || "{}"); } catch (_) { return {}; }
@@ -23,12 +23,65 @@
     return Array.isArray(rows) ? rows.filter((item) => item && (item.name || item.activityNo || item.id)) : [];
   }
 
-  function activityKey(activity) { return String(activity.activityNo || activity.id || activity.name || ""); }
-
   function findActivity(value) {
     const key = trim(value);
     if (!key) return null;
     return activities().find((item) => String(item.activityNo || "") === key || String(item.id || "") === key || String(item.name || "") === key) || null;
+  }
+
+  function formSettingsFor(activity) {
+    const data = localData();
+    const settings = data.formSettings || {};
+    return settings[activity?.id] || settings[activity?.activityNo] || settings[activity?.name] || {};
+  }
+
+  function firstUrl(...values) {
+    for (const value of values.flat()) {
+      const text = trim(value);
+      if (/^https?:\/\//i.test(text)) return text;
+    }
+    return "";
+  }
+
+  function formUrlFor(activity) {
+    if (!activity) return "";
+    const settings = formSettingsFor(activity);
+    return firstUrl(
+      activity.formUrl,
+      activity.googleFormUrl,
+      activity.googleFormPublishedUrl,
+      activity.registrationFormUrl,
+      activity.formLink,
+      activity.form_url,
+      activity.signupUrl,
+      activity.registerUrl,
+      activity.registrationUrl,
+      activity.googleForm?.url,
+      activity.googleForm?.publishedUrl,
+      activity.googleForm?.responderUri,
+      settings.formUrl,
+      settings.googleFormUrl,
+      settings.googleFormPublishedUrl,
+      settings.registrationFormUrl,
+      settings.formLink,
+      settings.signupUrl,
+      settings.registerUrl,
+      settings.googleForm?.url,
+      settings.googleForm?.publishedUrl,
+      settings.googleForm?.responderUri
+    );
+  }
+
+  function detailTextFor(activity) {
+    if (!activity) return "";
+    const settings = formSettingsFor(activity);
+    return trim(activity.detailText) || trim(activity.description) || trim(activity.detail) || trim(settings.detailText) || trim(settings.description) || "";
+  }
+
+  function posterUrlFor(activity) {
+    if (!activity) return "";
+    const settings = formSettingsFor(activity);
+    return firstUrl(activity.posterUrl, activity.imageUrl, activity.coverUrl, settings.posterUrl, settings.imageUrl, settings.coverUrl);
   }
 
   function blankConfig() {
@@ -59,9 +112,9 @@
     page.activityId = activity.id || page.activityId || "";
     page.activityName = activity.name || page.activityName || "";
     page.detailTitle = activity.name || page.detailTitle || "詳細說明";
-    page.detailText = activity.detailText || "";
-    page.formUrl = activity.formUrl || "";
-    if (!page.imageUrl && activity.posterUrl) page.imageUrl = activity.posterUrl;
+    page.detailText = detailTextFor(activity);
+    page.formUrl = formUrlFor(activity);
+    if (!page.imageUrl) page.imageUrl = posterUrlFor(activity);
   }
 
   function hydratePage(page) {
@@ -168,13 +221,13 @@
   function linkedInfo(page) {
     const hydrated = hydratePage(page);
     if (!hydrated.activityName && !hydrated.activityNo) return `<div class="monthly-linked-box"><span>尚未選擇活動。選擇後會自動帶入詳細說明與 Google 表單連結。</span></div>`;
-    return `<div class="monthly-linked-box"><strong>${esc(hydrated.activityName || hydrated.activityNo)}</strong><span>活動編號：${esc(hydrated.activityNo || "尚未產生")}</span><span>詳細說明：${trim(hydrated.detailText) ? "已帶入" : "此活動尚未填寫詳細說明"}</span><span>報名網址：${trim(hydrated.formUrl) ? esc(hydrated.formUrl) : "此活動尚未填寫表單連結"}</span></div>`;
+    return `<div class="monthly-linked-box"><strong>${esc(hydrated.activityName || hydrated.activityNo)}</strong><span>活動編號：${esc(hydrated.activityNo || "尚未產生")}</span><span>詳細說明：${trim(hydrated.detailText) ? "已帶入" : "此活動尚未填寫詳細說明"}</span><span>報名網址：${trim(hydrated.formUrl) ? esc(hydrated.formUrl) : "尚未在本系統資料中找到 Google 表單網址"}</span></div>`;
   }
 
   function pageForm(page) {
     const hydrated = hydratePage(page);
     const detailTarget = detailUrlForPage(page);
-    return `<div class="monthly-form"><div class="field"><label>連動活動</label>${activitySelect(page)}<div class="monthly-link-note">這裡只選活動。詳細說明、報名網址會從「創建活動 / 編輯活動」自動帶入。</div></div>${linkedInfo(page)}<div class="field"><label>圖片上傳</label><input type="file" accept="image/*" data-monthly-file><div class="muted">上傳後會自動填入圖片 URL</div></div><div class="field"><label>圖片 URL</label><input name="imageUrl" data-monthly-page value="${esc(page.imageUrl)}" placeholder="https://..."></div><div class="field"><label>目前詳細說明 LIFF 網址</label><input value="${esc(detailTarget)}" disabled><div class="monthly-link-note">依活動編號自動產生，按「詳細說明」會開啟 Tall LIFF 詳情頁。</div></div><div class="field"><label>分享網址（選填）</label><input name="shareUrl" data-monthly-page value="${esc(page.shareUrl)}" placeholder="留空則使用詳細說明頁"></div>${!trim(hydrated.activityNo) && !trim(hydrated.activityId) ? `<div class="monthly-warning">這頁還沒有連動活動，發布前需要選擇活動。</div>` : ""}${trim(hydrated.activityNo || hydrated.activityId) && !trim(hydrated.formUrl) ? `<div class="monthly-warning">此活動沒有表單連結，請回到活動編輯補上「表單連結」。</div>` : ""}${trim(hydrated.activityNo || hydrated.activityId) && !trim(hydrated.detailText) ? `<div class="monthly-warning">此活動沒有詳細說明，請回到活動編輯補上「詳細說明」。</div>` : ""}</div>`;
+    return `<div class="monthly-form"><div class="field"><label>連動活動</label>${activitySelect(page)}<div class="monthly-link-note">這裡只選活動。詳細說明、報名網址會從「創建活動 / 編輯活動」自動帶入。</div></div>${linkedInfo(page)}<div class="field"><label>圖片上傳</label><input type="file" accept="image/*" data-monthly-file><div class="muted">上傳後會自動填入圖片 URL</div></div><div class="field"><label>圖片 URL</label><input name="imageUrl" data-monthly-page value="${esc(page.imageUrl)}" placeholder="https://..."></div><div class="field"><label>目前詳細說明 LIFF 網址</label><input value="${esc(detailTarget)}" disabled><div class="monthly-link-note">依活動編號自動產生，按「詳細說明」會開啟 Tall LIFF 詳情頁。</div></div><div class="field"><label>分享網址（選填）</label><input name="shareUrl" data-monthly-page value="${esc(page.shareUrl)}" placeholder="留空則使用詳細說明頁"></div>${!trim(hydrated.activityNo) && !trim(hydrated.activityId) ? `<div class="monthly-warning">這頁還沒有連動活動，發布前需要選擇活動。</div>` : ""}${trim(hydrated.activityNo || hydrated.activityId) && !trim(hydrated.formUrl) ? `<div class="monthly-warning">目前沒有在本系統資料裡找到此活動的 Google 表單網址；如果表單已由 Google 建立，請確認活動資料是否有寫入表單網址欄位。</div>` : ""}${trim(hydrated.activityNo || hydrated.activityId) && !trim(hydrated.detailText) ? `<div class="monthly-warning">此活動沒有詳細說明，請回到活動編輯補上「詳細說明」。</div>` : ""}</div>`;
   }
 
   function preview() {
@@ -200,7 +253,7 @@
     return { type: "carousel", contents: config.pages.slice(0, 12).map((rawPage) => {
       const page = hydratePage(rawPage);
       const detailUri = detailUrlForPage(page);
-      const formUri = trim(page.formUrl) || api;
+      const formUri = trim(page.formUrl) || detailUri;
       const shareUri = shareUrlForPage(page);
       return { type: "bubble", size: "kilo", body: { type: "box", layout: "vertical", paddingAll: "0px", contents: [{ type: "image", url: page.imageUrl || "https://developers-resource.landpress.line.me/fx/img/01_1_cafe.png", size: "full", aspectMode: "cover", aspectRatio: "2:3", gravity: "top", action: { type: "uri", label: "報名", uri: formUri } }, { type: "box", layout: "vertical", position: "absolute", cornerRadius: "20px", offsetTop: "18px", backgroundColor: "#ff334b", offsetStart: "18px", height: "25px", width: "53px", action: { type: "uri", label: "分享", uri: shareUri }, contents: [{ type: "text", text: "分享", color: "#ffffff", align: "center", size: "xs", offsetTop: "3px", action: { type: "uri", label: "分享", uri: shareUri } }] }] }, footer: { type: "box", layout: "horizontal", contents: [{ type: "button", action: { type: "uri", label: "詳細說明", uri: detailUri }, height: "sm", style: "primary" }, { type: "button", action: { type: "uri", label: "點我報名", uri: formUri }, height: "sm", style: "primary", margin: "md" }] } };
     }) };
@@ -210,7 +263,6 @@
     for (let index = 0; index < config.pages.length; index += 1) {
       const page = hydratePage(config.pages[index]);
       if (!trim(page.activityNo) && !trim(page.activityId)) return `第 ${index + 1} 頁尚未選擇活動`;
-      if (!trim(page.formUrl)) return `第 ${index + 1} 頁連動活動缺少表單連結`;
       if (!trim(page.detailText)) return `第 ${index + 1} 頁連動活動缺少詳細說明`;
     }
     return "";
