@@ -6,15 +6,17 @@ This project keeps the TDEA user flow branded while using Google Forms as the fo
 
 1. Open Google Apps Script and create a new project.
 2. Paste `docs/google-forms-generator.gs` into `Code.gs`.
-3. In `CONFIG`, set:
+3. Open Project Settings and enable "Show appsscript.json manifest file in editor".
+4. Paste `docs/appsscript.json` into `appsscript.json`.
+5. In `CONFIG`, set:
    - `DRIVE_FOLDER_ID`: the folder where forms and response sheets should be stored.
    - `SHARED_SECRET`: any private random string. Use the same value in Cloudflare.
    - `SYNC_WEBHOOK_URL`: the Worker endpoint that receives submitted Google Form responses.
-4. Deploy as a Web App:
+6. Deploy as a Web App:
    - Execute as: Me
    - Who has access: Anyone
-5. Copy the `/exec` Web App URL.
-6. Add these Cloudflare Worker variables:
+7. Copy the `/exec` Web App URL.
+8. Add these Cloudflare Worker variables:
    - `GOOGLE_FORMS_SCRIPT_URL`: the Apps Script `/exec` URL.
    - `GOOGLE_FORMS_SHARED_SECRET`: the same value as `CONFIG.SHARED_SECRET`.
 
@@ -37,3 +39,4 @@ This project keeps the TDEA user flow branded while using Google Forms as the fo
 - Apps Script Web Apps do not reliably expose custom request headers, so the shared secret is sent in the JSON body by the Worker.
 - The current frontend still allows pasting an existing Google Form URL. That keeps events usable even before this engine is fully configured.
 - After changing `docs/google-forms-generator.gs`, paste the updated code into Apps Script and deploy a new Web App version. Existing forms created before this trigger code was installed will not auto-sync unless they are regenerated or given a submit trigger manually.
+- If Google says `ScriptApp.newTrigger` is not authorized, the manifest is missing the `https://www.googleapis.com/auth/script.scriptapp` scope. Add `docs/appsscript.json`, deploy a new version, and approve permissions again.
