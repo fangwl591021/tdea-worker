@@ -15,8 +15,9 @@ This project keeps the TDEA user flow branded while using Google Forms as the fo
 6. Deploy as a Web App:
    - Execute as: Me
    - Who has access: Anyone
-7. Copy the `/exec` Web App URL.
-8. Add these Cloudflare Worker variables:
+7. In the Apps Script editor, select `authorizeTriggerScope` and run it once. Approve permissions when Google asks.
+8. Deploy a new Web App version and copy the `/exec` Web App URL.
+9. Add these Cloudflare Worker variables:
    - `GOOGLE_FORMS_SCRIPT_URL`: the Apps Script `/exec` URL.
    - `GOOGLE_FORMS_SHARED_SECRET`: the same value as `CONFIG.SHARED_SECRET`.
 
@@ -40,3 +41,4 @@ This project keeps the TDEA user flow branded while using Google Forms as the fo
 - The current frontend still allows pasting an existing Google Form URL. That keeps events usable even before this engine is fully configured.
 - After changing `docs/google-forms-generator.gs`, paste the updated code into Apps Script and deploy a new Web App version. Existing forms created before this trigger code was installed will not auto-sync unless they are regenerated or given a submit trigger manually.
 - If Google says `ScriptApp.newTrigger` is not authorized, the manifest is missing the `https://www.googleapis.com/auth/script.scriptapp` scope. Add `docs/appsscript.json`, deploy a new version, and approve permissions again.
+- If the Web App still cannot create triggers after deployment, run `authorizeTriggerScope` manually from the Apps Script editor once, then deploy another new Web App version.

@@ -47,7 +47,7 @@ function createGoogleForm(body) {
   const sheet = SpreadsheetApp.create(title + " 回覆");
   form.setDestination(FormApp.DestinationType.SPREADSHEET, sheet.getId());
   storeFormMetadata(form, sheet, activity);
-  installSubmitTrigger(form);
+  const triggerResult = installSubmitTrigger(form);
   moveFileToFolder(form.getId(), CONFIG.DRIVE_FOLDER_ID);
   moveFileToFolder(sheet.getId(), CONFIG.DRIVE_FOLDER_ID);
 
@@ -58,7 +58,9 @@ function createGoogleForm(body) {
     responderUri: form.getPublishedUrl(),
     editUrl: form.getEditUrl(),
     sheetId: sheet.getId(),
-    sheetUrl: sheet.getUrl()
+    sheetUrl: sheet.getUrl(),
+    triggerInstalled: triggerResult.success,
+    triggerError: triggerResult.message || ""
   };
 }
 
@@ -202,7 +204,12 @@ function storeFormMetadata(form, sheet, activity) {
 }
 
 function installSubmitTrigger(form) {
-  ScriptApp.newTrigger("handleFormSubmit").forForm(form).onFormSubmit().create();
+  try {
+    ScriptApp.newTrigger("handleFormSubmit").forForm(form).onFormSubmit().create();
+    return { success: true };
+  } catch (error) {
+    return { success: false, message: String(error && error.message ? error.message : error) };
+  }
 }
 
 function handleFormSubmit(e) {
@@ -227,6 +234,11 @@ function handleFormSubmit(e) {
       answers: answers
     })
   });
+}
+
+function authorizeTriggerScope() {
+  const triggers = ScriptApp.getProjectTriggers();
+  return "Trigger permission OK. Current triggers: " + triggers.length;
 }
 
 function moveFileToFolder(fileId, folderId) {
