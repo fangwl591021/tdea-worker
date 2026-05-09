@@ -80,7 +80,9 @@
       formId: activity.formId || activity.googleFormId || "",
       googleFormId: activity.googleFormId || activity.formId || "",
       formUrl: activity.formUrl || activity.googleFormUrl || "",
-      googleFormUrl: activity.googleFormUrl || activity.formUrl || ""
+      googleFormUrl: activity.googleFormUrl || activity.formUrl || "",
+      editUrl: activity.googleFormEditUrl || activity.editUrl || "",
+      googleFormEditUrl: activity.googleFormEditUrl || activity.editUrl || ""
     })).filter(activity => activity.name || activity.formId || activity.formUrl);
     if (!activities.length) return;
     const response = await fetch(api + "/api/google-forms/sync", {

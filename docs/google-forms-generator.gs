@@ -196,6 +196,7 @@ function addField(form, field) {
 function storeFormMetadata(form, sheet, activity) {
   const payload = {
     formId: form.getId(),
+    formUrl: form.getPublishedUrl(),
     sheetId: sheet.getId(),
     activity: {
       id: clean(activity.id),
@@ -204,6 +205,9 @@ function storeFormMetadata(form, sheet, activity) {
     }
   };
   PropertiesService.getScriptProperties().setProperty("FORM_" + form.getId(), JSON.stringify(payload));
+  if (activity.id) PropertiesService.getScriptProperties().setProperty("ACTIVITY_" + clean(activity.id), form.getId());
+  if (activity.activityNo) PropertiesService.getScriptProperties().setProperty("ACTIVITY_" + clean(activity.activityNo), form.getId());
+  if (activity.name) PropertiesService.getScriptProperties().setProperty("ACTIVITY_" + clean(activity.name), form.getId());
 }
 
 function installSubmitTrigger(form) {
@@ -271,13 +275,22 @@ function syncFormResponses(body) {
 }
 
 function findForm(formId, activity) {
-  const id = clean(formId);
+  const id = clean(formId) || extractEditableFormId(activity && (activity.formId || activity.googleFormId || activity.editUrl || activity.googleFormEditUrl || activity.formUrl || activity.googleFormUrl));
   if (id) {
     try {
       return FormApp.openById(id);
     } catch (error) {
       // Fall back to title lookup below.
     }
+  }
+  const props = PropertiesService.getScriptProperties();
+  const activityKeys = [activity && activity.id, activity && activity.activityNo, activity && activity.name].map(clean).filter(Boolean);
+  for (let i = 0; i < activityKeys.length; i += 1) {
+    const mappedId = props.getProperty("ACTIVITY_" + activityKeys[i]);
+    if (!mappedId) continue;
+    try {
+      return FormApp.openById(mappedId);
+    } catch (error) {}
   }
   const name = clean(activity && activity.name);
   if (!name || !CONFIG.DRIVE_FOLDER_ID) return null;
@@ -289,14 +302,29 @@ function findForm(formId, activity) {
     } catch (error) {}
   }
   const files = folder.getFiles();
+  const normalizedName = normalizeName(name);
   while (files.hasNext()) {
     const file = files.next();
-    if (file.getName() !== name) continue;
+    const fileName = file.getName();
+    const normalizedFileName = normalizeName(fileName);
+    if (fileName !== name && normalizedFileName.indexOf(normalizedName) < 0 && normalizedName.indexOf(normalizedFileName) < 0) continue;
     try {
       return FormApp.openById(file.getId());
     } catch (error) {}
   }
   return null;
+}
+
+function extractEditableFormId(value) {
+  const text = clean(value);
+  if (!text) return "";
+  const match = text.match(/\/forms\/d\/([a-zA-Z0-9_-]+)/) || text.match(/\/d\/([a-zA-Z0-9_-]+)\/edit/);
+  if (!match) return "";
+  return match[1] === "e" ? "" : match[1];
+}
+
+function normalizeName(value) {
+  return clean(value).replace(/\s+/g, "").toLowerCase();
 }
 
 function authorizeTriggerScope() {
