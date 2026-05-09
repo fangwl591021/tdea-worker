@@ -3,6 +3,7 @@
   const adminKey = "tdea-admin-email";
   const fixedKeyword = "TDEA每月活動";
   const defaultLiffBase = "https://liff.line.me/2005868456-2jmxqyFU?monthlyDetail={id}";
+  const defaultImageUrl = "https://fangwl591021.github.io/tdea-worker/public/assets/kooler-free-course.png";
   const dataKey = "tdea-manager-v3";
   let active = false;
   let config = null;
@@ -89,7 +90,7 @@
   }
 
   function blankPage() {
-    return { id: id(), activityNo: "", activityId: "", imageUrl: "", shareUrl: "" };
+    return { id: id(), activityNo: "", activityId: "", imageUrl: defaultImageUrl, shareUrl: "" };
   }
 
   function ensureConfigShape() {
@@ -233,7 +234,8 @@
       const page = hydratePage(rawPage);
       const detail = page.detailText || (page.activityName ? `${page.activityName}\n\n尚未填寫詳細說明。` : "請先在左側選擇活動。");
       const title = page.activityName || "未選活動";
-      return `<div class="monthly-card"><div class="monthly-image">${page.imageUrl ? `<img src="${esc(page.imageUrl)}" alt="">` : `<div class="monthly-image-empty">第 ${index + 1} 頁圖片</div>`}<div class="monthly-share">分享</div></div><div class="monthly-footer"><button>詳細說明</button><button>點我報名</button></div>${index === selected ? `<div class="monthly-detail-pop"><strong>${esc(title)}</strong><p>${esc(detail)}</p></div>` : ""}</div>`;
+      const imageUrl = page.imageUrl || defaultImageUrl;
+      return `<div class="monthly-card"><div class="monthly-image"><img src="${esc(imageUrl)}" alt=""><div class="monthly-share">分享</div></div><div class="monthly-footer"><button>詳細說明</button><button>點我報名</button></div>${index === selected ? `<div class="monthly-detail-pop"><strong>${esc(title)}</strong><p>${esc(detail)}</p></div>` : ""}</div>`;
     }).join("")}</div></div></div>`;
   }
   function updatePreview() {
@@ -338,7 +340,7 @@
       const detailUri = detailUrlForPage(page);
       const formUri = trim(page.formUrl);
       const shareUri = shareUrlForPage(page);
-      return { type: "bubble", size: "kilo", body: { type: "box", layout: "vertical", paddingAll: "0px", contents: [{ type: "image", url: page.imageUrl || "https://developers-resource.landpress.line.me/fx/img/01_1_cafe.png", size: "full", aspectMode: "cover", aspectRatio: "2:3", gravity: "top", action: { type: "uri", label: "報名", uri: formUri } }, { type: "box", layout: "vertical", position: "absolute", cornerRadius: "20px", offsetTop: "18px", backgroundColor: "#ff334b", offsetStart: "18px", height: "25px", width: "53px", action: { type: "uri", label: "分享", uri: shareUri }, contents: [{ type: "text", text: "分享", color: "#ffffff", align: "center", size: "xs", offsetTop: "3px", action: { type: "uri", label: "分享", uri: shareUri } }] }] }, footer: { type: "box", layout: "horizontal", contents: [{ type: "button", action: { type: "uri", label: "詳細說明", uri: detailUri }, height: "sm", style: "primary" }, { type: "button", action: { type: "uri", label: "點我報名", uri: formUri }, height: "sm", style: "primary", margin: "md" }] } };
+      return { type: "bubble", size: "kilo", body: { type: "box", layout: "vertical", paddingAll: "0px", contents: [{ type: "image", url: page.imageUrl || defaultImageUrl, size: "full", aspectMode: "cover", aspectRatio: "2:3", gravity: "top", action: { type: "uri", label: "報名", uri: formUri } }, { type: "box", layout: "vertical", position: "absolute", cornerRadius: "20px", offsetTop: "18px", backgroundColor: "#ff334b", offsetStart: "18px", height: "25px", width: "53px", action: { type: "uri", label: "分享", uri: shareUri }, contents: [{ type: "text", text: "分享", color: "#ffffff", align: "center", size: "xs", offsetTop: "3px", action: { type: "uri", label: "分享", uri: shareUri } }] }] }, footer: { type: "box", layout: "horizontal", contents: [{ type: "button", action: { type: "uri", label: "詳細說明", uri: detailUri }, height: "sm", style: "primary" }, { type: "button", action: { type: "uri", label: "點我報名", uri: formUri }, height: "sm", style: "primary", margin: "md" }] } };
     }) };
   }
 

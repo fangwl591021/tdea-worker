@@ -7,14 +7,18 @@ function doPost(e) {
   try {
     const body = JSON.parse(e.postData && e.postData.contents ? e.postData.contents : "{}");
     if (CONFIG.SHARED_SECRET && body.sharedSecret !== CONFIG.SHARED_SECRET) {
-      return jsonOutput({ success: false, code: "invalid_secret", message: "Invalid shared secret" }, 403);
+      return jsonOutput({ success: false, code: "invalid_secret", message: "Invalid shared secret" });
     }
     if (body.action !== "CREATE_GOOGLE_FORM") {
-      return jsonOutput({ success: false, code: "unknown_action", message: "Unknown action" }, 400);
+      return jsonOutput({ success: false, code: "unknown_action", message: "Unknown action" });
     }
-    return jsonOutput(createGoogleForm(body), 200);
+    return jsonOutput(createGoogleForm(body));
   } catch (error) {
-    return jsonOutput({ success: false, code: "server_error", message: String(error && error.message ? error.message : error) }, 500);
+    return jsonOutput({
+      success: false,
+      code: "server_error",
+      message: String(error && error.message ? error.message : error)
+    });
   }
 }
 
@@ -38,7 +42,7 @@ function createGoogleForm(body) {
   addTextItem(form, "會員編號", false);
 
   if (settings.genderField !== "none") {
-    addChoiceItem(form, "性別", ["男", "女", "不便透露"], settings.genderField !== "optional");
+    addChoiceItem(form, "性別", ["男", "女", "不透露"], settings.genderField !== "optional");
   }
   if (settings.memberField !== "login") {
     addChoiceItem(form, "是否為會員", ["是", "否", "不確定"], settings.memberField !== "optional");
@@ -52,10 +56,11 @@ function createGoogleForm(body) {
   if (settings.requireImageUpload === "Y") {
     addFileUploadItem(form);
   }
-  form.addParagraphTextItem().setTitle("備註").setRequired(false);
+
   (settings.customFields || []).forEach(function(field) {
     addCustomField(form, field);
   });
+  form.addParagraphTextItem().setTitle("備註").setRequired(false);
 
   const sheet = SpreadsheetApp.create(title + " 回覆");
   form.setDestination(FormApp.DestinationType.SPREADSHEET, sheet.getId());
@@ -98,13 +103,13 @@ function addChoiceItem(form, title, choices, required) {
 function addFileUploadItem(form) {
   try {
     form.addFileUploadItem()
-      .setTitle("圖片 / 附件上傳")
-      .setHelpText("請上傳活動指定資料。")
+      .setTitle("圖片 / 檔案上傳")
+      .setHelpText("請上傳指定檔案。")
       .setRequired(false);
   } catch (error) {
     form.addParagraphTextItem()
-      .setTitle("圖片 / 附件連結")
-      .setHelpText("此 Google 帳號目前無法建立檔案上傳欄位，請貼上雲端檔案連結。")
+      .setTitle("圖片 / 檔案連結")
+      .setHelpText("目前 Google 帳號不支援自動建立檔案上傳欄位，請填寫檔案連結。")
       .setRequired(false);
   }
 }
@@ -157,7 +162,7 @@ function clean(value) {
   return String(value || "").trim();
 }
 
-function jsonOutput(payload, statusCode) {
+function jsonOutput(payload) {
   const output = ContentService.createTextOutput(JSON.stringify(payload));
   output.setMimeType(ContentService.MimeType.JSON);
   return output;
