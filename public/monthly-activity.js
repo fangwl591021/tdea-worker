@@ -253,7 +253,7 @@
     return { type: "carousel", contents: config.pages.slice(0, 12).map((rawPage) => {
       const page = hydratePage(rawPage);
       const detailUri = detailUrlForPage(page);
-      const formUri = trim(page.formUrl) || detailUri;
+      const formUri = trim(page.formUrl);
       const shareUri = shareUrlForPage(page);
       return { type: "bubble", size: "kilo", body: { type: "box", layout: "vertical", paddingAll: "0px", contents: [{ type: "image", url: page.imageUrl || "https://developers-resource.landpress.line.me/fx/img/01_1_cafe.png", size: "full", aspectMode: "cover", aspectRatio: "2:3", gravity: "top", action: { type: "uri", label: "報名", uri: formUri } }, { type: "box", layout: "vertical", position: "absolute", cornerRadius: "20px", offsetTop: "18px", backgroundColor: "#ff334b", offsetStart: "18px", height: "25px", width: "53px", action: { type: "uri", label: "分享", uri: shareUri }, contents: [{ type: "text", text: "分享", color: "#ffffff", align: "center", size: "xs", offsetTop: "3px", action: { type: "uri", label: "分享", uri: shareUri } }] }] }, footer: { type: "box", layout: "horizontal", contents: [{ type: "button", action: { type: "uri", label: "詳細說明", uri: detailUri }, height: "sm", style: "primary" }, { type: "button", action: { type: "uri", label: "點我報名", uri: formUri }, height: "sm", style: "primary", margin: "md" }] } };
     }) };
@@ -264,6 +264,7 @@
       const page = hydratePage(config.pages[index]);
       if (!trim(page.activityNo) && !trim(page.activityId)) return `第 ${index + 1} 頁尚未選擇活動`;
       if (!trim(page.detailText)) return `第 ${index + 1} 頁連動活動缺少詳細說明`;
+      if (!trim(page.formUrl)) return `第 ${index + 1} 頁缺少報名表連結，不能讓「點我報名」連到詳細說明頁`;
     }
     return "";
   }
@@ -281,7 +282,7 @@
     document.querySelector("[data-monthly-activity]")?.addEventListener("change", (event) => { const page = config.pages[selected]; const activity = findActivity(event.target.value); page.activityNo = activity?.activityNo || event.target.value || ""; page.activityId = activity?.id || ""; if (activity) applyActivityToPage(page, activity); updatePreview(); updatePageLabels(); render(); });
     document.querySelectorAll("[data-monthly-page]").forEach((input) => input.addEventListener("input", () => { const page = config.pages[selected]; page[input.name] = input.value; updatePreview(); if (input.name === "imageUrl") updatePageLabels(); }));
     document.querySelector("[data-monthly-file]")?.addEventListener("change", uploadImage);
-    document.querySelector("[data-monthly-json]")?.addEventListener("click", async () => { await navigator.clipboard.writeText(JSON.stringify(buildFlex(), null, 2)); toast("FLEX JSON 已複製"); });
+    document.querySelector("[data-monthly-json]")?.addEventListener("click", async () => { const validation = validateForPublish(); if (validation) return toast(validation); await navigator.clipboard.writeText(JSON.stringify(buildFlex(), null, 2)); toast("FLEX JSON 已複製"); });
     document.querySelector("[data-monthly-publish]")?.addEventListener("click", publish);
   }
 
