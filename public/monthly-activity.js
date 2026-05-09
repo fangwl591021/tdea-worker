@@ -226,7 +226,7 @@
   function pageForm(page) {
     const hydrated = hydratePage(page);
     const linked = trim(hydrated.activityNo || hydrated.activityId);
-    return `<div class="monthly-form"><div class="field"><label>連動活動</label>${activitySelect(page)}<div class="monthly-link-note">只要選活動即可。詳細說明走 LIFF，報名按鈕走該活動的報名表。</div></div>${linkedInfo(page)}<div class="field"><label>活動圖片</label><input type="file" accept="image/*" data-monthly-file><div class="muted">上傳後會自動更新預覽圖片。</div></div><div class="field"><label>圖片網址</label><input name="imageUrl" data-monthly-page value="${esc(page.imageUrl)}" placeholder="上傳後自動填入，也可貼既有海報網址"></div>${!linked ? `<div class="monthly-warning">這頁尚未選擇活動，發布前請先選擇活動。</div>` : ""}${linked && !trim(hydrated.formUrl) ? `<div class="monthly-warning">這個活動還沒有報名表。請回到「創建活動」編輯該活動，在報名表區按「產生 / 重新產生報名表」。</div>` : ""}${linked && !trim(hydrated.detailText) ? `<div class="monthly-warning">此活動沒有詳細說明，請回到活動編輯補上「詳細說明」。</div>` : ""}</div>`;
+    return `<div class="monthly-form"><div class="field"><label>連動活動</label>${activitySelect(page)}<div class="monthly-link-note">只要選活動即可。詳細說明走 LIFF，報名按鈕走該活動的報名表。</div></div>${linkedInfo(page)}<div class="field"><label>活動圖片</label><input type="file" accept="image/*" data-monthly-file><div class="muted">上傳後會自動更新預覽圖片。</div></div><div class="field"><label>圖片網址</label><input name="imageUrl" data-monthly-page value="${esc(page.imageUrl)}" placeholder="上傳後自動填入，也可貼既有海報網址"></div>${!linked ? `<div class="monthly-warning">這頁尚未選擇活動，發布前請先選擇活動。</div>` : ""}${linked && !trim(hydrated.formUrl) ? `<div class="monthly-warning">這個活動還沒有報名表；發布時系統會自動產生並寫回活動。</div>` : ""}${linked && !trim(hydrated.detailText) ? `<div class="monthly-warning">此活動沒有詳細說明，請回到活動編輯補上「詳細說明」。</div>` : ""}</div>`;
   }
   function preview() {
     return `<div class="monthly-phone"><div class="monthly-screen"><div class="monthly-carousel">${config.pages.map((rawPage, index) => {
@@ -247,6 +247,91 @@
     bindPageButtons();
   }
 
+  function formPayloadForActivity(activity) {
+    const settings = formSettingsFor(activity);
+    const fields = Array.isArray(settings.fields) && settings.fields.length ? settings.fields : [
+      { key: "name", label: "姓名", type: "text", required: true },
+      { key: "phone", label: "手機", type: "text", required: true },
+      { key: "email", label: "Email", type: "email", required: true },
+      { key: "company", label: "公司/單位", type: "text", required: false },
+      { key: "memberNo", label: "會員編號", type: "text", required: false },
+      { key: "gender", label: "性別", type: "choice", options: ["男", "女", "不透露"], required: true },
+      { key: "isMember", label: "是否為會員", type: "choice", options: ["是", "否", "不確定"], required: true },
+      { key: "meal", label: "用餐選項", type: "choice", options: ["葷", "素"], required: true },
+      { key: "note", label: "備註", type: "paragraph", required: false }
+    ];
+    return {
+      activity: {
+        id: activity.id || "",
+        activityNo: activity.activityNo || "",
+        name: activity.name || "未命名活動",
+        type: activity.type || "",
+        courseTime: activity.courseTime || "",
+        deadline: activity.deadline || "",
+        capacity: Number(activity.capacity || 0),
+        detailText: detailTextFor(activity)
+      },
+      settings: { ...settings, fields }
+    };
+  }
+
+  function persistGeneratedFormUrl(activity, formUrl) {
+    const data = localData();
+    data.formSettings ||= {};
+    const row = Array.isArray(data.activities)
+      ? data.activities.find((item) => String(item.id || "") === String(activity.id || "") || String(item.activityNo || "") === String(activity.activityNo || "") || String(item.name || "") === String(activity.name || ""))
+      : null;
+    const target = row || activity;
+    target.formMode = "google_form";
+    target.formUrl = formUrl;
+    target.googleFormUrl = formUrl;
+    data.formSettings[target.id] ||= {};
+    Object.assign(data.formSettings[target.id], formSettingsFor(activity), { formUrl, googleFormUrl: formUrl });
+    if (target.activityNo) {
+      data.formSettings[target.activityNo] ||= {};
+      Object.assign(data.formSettings[target.activityNo], data.formSettings[target.id]);
+    }
+    saveLocalData(data);
+    return target;
+  }
+
+  function saveLocalData(data) {
+    localStorage.setItem(dataKey, JSON.stringify(data));
+  }
+
+  async function generateFormForActivity(activity, email) {
+    const response = await fetch(`${api}/api/google-forms/create`, {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-admin-email": email },
+      body: JSON.stringify(formPayloadForActivity(activity))
+    });
+    const result = await response.json().catch(() => ({}));
+    if (!response.ok || !result.success) {
+      throw new Error(result.message || "Google 報名表自動產生失敗");
+    }
+    const formUrl = result.formUrl || result.responderUri || result.data?.formUrl || result.data?.responderUri;
+    if (!formUrl) throw new Error("Google 報名表已建立，但沒有收到公開報名網址");
+    return formUrl;
+  }
+
+  async function ensureFormUrls(email) {
+    for (let index = 0; index < config.pages.length; index += 1) {
+      const page = hydratePage(config.pages[index]);
+      if (trim(page.formUrl)) continue;
+      const activity = findActivity(page.activityNo || page.activityId);
+      if (!activity) return `第 ${index + 1} 頁尚未選擇活動`;
+      toast(`第 ${index + 1} 頁正在自動產生報名表...`);
+      try {
+        const formUrl = await generateFormForActivity(activity, email);
+        const saved = persistGeneratedFormUrl(activity, formUrl);
+        applyActivityToPage(config.pages[index], saved);
+      } catch (error) {
+        return `第 ${index + 1} 頁報名表自動產生失敗：${error.message}`;
+      }
+    }
+    return "";
+  }
+
   function buildFlex() {
     return { type: "carousel", contents: config.pages.slice(0, 12).map((rawPage) => {
       const page = hydratePage(rawPage);
@@ -262,7 +347,6 @@
       const page = hydratePage(config.pages[index]);
       if (!trim(page.activityNo) && !trim(page.activityId)) return `第 ${index + 1} 頁尚未選擇活動`;
       if (!trim(page.detailText)) return `第 ${index + 1} 頁連動活動缺少詳細說明`;
-      if (!trim(page.formUrl)) return `第 ${index + 1} 頁缺少報名表連結，不能讓「點我報名」連到詳細說明頁`;
     }
     return "";
   }
@@ -280,7 +364,7 @@
     document.querySelector("[data-monthly-activity]")?.addEventListener("change", (event) => { const page = config.pages[selected]; const activity = findActivity(event.target.value); page.activityNo = activity?.activityNo || event.target.value || ""; page.activityId = activity?.id || ""; if (activity) applyActivityToPage(page, activity); updatePreview(); updatePageLabels(); render(); });
     document.querySelectorAll("[data-monthly-page]").forEach((input) => input.addEventListener("input", () => { const page = config.pages[selected]; page[input.name] = input.value; updatePreview(); if (input.name === "imageUrl") updatePageLabels(); }));
     document.querySelector("[data-monthly-file]")?.addEventListener("change", uploadImage);
-    document.querySelector("[data-monthly-json]")?.addEventListener("click", async () => { const validation = validateForPublish(); if (validation) return toast(validation); await navigator.clipboard.writeText(JSON.stringify(buildFlex(), null, 2)); toast("FLEX JSON 已複製"); });
+    document.querySelector("[data-monthly-json]")?.addEventListener("click", async () => { const email = adminEmail(); if (!email) return toast("尚未登入，暫不能產生 FLEX JSON。"); const formError = await ensureFormUrls(email); if (formError) return toast(formError); const validation = validateForPublish(); if (validation) return toast(validation); await navigator.clipboard.writeText(JSON.stringify(buildFlex(), null, 2)); toast("FLEX JSON 已複製"); });
     document.querySelector("[data-monthly-publish]")?.addEventListener("click", publish);
   }
 
@@ -305,6 +389,8 @@
   async function publish() {
     const email = adminEmail();
     if (!email) return toast("尚未登入，暫不能發布。後續接 LINE Login 後會自動授權。");
+    const formError = await ensureFormUrls(email);
+    if (formError) return toast(formError);
     const validation = validateForPublish();
     if (validation) return toast(validation);
     config.keyword = fixedKeyword;
