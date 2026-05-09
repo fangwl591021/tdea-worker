@@ -60,6 +60,11 @@
         <input name="posterUrl" type="url" placeholder="若已有圖片網址也可貼上；R2 上傳完成會自動回填">
       </div>
       <div class="field">
+        <label>Google 表單報名網址</label>
+        <input name="formUrl" type="url" placeholder="貼上 Google 表單公開報名網址，會同步寫入活動的表單連結">
+        <small class="form-builder-hint">目前這裡負責保存網址；之後接 Google Drive / Forms API 後可改為自動建立並回填。</small>
+      </div>
+      <div class="field">
         <label>YouTube 影片網址</label>
         <input name="youtubeUrl" type="url" placeholder="可放活動介紹、回顧或直播連結">
       </div>
@@ -110,9 +115,12 @@
 
     const posterFile = form.posterFile?.files?.[0] || null;
     const status = form.querySelector(".form-upload-status");
+    const formUrl = form.formUrl?.value?.trim() || "";
     const settings = {
       posterUrl: form.posterUrl?.value?.trim() || "",
       posterR2Key: "",
+      formUrl,
+      googleFormUrl: formUrl,
       youtubeUrl: form.youtubeUrl?.value?.trim() || "",
       requireImageUpload: form.requireImageUpload?.value || "N",
       genderField: form.genderField?.value || "required",
@@ -148,9 +156,14 @@
       if (!latest) return;
 
       data.formSettings[latest.id] = settings;
+      if (latest.activityNo) data.formSettings[latest.activityNo] = settings;
       latest.formMode = "google_form";
       latest.posterUrl = settings.posterUrl;
       latest.youtubeUrl = settings.youtubeUrl;
+      if (settings.formUrl) {
+        latest.formUrl = settings.formUrl;
+        latest.googleFormUrl = settings.formUrl;
+      }
       save(data);
 
       if (!posterFile) return;
