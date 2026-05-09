@@ -44,11 +44,15 @@
   function collectCustomFields(form) {
     return [...form.querySelectorAll("[data-custom-field]")].map((row, index) => {
       const type = row.querySelector("[name='customType']")?.value || "text";
+      const optionInputs = [...row.querySelectorAll("[name='customOption']")]
+        .map(input => input.value.trim())
+        .filter(Boolean);
+      const legacyOptions = String(row.querySelector("[name='customOptions']")?.value || "").split(/\n|,/).map(item => item.trim()).filter(Boolean);
       return {
         key: "custom_" + (index + 1),
         label: row.querySelector("[name='customLabel']")?.value?.trim() || "",
         type,
-        options: String(row.querySelector("[name='customOptions']")?.value || "").split(/\n|,/).map(item => item.trim()).filter(Boolean),
+        options: optionInputs.length ? optionInputs : legacyOptions,
         required: Boolean(row.querySelector("[name='customRequired']")?.checked)
       };
     }).filter(field => field.label);

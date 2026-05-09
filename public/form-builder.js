@@ -113,6 +113,13 @@
       </div>
       <div class="form-upload-status" aria-live="polite"></div>`;
 
+    const customTitle = block.querySelector(".custom-fields-head strong");
+    if (customTitle) customTitle.textContent = "自訂題目";
+    const addCustomButton = block.querySelector("[data-add-custom-field]");
+    if (addCustomButton) addCustomButton.textContent = "新增題目";
+    const customHint = block.querySelector(".custom-fields-block .form-builder-hint");
+    if (customHint) customHint.textContent = "像 Google 表單一樣新增題目；單選、複選、下拉選單可逐列新增選項。";
+
     submit?.insertAdjacentElement("beforebegin", block);
     submit.textContent = "建立 Google 表單設定";
     block.querySelector("[data-add-custom-field]")?.addEventListener("click", () => addCustomField(block));
@@ -122,16 +129,12 @@
     const list = scope.querySelector("[data-custom-fields]");
     if (!list) return;
     const row = document.createElement("div");
-    row.className = "custom-field-row";
+    row.className = "custom-question-card";
     row.dataset.customField = "1";
     row.innerHTML = `
-      <div class="field">
-        <label>欄位名稱</label>
-        <input name="customLabel" value="${escapeHtml(value.label || "")}" placeholder="例如：交通方式">
-      </div>
-      <div class="field">
-        <label>題型</label>
-        <select name="customType">
+      <div class="custom-question-top">
+        <input class="custom-question-title" name="customLabel" value="${escapeHtml(value.label || "")}" placeholder="問題">
+        <select class="custom-question-type" name="customType">
           ${[
             ["text", "簡答"],
             ["paragraph", "段落"],
@@ -141,16 +144,93 @@
           ].map(([type, label]) => `<option value="${type}" ${value.type === type ? "selected" : ""}>${label}</option>`).join("")}
         </select>
       </div>
-      <div class="field custom-options">
-        <label>選項</label>
-        <textarea name="customOptions" placeholder="例：自行開車, 高鐵, 遊覽車">${escapeHtml((value.options || []).join("\n"))}</textarea>
-      </div>
-      <label class="custom-required"><input type="checkbox" name="customRequired" ${value.required ? "checked" : ""}> 必填</label>
-      <button class="btn danger" type="button" data-remove-custom-field>刪除</button>`;
+      <div class="custom-question-body" data-custom-question-body></div>
+      <div class="custom-question-footer">
+        <button class="btn danger" type="button" data-remove-custom-field>刪除</button>
+        <label class="custom-required"><input type="checkbox" name="customRequired" ${value.required ? "checked" : ""}> 必填</label>
+      </div>`;
     row.querySelector("[data-remove-custom-field]")?.addEventListener("click", () => row.remove());
+    row.querySelector("[name='customType']")?.addEventListener("change", () => renderCustomQuestionBody(row));
     list.appendChild(row);
+    renderCustomQuestionBody(row, value.options || []);
   }
 
+  function isChoiceType(type) {
+    return ["radio", "checkbox", "dropdown"].includes(type);
+  }
+
+  function optionMarker(type, index) {
+    if (type === "checkbox") return "□";
+    if (type === "dropdown") return `${index + 1}.`;
+    return "○";
+  }
+
+  function existingOptions(row) {
+    return [...row.querySelectorAll("[name='customOption']")]
+      .map(input => input.value.trim())
+      .filter(Boolean);
+  }
+
+  function renderCustomQuestionBody(row, initialOptions) {
+    const type = row.querySelector("[name='customType']")?.value || "text";
+    const body = row.querySelector("[data-custom-question-body]");
+    if (!body) return;
+    const values = Array.isArray(initialOptions) && initialOptions.length ? initialOptions : existingOptions(row);
+    body.innerHTML = "";
+
+    if (type === "text") {
+      body.innerHTML = `<div class="custom-preview-line">簡答文字</div>`;
+      return;
+    }
+    if (type === "paragraph") {
+      body.innerHTML = `<div class="custom-preview-line custom-preview-area">長篇文字</div>`;
+      return;
+    }
+    if (!isChoiceType(type)) return;
+
+    const optionList = document.createElement("div");
+    optionList.className = "custom-option-list";
+    optionList.dataset.optionList = "1";
+    body.appendChild(optionList);
+
+    const seeds = values.length ? values : ["選項 1"];
+    seeds.forEach(optionValue => addOptionRow(row, optionValue));
+
+    const addButton = document.createElement("button");
+    addButton.className = "custom-add-option";
+    addButton.type = "button";
+    addButton.textContent = "新增選項";
+    addButton.addEventListener("click", () => addOptionRow(row, ""));
+    body.appendChild(addButton);
+  }
+
+  function addOptionRow(row, value) {
+    const type = row.querySelector("[name='customType']")?.value || "radio";
+    const list = row.querySelector("[data-option-list]");
+    if (!list) return;
+    const option = document.createElement("div");
+    option.className = "custom-option-row";
+    option.innerHTML = `
+      <span class="custom-option-marker"></span>
+      <input class="custom-option-input" name="customOption" value="${escapeHtml(value || "")}" placeholder="選項">
+      <button class="custom-option-remove" type="button" aria-label="刪除選項">×</button>`;
+    option.querySelector(".custom-option-remove")?.addEventListener("click", () => {
+      option.remove();
+      refreshOptionMarkers(row);
+    });
+    list.appendChild(option);
+    refreshOptionMarkers(row, type);
+  }
+
+  function refreshOptionMarkers(row, forcedType) {
+    const type = forcedType || row.querySelector("[name='customType']")?.value || "radio";
+    [...row.querySelectorAll(".custom-option-row")].forEach((option, index) => {
+      const marker = option.querySelector(".custom-option-marker");
+      if (marker) marker.textContent = optionMarker(type, index);
+      const input = option.querySelector("[name='customOption']");
+      if (input && !input.value) input.placeholder = `選項 ${index + 1}`;
+    });
+  }
   function escapeHtml(value) {
     return String(value ?? "").replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;").replaceAll("'", "&#039;");
   }
@@ -165,11 +245,14 @@
   function collectCustomFields(form) {
     return [...form.querySelectorAll("[data-custom-field]")].map((row, index) => {
       const type = row.querySelector("[name='customType']")?.value || "text";
+      const optionInputs = [...row.querySelectorAll("[name='customOption']")]
+        .map(input => input.value.trim())
+        .filter(Boolean);
       return {
         key: "custom_" + (index + 1),
         label: row.querySelector("[name='customLabel']")?.value?.trim() || "",
         type,
-        options: parseOptions(row.querySelector("[name='customOptions']")?.value),
+        options: optionInputs.length ? optionInputs : parseOptions(row.querySelector("[name='customOptions']")?.value),
         required: Boolean(row.querySelector("[name='customRequired']")?.checked)
       };
     }).filter(field => field.label);
@@ -262,12 +345,27 @@
     .form-schema-preview{display:grid;gap:6px;border:1px dashed #bfdbfe;border-radius:8px;padding:12px;background:#fff;color:#344054}
     .form-schema-preview span,.form-builder-hint{color:#667085;font-size:13px;line-height:1.6}
     .form-upload-status{min-height:18px;color:#2563eb;font-size:13px}
-    .custom-fields-block{display:grid;gap:10px;border:1px solid #d0d5dd;border-radius:8px;background:#fff;padding:12px}
+    .custom-fields-block{display:grid;gap:12px;border:1px solid #d0d5dd;border-radius:8px;background:#fff;padding:14px}
     .custom-fields-head{display:flex;align-items:center;justify-content:space-between;gap:12px}
-    .custom-field-row{display:grid;grid-template-columns:minmax(150px,1fr) 150px minmax(180px,1.3fr) auto auto;gap:10px;align-items:end;border-top:1px dashed #e5e7eb;padding-top:12px}
+    .custom-fields-list{display:grid;gap:12px}
+    .custom-question-card{display:grid;gap:14px;border:1px solid #e5e7eb;border-radius:8px;background:#fff;padding:16px;box-shadow:0 4px 12px rgba(15,23,42,.06)}
+    .custom-question-top{display:grid;grid-template-columns:minmax(0,1fr) 180px;gap:12px;align-items:center}
+    .custom-question-title{border:0!important;border-bottom:1px solid #d0d5dd!important;border-radius:0!important;padding:12px 0!important;font-size:18px!important}
+    .custom-question-type{min-height:48px}
+    .custom-question-body{display:grid;gap:10px}
+    .custom-preview-line{color:#98a2b3;border-bottom:1px dotted #cbd5e1;padding:10px 0}
+    .custom-preview-area{min-height:68px}
+    .custom-option-list{display:grid;gap:8px}
+    .custom-option-row{display:grid;grid-template-columns:28px minmax(0,1fr) 34px;gap:8px;align-items:center}
+    .custom-option-marker{color:#667085;text-align:center;font-weight:700}
+    .custom-option-input{border:0!important;border-bottom:1px solid #d0d5dd!important;border-radius:0!important;padding:10px 0!important}
+    .custom-option-remove{width:32px;height:32px;border:0;background:#fff;color:#98a2b3;font-size:22px;cursor:pointer}
+    .custom-option-remove:hover{color:#dc2626}
+    .custom-add-option{justify-self:start;border:0;background:#fff;color:#1d4ed8;font-weight:700;cursor:pointer;padding:6px 0}
+    .custom-question-footer{display:flex;align-items:center;justify-content:flex-end;gap:14px;border-top:1px solid #e5e7eb;padding-top:12px}
     .custom-required{display:flex;align-items:center;gap:6px;min-height:42px;font-weight:700;color:#344054}
     .custom-required input{width:auto}
-    @media(max-width:900px){.custom-field-row{grid-template-columns:1fr}.custom-required{min-height:auto}}
+    @media(max-width:900px){.custom-question-top{grid-template-columns:1fr}.custom-required{min-height:auto}}
   `;
   document.head.appendChild(style);
 
