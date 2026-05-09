@@ -99,14 +99,80 @@
           <option value="none">不需要</option>
         </select>
       </div>
+      <div class="custom-fields-block">
+        <div class="custom-fields-head">
+          <strong>自訂欄位</strong>
+          <button class="btn" type="button" data-add-custom-field>新增欄位</button>
+        </div>
+        <small class="form-builder-hint">可新增簡答、段落、單選、複選、下拉選單。單選、複選、下拉請在選項欄用逗號或換行分隔。</small>
+        <div class="custom-fields-list" data-custom-fields></div>
+      </div>
       <div class="form-schema-preview">
         <strong>預設表單欄位</strong>
-        <span>姓名、手機、Email、公司/單位、會員編號、性別、是否為會員、用餐選項、備註</span>
+        <span>姓名、手機、Email、公司/單位、會員編號、性別、是否為會員、用餐選項、備註；也可再加自訂欄位。</span>
       </div>
       <div class="form-upload-status" aria-live="polite"></div>`;
 
     submit?.insertAdjacentElement("beforebegin", block);
     submit.textContent = "建立 Google 表單設定";
+    block.querySelector("[data-add-custom-field]")?.addEventListener("click", () => addCustomField(block));
+  }
+
+  function addCustomField(scope, value = {}) {
+    const list = scope.querySelector("[data-custom-fields]");
+    if (!list) return;
+    const row = document.createElement("div");
+    row.className = "custom-field-row";
+    row.dataset.customField = "1";
+    row.innerHTML = `
+      <div class="field">
+        <label>欄位名稱</label>
+        <input name="customLabel" value="${escapeHtml(value.label || "")}" placeholder="例如：交通方式">
+      </div>
+      <div class="field">
+        <label>題型</label>
+        <select name="customType">
+          ${[
+            ["text", "簡答"],
+            ["paragraph", "段落"],
+            ["radio", "單選"],
+            ["checkbox", "複選"],
+            ["dropdown", "下拉選單"]
+          ].map(([type, label]) => `<option value="${type}" ${value.type === type ? "selected" : ""}>${label}</option>`).join("")}
+        </select>
+      </div>
+      <div class="field custom-options">
+        <label>選項</label>
+        <textarea name="customOptions" placeholder="例：自行開車, 高鐵, 遊覽車">${escapeHtml((value.options || []).join("\n"))}</textarea>
+      </div>
+      <label class="custom-required"><input type="checkbox" name="customRequired" ${value.required ? "checked" : ""}> 必填</label>
+      <button class="btn danger" type="button" data-remove-custom-field>刪除</button>`;
+    row.querySelector("[data-remove-custom-field]")?.addEventListener("click", () => row.remove());
+    list.appendChild(row);
+  }
+
+  function escapeHtml(value) {
+    return String(value ?? "").replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;").replaceAll("'", "&#039;");
+  }
+
+  function parseOptions(value) {
+    return String(value || "")
+      .split(/\n|,/)
+      .map(item => item.trim())
+      .filter(Boolean);
+  }
+
+  function collectCustomFields(form) {
+    return [...form.querySelectorAll("[data-custom-field]")].map((row, index) => {
+      const type = row.querySelector("[name='customType']")?.value || "text";
+      return {
+        key: "custom_" + (index + 1),
+        label: row.querySelector("[name='customLabel']")?.value?.trim() || "",
+        type,
+        options: parseOptions(row.querySelector("[name='customOptions']")?.value),
+        required: Boolean(row.querySelector("[name='customRequired']")?.checked)
+      };
+    }).filter(field => field.label);
   }
 
   document.addEventListener("submit", event => {
@@ -116,6 +182,7 @@
     const posterFile = form.posterFile?.files?.[0] || null;
     const status = form.querySelector(".form-upload-status");
     const formUrl = form.formUrl?.value?.trim() || "";
+    const customFields = collectCustomFields(form);
     const settings = {
       posterUrl: form.posterUrl?.value?.trim() || "",
       posterR2Key: "",
@@ -126,6 +193,7 @@
       genderField: form.genderField?.value || "required",
       memberField: form.memberField?.value || "required",
       mealField: form.mealField?.value || "required",
+      customFields,
       fields: [
         { key: "name", label: "姓名", type: "text", required: true },
         { key: "phone", label: "手機", type: "text", required: true },
@@ -148,6 +216,7 @@
       settings.fields.push({ key: "imageUpload", label: "圖片/附件上傳", type: "file", required: false });
     }
     settings.fields.push({ key: "note", label: "備註", type: "paragraph", required: false });
+    settings.fields.push(...customFields);
 
     setTimeout(async () => {
       const data = load();
@@ -193,6 +262,12 @@
     .form-schema-preview{display:grid;gap:6px;border:1px dashed #bfdbfe;border-radius:8px;padding:12px;background:#fff;color:#344054}
     .form-schema-preview span,.form-builder-hint{color:#667085;font-size:13px;line-height:1.6}
     .form-upload-status{min-height:18px;color:#2563eb;font-size:13px}
+    .custom-fields-block{display:grid;gap:10px;border:1px solid #d0d5dd;border-radius:8px;background:#fff;padding:12px}
+    .custom-fields-head{display:flex;align-items:center;justify-content:space-between;gap:12px}
+    .custom-field-row{display:grid;grid-template-columns:minmax(150px,1fr) 150px minmax(180px,1.3fr) auto auto;gap:10px;align-items:end;border-top:1px dashed #e5e7eb;padding-top:12px}
+    .custom-required{display:flex;align-items:center;gap:6px;min-height:42px;font-weight:700;color:#344054}
+    .custom-required input{width:auto}
+    @media(max-width:900px){.custom-field-row{grid-template-columns:1fr}.custom-required{min-height:auto}}
   `;
   document.head.appendChild(style);
 

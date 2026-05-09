@@ -53,6 +53,9 @@ function createGoogleForm(body) {
     addFileUploadItem(form);
   }
   form.addParagraphTextItem().setTitle("備註").setRequired(false);
+  (settings.customFields || []).forEach(function(field) {
+    addCustomField(form, field);
+  });
 
   const sheet = SpreadsheetApp.create(title + " 回覆");
   form.setDestination(FormApp.DestinationType.SPREADSHEET, sheet.getId());
@@ -104,6 +107,38 @@ function addFileUploadItem(form) {
       .setHelpText("此 Google 帳號目前無法建立檔案上傳欄位，請貼上雲端檔案連結。")
       .setRequired(false);
   }
+}
+
+function addCustomField(form, field) {
+  const title = clean(field && field.label);
+  if (!title) return;
+  const type = clean(field.type || "text");
+  const required = Boolean(field.required);
+  const options = Array.isArray(field.options) ? field.options.map(clean).filter(Boolean) : [];
+
+  if (type === "paragraph") {
+    form.addParagraphTextItem().setTitle(title).setRequired(required);
+    return;
+  }
+  if (type === "radio") {
+    addChoiceItem(form, title, options.length ? options : ["選項一", "選項二"], required);
+    return;
+  }
+  if (type === "checkbox") {
+    const item = form.addCheckboxItem();
+    item.setTitle(title);
+    item.setChoiceValues(options.length ? options : ["選項一", "選項二"]);
+    item.setRequired(required);
+    return;
+  }
+  if (type === "dropdown") {
+    const item = form.addListItem();
+    item.setTitle(title);
+    item.setChoiceValues(options.length ? options : ["選項一", "選項二"]);
+    item.setRequired(required);
+    return;
+  }
+  addTextItem(form, title, required);
 }
 
 function moveFileToFolder(fileId, folderId) {

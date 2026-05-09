@@ -30,5 +30,6 @@ This project keeps the TDEA user flow branded while using Google Forms as the fo
 ## Notes
 
 - File upload fields in Google Forms may require a Google Workspace account or a compatible account. If Apps Script cannot create the file upload item, the script falls back to a paragraph field asking for a file link.
+- Custom fields support short answer, paragraph, single choice, multiple choice, and dropdown. For choice fields, options are sent from the admin UI as an array.
 - Apps Script Web Apps do not reliably expose custom request headers, so the shared secret is sent in the JSON body by the Worker.
 - The current frontend still allows pasting an existing Google Form URL. That keeps events usable even before this engine is fully configured.

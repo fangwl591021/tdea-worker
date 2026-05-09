@@ -36,8 +36,22 @@
       requireImageUpload: form.requireImageUpload?.value || "N",
       genderField: form.genderField?.value || "required",
       memberField: form.memberField?.value || "required",
-      mealField: form.mealField?.value || "required"
+      mealField: form.mealField?.value || "required",
+      customFields: collectCustomFields(form)
     };
+  }
+
+  function collectCustomFields(form) {
+    return [...form.querySelectorAll("[data-custom-field]")].map((row, index) => {
+      const type = row.querySelector("[name='customType']")?.value || "text";
+      return {
+        key: "custom_" + (index + 1),
+        label: row.querySelector("[name='customLabel']")?.value?.trim() || "",
+        type,
+        options: String(row.querySelector("[name='customOptions']")?.value || "").split(/\n|,/).map(item => item.trim()).filter(Boolean),
+        required: Boolean(row.querySelector("[name='customRequired']")?.checked)
+      };
+    }).filter(field => field.label);
   }
 
   function persistFormUrl(form, url) {
@@ -122,11 +136,11 @@
   function enginePanel() {
     return `<div class="form-engine-panel" data-form-engine-panel>
       <div>
-        <strong>TDEA 品牌報名流程</strong>
-        <span>前台顯示 TDEA 活動頁，Google Forms 只作為後台表單引擎。</span>
+        <strong>報名表設定</strong>
+        <span>按下按鈕後，系統會依下方欄位設定產生 Google 報名表，並自動把報名網址寫回活動。</span>
       </div>
       <button class="btn" type="button" data-generate-google-form>產生 Google 報名表</button>
-      <div class="form-engine-status" data-form-engine-status data-tone="info">可先貼上既有表單網址；接上 Google Forms API 後會自動產生並回填。</div>
+      <div class="form-engine-status" data-form-engine-status data-tone="info">API 尚未啟用前，也可以先把既有 Google 表單網址貼到「報名表公開網址」。</div>
     </div>`;
   }
 
@@ -137,7 +151,7 @@
     const block = form.querySelector(".form-builder-block");
     if (block) {
       const title = block.querySelector(".form-builder-title");
-      if (title) title.textContent = "TDEA 報名表引擎";
+      if (title) title.textContent = "報名表欄位設定";
     }
 
     const formUrlInput = form.querySelector("input[name='formUrl']");
