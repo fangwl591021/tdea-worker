@@ -6,6 +6,7 @@ type MonthlyPage = { id?: string; activityNo?: string; imageUrl?: string; detail
 type MonthlyConfig = { enabled?: boolean; keyword?: string; month?: string; altText?: string; detailBaseUrl?: string; pages?: MonthlyPage[]; updatedAt?: string };
 type RegistrationRecord = { activityId?: string; activityNo?: string; activityName?: string; formId?: string; count: number; lastSubmittedAt?: string };
 type RegistrationSummary = { updatedAt?: string; activities: Record<string, RegistrationRecord> };
+type RegistrationEntry = { id: string; formId?: string; submittedAt?: string; activity?: Record<string, unknown>; answers?: Record<string, unknown> };
 
 const monthlyKey = "flex/monthly-activity.json";
 const registrationSummaryKey = "registrations/summary.json";
@@ -58,6 +59,41 @@ function registrationKeys(activity: Record<string, unknown>, formId: string) {
   return [activity.id, activity.activityNo, activity.name, formId].map((value) => String(value || "").trim()).filter(Boolean);
 }
 
+function registrationListKey(key: string) {
+  return `registrations/by-key/${encodeURIComponent(key)}.json`;
+}
+
+async function readRegistrationList(env: Env, key: string): Promise<RegistrationEntry[]> {
+  if (!env.ASSETS_BUCKET || !key) return [];
+  const object = await env.ASSETS_BUCKET.get(registrationListKey(key));
+  if (!object) return [];
+  const data = await object.json().catch(() => []);
+  return Array.isArray(data) ? data as RegistrationEntry[] : [];
+}
+
+async function appendRegistrationList(env: Env, keys: string[], entry: RegistrationEntry) {
+  if (!env.ASSETS_BUCKET) return;
+  for (const key of keys) {
+    const list = await readRegistrationList(env, key);
+    list.unshift(entry);
+    await env.ASSETS_BUCKET.put(registrationListKey(key), JSON.stringify(list.slice(0, 1000), null, 2), { httpMetadata: { contentType: "application/json; charset=utf-8", cacheControl: "no-store" } });
+  }
+}
+
+async function listRegistrations(request: Request, env: Env) {
+  if (!env.ASSETS_BUCKET) return json({ success: false, message: "R2 bucket is not configured" }, 503);
+  const url = new URL(request.url);
+  const keys = (url.searchParams.get("keys") || url.searchParams.get("key") || "")
+    .split(",")
+    .map((key) => key.trim())
+    .filter(Boolean);
+  for (const key of keys) {
+    const list = await readRegistrationList(env, key);
+    if (list.length) return json({ success: true, key, data: list });
+  }
+  return json({ success: true, key: keys[0] || "", data: [] });
+}
+
 async function handleFormSubmission(request: Request, env: Env) {
   if (!env.ASSETS_BUCKET) return json({ success: false, message: "R2 bucket is not configured" }, 503);
   const body = await request.json().catch(() => ({})) as Record<string, unknown>;
@@ -82,6 +118,15 @@ async function handleFormSubmission(request: Request, env: Env) {
 
   for (const key of keys) summary.activities[key] = record;
   await writeRegistrationSummary(env, summary);
+
+  const entry: RegistrationEntry = {
+    id: crypto.randomUUID(),
+    formId,
+    submittedAt: record.lastSubmittedAt,
+    activity,
+    answers: (body.answers && typeof body.answers === "object" ? body.answers : {}) as Record<string, unknown>
+  };
+  await appendRegistrationList(env, keys, entry);
 
   const eventKey = `registrations/events/${Date.now()}-${crypto.randomUUID()}.json`;
   await env.ASSETS_BUCKET.put(eventKey, JSON.stringify(body, null, 2), { httpMetadata: { contentType: "application/json; charset=utf-8", cacheControl: "no-store" } });
@@ -187,6 +232,7 @@ export default {
     if (request.method === "GET" && url.pathname === "/api/monthly-activity/flex") { const config = await readMonthly(env); return json({ success: true, flex: buildMonthlyFlex(config), data: config }); }
     if (request.method === "POST" && url.pathname === "/api/google-forms/submission") return handleFormSubmission(request, env);
     if (request.method === "GET" && url.pathname === "/api/registrations/summary") return json({ success: true, data: await readRegistrationSummary(env) });
+    if (request.method === "GET" && url.pathname === "/api/registrations/list") return listRegistrations(request, env);
     const detailMatch = url.pathname.match(/^\/monthly-detail\/([^/]+)$/);
     if (request.method === "GET" && detailMatch) return monthlyDetail(env, decodeURIComponent(detailMatch[1]));
     if (request.method === "POST" && url.pathname === "/line-webhook") { const rawBody = await request.text(); const monthly = await handleMonthlyWebhook(request, env, rawBody); if (monthly) return monthly; return baseEntry.fetch(rebuildRequest(request, rawBody), env, ctx); }

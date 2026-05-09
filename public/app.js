@@ -1,6 +1,7 @@
 (() => {
   const key = "tdea-manager-v3";
   const api = "https://tdeawork.fangwl591021.workers.dev";
+  const autoSyncKey = "tdea-auto-sync-registrations";
   const labels = {
     dashboard: ["活動總覽", "查看活動狀態、報名與簽到概況。"],
     association: ["協會名冊", "維護協會會員資料與會員資格，可匯入 CSV。"],
@@ -8,7 +9,7 @@
     creator: ["創建活動", "建立活動草稿，之後可直接改接 D1。"],
     preview: ["用戶預覽", "模擬一般使用者看到的活動報名頁。"]
   };
-  const state = { view: "dashboard", drawer: "", data: load() };
+  const state = { view: "dashboard", drawer: "", data: load(), registrationLists: {} };
 
   function uid() { return "id-" + Math.random().toString(36).slice(2) + Date.now().toString(36); }
   function esc(v) { return String(v ?? "").replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;").replaceAll("'", "&#039;"); }
@@ -32,7 +33,9 @@
       .map(value => String(value || "").trim())
       .filter(Boolean);
   }
-  async function syncRegistrations() {
+  function autoSyncEnabled() { return localStorage.getItem(autoSyncKey) !== "N"; }
+  function setAutoSyncEnabled(enabled) { localStorage.setItem(autoSyncKey, enabled ? "Y" : "N"); }
+  async function syncRegistrations(showMessage = false) {
     if (registrationSyncing || state.view !== "dashboard") return;
     registrationSyncing = true;
     try {
@@ -52,8 +55,11 @@
       if (changed) {
         save();
         render();
+      } else if (showMessage) {
+        toast("目前沒有新的報名同步資料");
       }
     } catch (_) {
+      if (showMessage) toast("同步失敗，請稍後再試");
       // Dashboard remains usable when the Worker summary is temporarily unavailable.
     } finally {
       registrationSyncing = false;
@@ -76,7 +82,7 @@
       ${drawer()}
       <div class="toast" id="toast"></div>`;
     bind();
-    syncRegistrations();
+    if (autoSyncEnabled()) syncRegistrations();
   }
 
   function nav(id, text) { return `<button class="${state.view === id ? "active" : ""}" data-nav="${id}">${text}</button>`; }
@@ -85,7 +91,7 @@
     if (state.view === "vendor") return `<button class="btn" data-import="vendor">匯入 CSV</button><button class="btn primary" data-drawer="vendor:new">新增廠商會員</button>`;
     if (state.view === "creator") return `<button class="btn" data-reset>清空表單</button>`;
     if (state.view === "preview") return `<button class="btn" data-copy>複製預覽網址</button>`;
-    return `<button class="btn" data-worker>檢查 Worker</button><button class="btn danger" data-clear-test>清空測試資料</button><button class="btn primary" data-nav="creator">新增活動</button>`;
+    return `<label class="sync-toggle"><input type="checkbox" data-auto-sync ${autoSyncEnabled() ? "checked" : ""}> 自動同步</label><button class="btn" data-sync-registrations>同步報名</button><button class="btn" data-worker>檢查 Worker</button><button class="btn danger" data-clear-test>清空測試資料</button><button class="btn primary" data-nav="creator">新增活動</button>`;
   }
   function body() {
     if (state.view === "association") return members("association");
@@ -104,7 +110,7 @@
   }
   function stat(label, value) { return `<div class="stat"><span>${label}</span><strong>${n(value)}</strong></div>`; }
   function activityTable(rows) {
-    return `<div class="table-wrap"><table><thead><tr><th>活動名稱</th><th>類型</th><th>課程時間</th><th>報名</th><th>簽到</th><th>狀態</th><th>操作</th></tr></thead><tbody>${rows.map(x => `<tr><td><strong>${esc(x.name)}</strong></td><td>${esc(x.type)}</td><td>${esc(x.courseTime || "-")}</td><td>${n(x.reg)}</td><td>${n(x.check)}</td><td><span class="badge ${x.status === "上架" ? "live" : "off"}">${esc(x.status)}</span></td><td><button class="link" data-drawer="activity:${x.id}">編輯</button><span class="muted"> / </span><button class="link" data-toggle="${x.id}">${x.status === "上架" ? "下架" : "上架"}</button><span class="muted"> / </span><button class="link danger-link" data-delete-activity="${x.id}">刪除</button></td></tr>`).join("")}</tbody></table></div>`;
+    return `<div class="table-wrap"><table><thead><tr><th>活動名稱</th><th>類型</th><th>課程時間</th><th>報名</th><th>簽到</th><th>狀態</th><th>操作</th></tr></thead><tbody>${rows.map(x => `<tr><td><strong>${esc(x.name)}</strong></td><td>${esc(x.type)}</td><td>${esc(x.courseTime || "-")}</td><td>${n(x.reg)}</td><td>${n(x.check)}</td><td><span class="badge ${x.status === "上架" ? "live" : "off"}">${esc(x.status)}</span></td><td><button class="link" data-drawer="activity:${x.id}">編輯</button><span class="muted"> / </span><button class="link" data-registration-list="${x.id}">名單</button><span class="muted"> / </span><button class="link" data-toggle="${x.id}">${x.status === "上架" ? "下架" : "上架"}</button><span class="muted"> / </span><button class="link danger-link" data-delete-activity="${x.id}">刪除</button></td></tr>`).join("")}</tbody></table></div>`;
   }
 
   function members(type) {
@@ -124,9 +130,22 @@
   function drawer() {
     if (!state.drawer) return `<div class="drawer" id="drawer"></div>`;
     const [type, rowId] = state.drawer.split(":");
-    const title = type === "activity" ? "編輯活動" : type === "vendor" ? "編輯廠商會員" : type === "association" ? "編輯協會會員" : type === "import-vendor" ? "匯入廠商名冊" : "匯入協會名冊";
-    const content = type === "activity" ? activityForm(rowId) : type.startsWith("import-") ? importForm(type.replace("import-", "")) : memberForm(type, rowId);
+    const title = type === "activity" ? "編輯活動" : type === "registrations" ? "報名名單" : type === "vendor" ? "編輯廠商會員" : type === "association" ? "編輯協會會員" : type === "import-vendor" ? "匯入廠商名冊" : "匯入協會名冊";
+    const content = type === "activity" ? activityForm(rowId) : type === "registrations" ? registrationList(rowId) : type.startsWith("import-") ? importForm(type.replace("import-", "")) : memberForm(type, rowId);
     return `<div class="drawer open" id="drawer"><div class="drawer-backdrop" data-close></div><div class="drawer-panel"><div class="drawer-title"><h2>${title}</h2><button class="btn icon" data-close>×</button></div>${content}</div></div>`;
+  }
+  function registrationList(rowId) {
+    const activity = state.data.activities.find(r => r.id === rowId) || {};
+    const rows = state.registrationLists[rowId];
+    if (!rows) return `<section class="panel"><div class="panel-head"><h2 class="panel-title">${esc(activity.name || "活動")} 報名名單</h2><button class="btn" data-refresh-registration-list="${esc(rowId)}">重新載入</button></div>${empty("正在載入報名名單...")}</section>`;
+    if (!rows.length) return `<section class="panel"><div class="panel-head"><h2 class="panel-title">${esc(activity.name || "活動")} 報名名單</h2><button class="btn" data-refresh-registration-list="${esc(rowId)}">重新載入</button></div>${empty("目前 Worker 沒有收到這個活動的報名資料")}</section>`;
+    const headers = [...new Set(rows.flatMap(row => Object.keys(row.answers || {})))];
+    return `<section class="panel"><div class="panel-head"><h2 class="panel-title">${esc(activity.name || "活動")} 報名名單</h2><button class="btn" data-refresh-registration-list="${esc(rowId)}">重新載入</button></div><div class="table-wrap"><table><thead><tr><th>送出時間</th>${headers.map(h => `<th>${esc(h)}</th>`).join("")}</tr></thead><tbody>${rows.map(row => `<tr><td>${esc(formatTime(row.submittedAt))}</td>${headers.map(h => `<td>${esc(valueText(row.answers?.[h]))}</td>`).join("")}</tr>`).join("")}</tbody></table></div></section>`;
+  }
+  function valueText(value) { return Array.isArray(value) ? value.join("、") : String(value ?? ""); }
+  function formatTime(value) {
+    const date = new Date(value || "");
+    return Number.isNaN(date.getTime()) ? String(value || "-") : date.toLocaleString("zh-TW", { hour12: false });
   }
   function activityForm(rowId) {
     const x = state.data.activities.find(r => r.id === rowId) || {};
@@ -213,6 +232,10 @@
     document.querySelectorAll("[data-toggle]").forEach(b => b.onclick = () => { const x = state.data.activities.find(r => r.id === b.dataset.toggle); if (x) x.status = x.status === "上架" ? "下架" : "上架"; save(); render(); });
     document.querySelectorAll("[data-delete-activity]").forEach(b => b.onclick = () => deleteActivity(b.dataset.deleteActivity));
     document.querySelectorAll("[data-delete-member]").forEach(b => b.onclick = () => deleteMember(b.dataset.deleteMember));
+    document.querySelectorAll("[data-registration-list]").forEach(b => b.onclick = () => openRegistrationList(b.dataset.registrationList));
+    document.querySelectorAll("[data-refresh-registration-list]").forEach(b => b.onclick = () => loadRegistrationList(b.dataset.refreshRegistrationList, true));
+    const autoSync = document.querySelector("[data-auto-sync]"); if (autoSync) autoSync.onchange = () => { setAutoSyncEnabled(autoSync.checked); toast(autoSync.checked ? "已開啟自動同步" : "已關閉自動同步"); };
+    const syncButton = document.querySelector("[data-sync-registrations]"); if (syncButton) syncButton.onclick = () => syncRegistrations(true);
     const clearTest = document.querySelector("[data-clear-test]"); if (clearTest) clearTest.onclick = clearTestData;
     document.querySelectorAll("[data-register]").forEach(b => b.onclick = () => { const x = state.data.activities.find(r => r.id === b.dataset.register); if (x) x.reg = Number(x.reg || 0) + 1; save(); toast("已模擬新增一筆報名"); render(); });
     const af = document.querySelector("#activity-form"); if (af) af.onsubmit = e => { e.preventDefault(); const d = Object.fromEntries(new FormData(af)); state.data.activities.unshift({ id: uid(), name: d.name.trim(), type: d.type, courseTime: d.courseTime, deadline: d.deadline, capacity: Number(d.capacity || 0), reg: 0, check: 0, status: d.status, formUrl: "" }); save(); state.view = "dashboard"; render(); toast("活動已建立"); };
@@ -224,6 +247,26 @@
     const exp = document.querySelector("[data-export]"); if (exp) exp.onclick = () => { navigator.clipboard.writeText(JSON.stringify(state.data, null, 2)); toast("備份 JSON 已複製"); };
     const copy = document.querySelector("[data-copy]"); if (copy) copy.onclick = () => { navigator.clipboard.writeText(location.href); toast("預覽網址已複製"); };
     const reset = document.querySelector("[data-reset]"); if (reset) reset.onclick = () => { const f = document.querySelector("#activity-form"); if (f) f.reset(); };
+  }
+  function openRegistrationList(rowId) {
+    state.drawer = "registrations:" + rowId;
+    render();
+    loadRegistrationList(rowId);
+  }
+  async function loadRegistrationList(rowId, showMessage = false) {
+    const activity = state.data.activities.find(r => r.id === rowId);
+    if (!activity) return;
+    try {
+      const keys = registrationCandidates(activity).map(encodeURIComponent).join(",");
+      const res = await fetch(api + "/api/registrations/list?keys=" + keys, { cache: "no-store" });
+      const result = await res.json().catch(() => ({}));
+      state.registrationLists[rowId] = Array.isArray(result.data) ? result.data : [];
+      if (showMessage) toast("名單已同步");
+    } catch (_) {
+      state.registrationLists[rowId] = [];
+      if (showMessage) toast("名單載入失敗");
+    }
+    render();
   }
   async function loadRosterSeed(force = false) {
     if (!force && (state.data.association.length || state.data.vendor.length)) return;
