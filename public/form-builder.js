@@ -146,13 +146,28 @@
       </div>
       <div class="custom-question-body" data-custom-question-body></div>
       <div class="custom-question-footer">
+        <div class="custom-sort-actions">
+          <button class="btn" type="button" data-move-custom-field="up">上移</button>
+          <button class="btn" type="button" data-move-custom-field="down">下移</button>
+        </div>
         <button class="btn danger" type="button" data-remove-custom-field>刪除</button>
         <label class="custom-required"><input type="checkbox" name="customRequired" ${value.required ? "checked" : ""}> 必填</label>
       </div>`;
     row.querySelector("[data-remove-custom-field]")?.addEventListener("click", () => row.remove());
+    row.querySelector("[data-move-custom-field='up']")?.addEventListener("click", () => moveCustomField(row, -1));
+    row.querySelector("[data-move-custom-field='down']")?.addEventListener("click", () => moveCustomField(row, 1));
     row.querySelector("[name='customType']")?.addEventListener("change", () => renderCustomQuestionBody(row));
     list.appendChild(row);
     renderCustomQuestionBody(row, value.options || []);
+  }
+
+  function moveCustomField(row, direction) {
+    if (direction < 0 && row.previousElementSibling) {
+      row.parentElement?.insertBefore(row, row.previousElementSibling);
+    }
+    if (direction > 0 && row.nextElementSibling) {
+      row.parentElement?.insertBefore(row.nextElementSibling, row);
+    }
   }
 
   function isChoiceType(type) {
@@ -363,6 +378,7 @@
     .custom-option-remove:hover{color:#dc2626}
     .custom-add-option{justify-self:start;border:0;background:#fff;color:#1d4ed8;font-weight:700;cursor:pointer;padding:6px 0}
     .custom-question-footer{display:flex;align-items:center;justify-content:flex-end;gap:14px;border-top:1px solid #e5e7eb;padding-top:12px}
+    .custom-sort-actions{display:flex;gap:8px;margin-right:auto}
     .custom-required{display:flex;align-items:center;gap:6px;min-height:42px;font-weight:700;color:#344054}
     .custom-required input{width:auto}
     @media(max-width:900px){.custom-question-top{grid-template-columns:1fr}.custom-required{min-height:auto}}
