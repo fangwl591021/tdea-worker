@@ -26,6 +26,40 @@
     };
   }
 
+  let registrationSyncing = false;
+  function registrationCandidates(activity) {
+    return [activity?.id, activity?.activityNo, activity?.name, activity?.formId, activity?.googleFormId]
+      .map(value => String(value || "").trim())
+      .filter(Boolean);
+  }
+  async function syncRegistrations() {
+    if (registrationSyncing || state.view !== "dashboard") return;
+    registrationSyncing = true;
+    try {
+      const res = await fetch(api + "/api/registrations/summary", { cache: "no-store" });
+      const result = await res.json().catch(() => ({}));
+      const records = result?.data?.activities || {};
+      let changed = false;
+      (state.data.activities || []).forEach(activity => {
+        const record = registrationCandidates(activity).map(key => records[key]).find(Boolean);
+        if (!record) return;
+        const nextCount = Number(record.count || 0);
+        if (Number(activity.reg || 0) !== nextCount) {
+          activity.reg = nextCount;
+          changed = true;
+        }
+      });
+      if (changed) {
+        save();
+        render();
+      }
+    } catch (_) {
+      // Dashboard remains usable when the Worker summary is temporarily unavailable.
+    } finally {
+      registrationSyncing = false;
+    }
+  }
+
   function render() {
     const [title, sub] = labels[state.view];
     document.querySelector("#app").innerHTML = `
@@ -42,6 +76,7 @@
       ${drawer()}
       <div class="toast" id="toast"></div>`;
     bind();
+    syncRegistrations();
   }
 
   function nav(id, text) { return `<button class="${state.view === id ? "active" : ""}" data-nav="${id}">${text}</button>`; }

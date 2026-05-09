@@ -31,7 +31,7 @@
   }
 
   function currentSettings(form) {
-    return {
+    const settings = {
       formUrl: trim(form.formUrl?.value),
       posterUrl: trim(form.posterUrl?.value),
       youtubeUrl: trim(form.youtubeUrl?.value),
@@ -41,6 +41,33 @@
       mealField: form.mealField?.value || "required",
       customFields: collectCustomFields(form)
     };
+    settings.fields = buildFields(settings);
+    return settings;
+  }
+
+  function buildFields(settings) {
+    const fields = [
+      { key: "name", label: "姓名", type: "text", required: true },
+      { key: "phone", label: "手機", type: "text", required: true },
+      { key: "email", label: "Email", type: "email", required: true },
+      { key: "company", label: "公司/單位", type: "text", required: false },
+      { key: "memberNo", label: "會員編號", type: "text", required: false }
+    ];
+    if (settings.genderField !== "none") {
+      fields.push({ key: "gender", label: "性別", type: "radio", options: ["男", "女", "不透露"], required: settings.genderField === "required" });
+    }
+    if (settings.memberField !== "login" && settings.memberField !== "none") {
+      fields.push({ key: "isMember", label: "是否為會員", type: "radio", options: ["是", "否", "不確定"], required: settings.memberField === "required" });
+    }
+    if (settings.mealField !== "none") {
+      fields.push({ key: "meal", label: "用餐選項", type: "radio", options: ["葷", "素"], required: settings.mealField === "required" });
+    }
+    if (settings.requireImageUpload === "Y") {
+      fields.push({ key: "imageUpload", label: "圖片/附件上傳", type: "file", required: false });
+    }
+    fields.push({ key: "note", label: "備註", type: "paragraph", required: false });
+    fields.push(...(settings.customFields || []));
+    return fields;
   }
 
   function collectCustomFields(form) {

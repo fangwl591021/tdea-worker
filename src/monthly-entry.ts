@@ -1,11 +1,14 @@
 import baseEntry from "./roster-sync-entry4";
 
-type Env = { ADMIN_EMAILS?: string; ASSETS_BUCKET?: R2Bucket; LINE_CHANNEL_SECRET?: string; LINE_CHANNEL_ACCESS_TOKEN?: string };
+type Env = { ADMIN_EMAILS?: string; ASSETS_BUCKET?: R2Bucket; LINE_CHANNEL_SECRET?: string; LINE_CHANNEL_ACCESS_TOKEN?: string; GOOGLE_FORMS_SHARED_SECRET?: string };
 type LineEvent = { type?: string; replyToken?: string; message?: { type?: string; text?: string }; postback?: { data?: string } };
 type MonthlyPage = { id?: string; activityNo?: string; imageUrl?: string; detailTitle?: string; detailText?: string; detailUrl?: string; formUrl?: string; shareUrl?: string; order?: number };
 type MonthlyConfig = { enabled?: boolean; keyword?: string; month?: string; altText?: string; detailBaseUrl?: string; pages?: MonthlyPage[]; updatedAt?: string };
+type RegistrationRecord = { activityId?: string; activityNo?: string; activityName?: string; formId?: string; count: number; lastSubmittedAt?: string };
+type RegistrationSummary = { updatedAt?: string; activities: Record<string, RegistrationRecord> };
 
 const monthlyKey = "flex/monthly-activity.json";
+const registrationSummaryKey = "registrations/summary.json";
 const workerBaseUrl = "https://tdeawork.fangwl591021.workers.dev";
 const fixedKeyword = "TDEA每月活動";
 const defaultLiffBase = "https://liff.line.me/2005868456-2jmxqyFU?monthlyDetail={id}";
@@ -34,6 +37,55 @@ async function writeMonthly(env: Env, config: MonthlyConfig) {
   normalized.updatedAt = new Date().toISOString();
   await env.ASSETS_BUCKET.put(monthlyKey, JSON.stringify(normalized, null, 2), { httpMetadata: { contentType: "application/json; charset=utf-8", cacheControl: "no-store" } });
   return true;
+}
+
+async function readRegistrationSummary(env: Env): Promise<RegistrationSummary> {
+  const object = env.ASSETS_BUCKET ? await env.ASSETS_BUCKET.get(registrationSummaryKey) : null;
+  if (!object) return { activities: {} };
+  const data = await object.json().catch(() => ({}));
+  const activities = data && typeof data === "object" && typeof (data as RegistrationSummary).activities === "object" ? (data as RegistrationSummary).activities : {};
+  return { updatedAt: (data as RegistrationSummary).updatedAt, activities: activities || {} };
+}
+
+async function writeRegistrationSummary(env: Env, summary: RegistrationSummary) {
+  if (!env.ASSETS_BUCKET) return false;
+  summary.updatedAt = new Date().toISOString();
+  await env.ASSETS_BUCKET.put(registrationSummaryKey, JSON.stringify(summary, null, 2), { httpMetadata: { contentType: "application/json; charset=utf-8", cacheControl: "no-store" } });
+  return true;
+}
+
+function registrationKeys(activity: Record<string, unknown>, formId: string) {
+  return [activity.id, activity.activityNo, activity.name, formId].map((value) => String(value || "").trim()).filter(Boolean);
+}
+
+async function handleFormSubmission(request: Request, env: Env) {
+  if (!env.ASSETS_BUCKET) return json({ success: false, message: "R2 bucket is not configured" }, 503);
+  const body = await request.json().catch(() => ({})) as Record<string, unknown>;
+  if (body.action && body.action !== "FORM_SUBMISSION") return json({ success: false, message: "Unknown action" }, 400);
+  if (env.GOOGLE_FORMS_SHARED_SECRET && body.sharedSecret !== env.GOOGLE_FORMS_SHARED_SECRET) return json({ success: false, message: "Invalid shared secret" }, 403);
+
+  const activity = (body.activity && typeof body.activity === "object" ? body.activity : {}) as Record<string, unknown>;
+  const formId = String(body.formId || "").trim();
+  const keys = registrationKeys(activity, formId);
+  if (!keys.length) return json({ success: false, message: "Missing activity or form id" }, 400);
+
+  const summary = await readRegistrationSummary(env);
+  const existing = keys.map((key) => summary.activities[key]).find(Boolean);
+  const record: RegistrationRecord = {
+    activityId: String(activity.id || existing?.activityId || "").trim(),
+    activityNo: String(activity.activityNo || existing?.activityNo || "").trim(),
+    activityName: String(activity.name || existing?.activityName || "").trim(),
+    formId: formId || existing?.formId || "",
+    count: Number(existing?.count || 0) + 1,
+    lastSubmittedAt: String(body.submittedAt || new Date().toISOString())
+  };
+
+  for (const key of keys) summary.activities[key] = record;
+  await writeRegistrationSummary(env, summary);
+
+  const eventKey = `registrations/events/${Date.now()}-${crypto.randomUUID()}.json`;
+  await env.ASSETS_BUCKET.put(eventKey, JSON.stringify(body, null, 2), { httpMetadata: { contentType: "application/json; charset=utf-8", cacheControl: "no-store" } });
+  return json({ success: true, data: record });
 }
 
 function normalizeConfig(config: MonthlyConfig): MonthlyConfig {
@@ -133,6 +185,8 @@ export default {
     if (request.method === "GET" && url.pathname === "/api/monthly-activity") return json({ success: true, data: await readMonthly(env) });
     if ((request.method === "PUT" || request.method === "POST") && url.pathname === "/api/monthly-activity") { const guard = requireAdmin(request, env); if (guard) return guard; if (!env.ASSETS_BUCKET) return json({ success: false, message: "R2 bucket is not configured" }, 503); const config = await request.json().catch(() => ({})) as MonthlyConfig; await writeMonthly(env, config); return json({ success: true, data: await readMonthly(env), flex: buildMonthlyFlex(config) }); }
     if (request.method === "GET" && url.pathname === "/api/monthly-activity/flex") { const config = await readMonthly(env); return json({ success: true, flex: buildMonthlyFlex(config), data: config }); }
+    if (request.method === "POST" && url.pathname === "/api/google-forms/submission") return handleFormSubmission(request, env);
+    if (request.method === "GET" && url.pathname === "/api/registrations/summary") return json({ success: true, data: await readRegistrationSummary(env) });
     const detailMatch = url.pathname.match(/^\/monthly-detail\/([^/]+)$/);
     if (request.method === "GET" && detailMatch) return monthlyDetail(env, decodeURIComponent(detailMatch[1]));
     if (request.method === "POST" && url.pathname === "/line-webhook") { const rawBody = await request.text(); const monthly = await handleMonthlyWebhook(request, env, rawBody); if (monthly) return monthly; return baseEntry.fetch(rebuildRequest(request, rawBody), env, ctx); }

@@ -9,6 +9,7 @@ This project keeps the TDEA user flow branded while using Google Forms as the fo
 3. In `CONFIG`, set:
    - `DRIVE_FOLDER_ID`: the folder where forms and response sheets should be stored.
    - `SHARED_SECRET`: any private random string. Use the same value in Cloudflare.
+   - `SYNC_WEBHOOK_URL`: the Worker endpoint that receives submitted Google Form responses.
 4. Deploy as a Web App:
    - Execute as: Me
    - Who has access: Anyone
@@ -25,6 +26,8 @@ This project keeps the TDEA user flow branded while using Google Forms as the fo
 -> `Google Form + response Sheet`
 -> `formUrl` returns to the admin page
 -> activity data stores the public registration URL
+-> `onFormSubmit` sends each response to `/api/google-forms/submission`
+-> `/api/registrations/summary` feeds the dashboard registration count
 -> monthly activity Flex uses that URL.
 
 ## Notes
@@ -33,3 +36,4 @@ This project keeps the TDEA user flow branded while using Google Forms as the fo
 - Custom fields support short answer, paragraph, single choice, multiple choice, and dropdown. For choice fields, options are sent from the admin UI as an array.
 - Apps Script Web Apps do not reliably expose custom request headers, so the shared secret is sent in the JSON body by the Worker.
 - The current frontend still allows pasting an existing Google Form URL. That keeps events usable even before this engine is fully configured.
+- After changing `docs/google-forms-generator.gs`, paste the updated code into Apps Script and deploy a new Web App version. Existing forms created before this trigger code was installed will not auto-sync unless they are regenerated or given a submit trigger manually.
