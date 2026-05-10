@@ -169,7 +169,10 @@
         courseTime: trim(activity.courseTime) || trim(form.courseTime?.value),
         deadline: trim(activity.deadline) || trim(form.deadline?.value),
         capacity: Number(activity.capacity || form.capacity?.value || 0),
-        detailText: trim(activity.detailText) || trim(form.detailText?.value)
+        detailText: trim(activity.detailText) || trim(form.detailText?.value),
+        posterUrl: trim(activity.posterUrl) || trim(settings.posterUrl) || trim(form.posterUrl?.value),
+        imageUrl: trim(activity.imageUrl) || trim(activity.posterUrl) || trim(settings.posterUrl) || trim(form.posterUrl?.value),
+        youtubeUrl: trim(activity.youtubeUrl) || trim(settings.youtubeUrl) || trim(form.youtubeUrl?.value)
       },
       settings
     };

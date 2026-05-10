@@ -316,7 +316,10 @@
         courseTime: activity.courseTime || "",
         deadline: activity.deadline || "",
         capacity: Number(activity.capacity || 0),
-        detailText: detailTextFor(activity)
+        detailText: detailTextFor(activity),
+        posterUrl: posterUrlFor(activity),
+        imageUrl: posterUrlFor(activity),
+        youtubeUrl: activity.youtubeUrl || settings.youtubeUrl || ""
       },
       settings: { ...settings, fields }
     };

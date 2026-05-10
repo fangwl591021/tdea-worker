@@ -245,7 +245,7 @@ async function opnFormRawJson(env: Env, path: string, init: RequestInit = {}) {
 
 function opnFormType(type: unknown) {
   const key = clean(type).toLowerCase();
-  if (key === "paragraph" || key === "textarea" || key === "long_text") return "long_text";
+  if (key === "paragraph" || key === "textarea" || key === "long_text") return "text";
   if (key === "email") return "email";
   if (key === "phone" || key === "tel") return "phone_number";
   if (key === "number") return "number";
@@ -253,17 +253,61 @@ function opnFormType(type: unknown) {
   if (key === "file" || key === "files") return "files";
   if (key === "checkbox" || key === "checkboxes" || key === "multi_select") return "multi_select";
   if (key === "radio" || key === "choice" || key === "dropdown" || key === "select") return "select";
-  return "short_text";
+  return "text";
+}
+
+function opnFormIsLongText(type: unknown) {
+  const key = clean(type).toLowerCase();
+  return key === "paragraph" || key === "textarea" || key === "long_text";
 }
 
 function normalizeOptions(options: unknown) {
   return (Array.isArray(options) ? options : clean(options).split(/\n|,/))
     .map((item) => clean(item))
     .filter(Boolean)
-    .map((name) => ({ name }));
+    .map((name) => ({ id: name, name }));
 }
 
-function opnFormProperties(fields: unknown) {
+function htmlLines(value: unknown) {
+  return esc(value).replace(/\r?\n/g, "<br>");
+}
+
+function firstClean(...values: unknown[]) {
+  for (const value of values) {
+    const text = clean(value);
+    if (text) return text;
+  }
+  return "";
+}
+
+function opnFormIntroProperties(activity: Record<string, unknown>, settings: Record<string, unknown>) {
+  const title = firstClean(activity.name, settings.title);
+  const activityNo = firstClean(activity.activityNo, settings.activityNo);
+  const courseTime = firstClean(activity.courseTime, settings.courseTime);
+  const deadline = firstClean(activity.deadline, settings.deadline);
+  const detailText = firstClean(activity.detailText, settings.detailText, settings.description);
+  const posterUrl = firstClean(activity.posterUrl, activity.imageUrl, activity.coverUrl, settings.posterUrl, settings.imageUrl, settings.coverUrl);
+  const youtubeUrl = firstClean(activity.youtubeUrl, settings.youtubeUrl);
+  const lines = [
+    activityNo ? `<p><b>活動編號：</b>${htmlLines(activityNo)}</p>` : "",
+    courseTime ? `<p><b>活動時間：</b>${htmlLines(courseTime)}</p>` : "",
+    deadline ? `<p><b>報名截止：</b>${htmlLines(deadline)}</p>` : "",
+    detailText ? `<p>${htmlLines(detailText)}</p>` : ""
+  ].filter(Boolean).join("");
+  const content = [
+    posterUrl ? `<p><img src="${esc(posterUrl)}" alt="${esc(title || "TDEA activity")}" style="max-width:100%;border-radius:12px;"></p>` : "",
+    title ? `<h1>${htmlLines(title)}</h1>` : "<h1>TDEA 活動報名</h1>",
+    lines,
+    youtubeUrl ? `<p><a href="${esc(youtubeUrl)}" target="_blank" rel="noopener">活動影片</a></p>` : ""
+  ].filter(Boolean).join("");
+  return [
+    { id: "tdea_activity_intro", type: "nf-text", name: "活動資訊", content },
+    { id: "tdea_activity_divider", type: "nf-divider", name: "報名資料" }
+  ];
+}
+
+function opnFormProperties(activity: Record<string, unknown>, settings: Record<string, unknown>) {
+  const fields = settings.fields;
   const rows = Array.isArray(fields) ? fields as Array<Record<string, unknown>> : [];
   const normal = rows.map((field, index) => {
     const type = opnFormType(field.type);
@@ -274,14 +318,16 @@ function opnFormProperties(fields: unknown) {
       required: Boolean(field.required),
       width: "full"
     };
+    if (type === "text" && opnFormIsLongText(field.type)) property.multi_lines = true;
     if (type === "select" || type === "multi_select") property.options = normalizeOptions(field.options);
     return property;
   });
   return [
+    ...opnFormIntroProperties(activity, settings),
     ...normal,
-    { id: "tdea_activity_id", type: "short_text", name: "TDEA Activity ID", hidden: true, required: false, width: "full" },
-    { id: "tdea_activity_no", type: "short_text", name: "TDEA Activity No", hidden: true, required: false, width: "full" },
-    { id: "tdea_activity_name", type: "short_text", name: "TDEA Activity Name", hidden: true, required: false, width: "full" }
+    { id: "tdea_activity_id", type: "text", name: "TDEA Activity ID", hidden: true, required: false, width: "full" },
+    { id: "tdea_activity_no", type: "text", name: "TDEA Activity No", hidden: true, required: false, width: "full" },
+    { id: "tdea_activity_name", type: "text", name: "TDEA Activity Name", hidden: true, required: false, width: "full" }
   ];
 }
 
@@ -346,7 +392,7 @@ async function createOpnForm(request: Request, env: Env) {
     seo_meta: {},
     database_fields_update: [],
     max_submissions_count: Number(activity.capacity || 0) > 0 ? Number(activity.capacity) : undefined,
-    properties: opnFormProperties(settings.fields)
+    properties: opnFormProperties(activity, settings)
   };
   const create = await opnFormJson(env, "/open/forms", { method: "POST", body: JSON.stringify(payload) });
   if (!create.response.ok) {
