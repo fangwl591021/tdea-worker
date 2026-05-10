@@ -268,10 +268,6 @@ function normalizeOptions(options: unknown) {
     .map((name) => ({ id: name, name }));
 }
 
-function htmlLines(value: unknown) {
-  return esc(value).replace(/\r?\n/g, "<br>");
-}
-
 function firstClean(...values: unknown[]) {
   for (const value of values) {
     const text = clean(value);
@@ -281,27 +277,9 @@ function firstClean(...values: unknown[]) {
 }
 
 function opnFormIntroProperties(activity: Record<string, unknown>, settings: Record<string, unknown>) {
-  const title = firstClean(activity.name, settings.title);
-  const activityNo = firstClean(activity.activityNo, settings.activityNo);
-  const courseTime = firstClean(activity.courseTime, settings.courseTime);
-  const deadline = firstClean(activity.deadline, settings.deadline);
-  const detailText = firstClean(activity.detailText, settings.detailText, settings.description);
   const posterUrl = firstClean(activity.posterUrl, activity.imageUrl, activity.coverUrl, settings.posterUrl, settings.imageUrl, settings.coverUrl);
-  const youtubeUrl = firstClean(activity.youtubeUrl, settings.youtubeUrl);
-  const lines = [
-    activityNo ? `<p><b>活動編號：</b>${htmlLines(activityNo)}</p>` : "",
-    courseTime ? `<p><b>活動時間：</b>${htmlLines(courseTime)}</p>` : "",
-    deadline ? `<p><b>報名截止：</b>${htmlLines(deadline)}</p>` : "",
-    detailText ? `<p>${htmlLines(detailText)}</p>` : ""
-  ].filter(Boolean).join("");
-  const content = [
-    title ? `<h1>${htmlLines(title)}</h1>` : "<h1>TDEA 活動報名</h1>",
-    lines
-  ].filter(Boolean).join("");
   const blocks: Record<string, unknown>[] = [];
   if (posterUrl) blocks.push({ id: "tdea_activity_poster", type: "nf-image", name: "活動海報", image_block: posterUrl, align: "center", width: "full" });
-  blocks.push({ id: "tdea_activity_intro", type: "nf-text", name: "活動資訊", content });
-  if (youtubeUrl) blocks.push({ id: "tdea_activity_video", type: "nf-video", name: "活動影片", video_block: youtubeUrl, align: "center", width: "full" });
   blocks.push({ id: "tdea_activity_divider", type: "nf-divider", name: "報名資料" });
   return blocks;
 }
@@ -373,7 +351,7 @@ async function createOpnForm(request: Request, env: Env) {
     border_radius: "small",
     layout_rtl: false,
     uppercase_labels: false,
-    no_branding: false,
+    no_branding: true,
     transparent_background: false,
     submit_button_text: "送出報名",
     submitted_text: "報名已送出，謝謝您。",
@@ -390,7 +368,6 @@ async function createOpnForm(request: Request, env: Env) {
     captcha_provider: "recaptcha",
     can_be_indexed: false,
     seo_meta: {},
-    database_fields_update: [],
     max_submissions_count: Number(activity.capacity || 0) > 0 ? Number(activity.capacity) : undefined,
     properties: opnFormProperties(activity, settings)
   };
