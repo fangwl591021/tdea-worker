@@ -295,15 +295,15 @@ function opnFormIntroProperties(activity: Record<string, unknown>, settings: Rec
     detailText ? `<p>${htmlLines(detailText)}</p>` : ""
   ].filter(Boolean).join("");
   const content = [
-    posterUrl ? `<p><img src="${esc(posterUrl)}" alt="${esc(title || "TDEA activity")}" style="max-width:100%;border-radius:12px;"></p>` : "",
     title ? `<h1>${htmlLines(title)}</h1>` : "<h1>TDEA 活動報名</h1>",
-    lines,
-    youtubeUrl ? `<p><a href="${esc(youtubeUrl)}" target="_blank" rel="noopener">活動影片</a></p>` : ""
+    lines
   ].filter(Boolean).join("");
-  return [
-    { id: "tdea_activity_intro", type: "nf-text", name: "活動資訊", content },
-    { id: "tdea_activity_divider", type: "nf-divider", name: "報名資料" }
-  ];
+  const blocks: Record<string, unknown>[] = [];
+  if (posterUrl) blocks.push({ id: "tdea_activity_poster", type: "nf-image", name: "活動海報", image_block: posterUrl, align: "center", width: "full" });
+  blocks.push({ id: "tdea_activity_intro", type: "nf-text", name: "活動資訊", content });
+  if (youtubeUrl) blocks.push({ id: "tdea_activity_video", type: "nf-video", name: "活動影片", video_block: youtubeUrl, align: "center", width: "full" });
+  blocks.push({ id: "tdea_activity_divider", type: "nf-divider", name: "報名資料" });
+  return blocks;
 }
 
 function opnFormProperties(activity: Record<string, unknown>, settings: Record<string, unknown>) {
