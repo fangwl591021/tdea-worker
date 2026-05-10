@@ -562,7 +562,7 @@ function appendIdToUrl(baseUrl: string | undefined, activityNo: string | undefin
 
 function detailUrlForPage(page: MonthlyPage, config: MonthlyConfig) {
   const generated = appendIdToUrl(config.detailBaseUrl, page.activityNo, page.id);
-  return page.detailUrl || generated || `${workerBaseUrl}/monthly-detail/${encodeURIComponent(String(page.id || ""))}`;
+  return generated || page.detailUrl || `${workerBaseUrl}/monthly-detail/${encodeURIComponent(String(page.id || ""))}`;
 }
 
 function buildMonthlyFlex(config: MonthlyConfig) {
