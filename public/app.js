@@ -223,7 +223,17 @@
     const headers = [...new Set(rows.flatMap(row => Object.keys(row.answers || {})))];
     return `<section class="panel"><div class="panel-head"><h2 class="panel-title">${esc(activity.name || "活動")} 報名名單</h2><button class="btn" data-refresh-registration-list="${esc(rowId)}">重新載入</button></div><div class="table-wrap"><table><thead><tr><th>送出時間</th>${headers.map(h => `<th>${esc(h)}</th>`).join("")}</tr></thead><tbody>${rows.map(row => `<tr><td>${esc(formatTime(row.submittedAt))}</td>${headers.map(h => `<td>${esc(valueText(row.answers?.[h]))}</td>`).join("")}</tr>`).join("")}</tbody></table></div></section>`;
   }
-  function valueText(value) { return Array.isArray(value) ? value.join("、") : String(value ?? ""); }
+  function valueText(value) {
+    if (Array.isArray(value)) return value.map(valueText).filter(Boolean).join("、");
+    if (value && typeof value === "object") {
+      for (const key of ["value", "answer", "label", "name", "text", "display", "display_value", "formatted", "url", "file_name"]) {
+        const next = valueText(value[key]);
+        if (next) return next;
+      }
+      return Object.values(value).map(valueText).filter(Boolean).join("、");
+    }
+    return String(value ?? "");
+  }
   function formatTime(value) {
     const date = new Date(value || "");
     return Number.isNaN(date.getTime()) ? String(value || "-") : date.toLocaleString("zh-TW", { hour12: false });
@@ -342,6 +352,8 @@
       const res = await fetch(api + "/api/registrations/list?keys=" + keys, { cache: "no-store" });
       const result = await res.json().catch(() => ({}));
       state.registrationLists[rowId] = Array.isArray(result.data) ? result.data : [];
+      activity.reg = state.registrationLists[rowId].length;
+      save();
       if (showMessage) toast("名單已同步");
     } catch (_) {
       state.registrationLists[rowId] = [];

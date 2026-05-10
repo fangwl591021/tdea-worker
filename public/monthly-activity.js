@@ -183,6 +183,17 @@
 
   function shareUrlForPage(page) { return trim(page.shareUrl) || detailUrlForPage(page); }
 
+  function activityPayloadForPage(page, activity) {
+    const imageUrl = firstUrl(page.imageUrl, posterUrlFor(activity));
+    return {
+      ...activity,
+      detailText: firstText(page.detailText, detailTextFor(activity)),
+      posterUrl: imageUrl,
+      imageUrl,
+      coverUrl: imageUrl
+    };
+  }
+
   function ensureNav() {
     const nav = document.querySelector(".nav");
     if (!nav || nav.querySelector("[data-monthly-zone]")) return;
@@ -433,7 +444,7 @@
       if (!activity) return `第 ${index + 1} 頁尚未選擇活動`;
       toast(`第 ${index + 1} 頁正在自動產生報名表...`);
       try {
-        const generated = await generateFormForActivity(activity, email);
+        const generated = await generateFormForActivity(activityPayloadForPage(page, activity), email);
         const saved = persistGeneratedFormUrl(activity, generated.formUrl, generated);
         applyActivityToPage(config.pages[index], saved);
       } catch (error) {

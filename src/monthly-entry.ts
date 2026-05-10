@@ -14,6 +14,7 @@ const registrationSummaryKey = "registrations/summary.json";
 const workerBaseUrl = "https://tdeawork.fangwl591021.workers.dev";
 const fixedKeyword = "TDEA每月活動";
 const defaultLiffBase = "https://liff.line.me/2005868456-2jmxqyFU?monthlyDetail={id}";
+const defaultLiffCloseUrl = "https://liff.line.me/2005868456-2jmxqyFU?close=1";
 const headers = { "access-control-allow-origin": "*", "access-control-allow-methods": "GET,POST,PUT,OPTIONS", "access-control-allow-headers": "content-type,x-admin-email,x-aiwe-token,x-line-signature" };
 
 const json = (data: unknown, status = 200) => new Response(JSON.stringify(data), { status, headers: { "content-type": "application/json; charset=utf-8", "cache-control": "no-store", ...headers } });
@@ -46,6 +47,10 @@ async function readRegistrationSummary(env: Env): Promise<RegistrationSummary> {
   if (!object) return { activities: {} };
   const data = await object.json().catch(() => ({}));
   const activities = data && typeof data === "object" && typeof (data as RegistrationSummary).activities === "object" ? (data as RegistrationSummary).activities : {};
+  for (const [key, record] of Object.entries(activities || {})) {
+    const list = await readRegistrationList(env, key);
+    if (list.length) record.count = dedupeRegistrations(list).length;
+  }
   return { updatedAt: (data as RegistrationSummary).updatedAt, activities: activities || {} };
 }
 
@@ -72,13 +77,37 @@ async function readRegistrationList(env: Env, key: string): Promise<Registration
   return Array.isArray(data) ? data as RegistrationEntry[] : [];
 }
 
+function registrationFingerprint(entry: RegistrationEntry) {
+  const answerText = JSON.stringify(normalizeAnswersRecord(entry.answers || {}));
+  return [
+    clean(entry.formId),
+    clean(entry.submittedAt),
+    answerText
+  ].join("|");
+}
+
+function dedupeRegistrations(list: RegistrationEntry[]) {
+  const seen = new Set<string>();
+  const output: RegistrationEntry[] = [];
+  for (const item of list) {
+    const sourceId = clean(item.sourceId);
+    const fingerprint = registrationFingerprint(item);
+    if ((sourceId && seen.has(`source:${sourceId}`)) || seen.has(`fingerprint:${fingerprint}`)) continue;
+    if (sourceId) seen.add(`source:${sourceId}`);
+    seen.add(`fingerprint:${fingerprint}`);
+    output.push({ ...item, answers: normalizeAnswersRecord(item.answers || {}) });
+  }
+  return output;
+}
+
 async function appendRegistrationList(env: Env, keys: string[], entry: RegistrationEntry) {
   if (!env.ASSETS_BUCKET) return;
   let maxCount = 0;
   for (const key of keys) {
-    const list = await readRegistrationList(env, key);
+    const list = dedupeRegistrations(await readRegistrationList(env, key));
     const sourceId = entry.sourceId || entry.id;
-    const exists = list.some((item) => (item.sourceId || item.id) === sourceId);
+    const fingerprint = registrationFingerprint(entry);
+    const exists = list.some((item) => (item.sourceId || item.id) === sourceId || registrationFingerprint(item) === fingerprint);
     const nextList = exists ? list : [entry, ...list];
     maxCount = Math.max(maxCount, nextList.length);
     await env.ASSETS_BUCKET.put(registrationListKey(key), JSON.stringify(nextList.slice(0, 1000), null, 2), { httpMetadata: { contentType: "application/json; charset=utf-8", cacheControl: "no-store" } });
@@ -94,7 +123,7 @@ async function listRegistrations(request: Request, env: Env) {
     .map((key) => key.trim())
     .filter(Boolean);
   for (const key of keys) {
-    const list = await readRegistrationList(env, key);
+    const list = dedupeRegistrations(await readRegistrationList(env, key));
     if (list.length) return json({ success: true, key, data: list });
   }
   return json({ success: true, key: keys[0] || "", data: [] });
@@ -124,10 +153,10 @@ async function storeManagedSubmission(env: Env, submission: ManagedSubmission) {
     formId,
     submittedAt: record.lastSubmittedAt,
     activity,
-    answers: submission.answers || {}
+    answers: normalizeAnswersRecord(submission.answers || {})
   };
   const count = await appendRegistrationList(env, keys, entry);
-  record.count = Math.max(Number(existing?.count || 0), Number(count || 0));
+  record.count = Number(count || 0);
 
   for (const key of keys) summary.activities[key] = record;
   await writeRegistrationSummary(env, summary);
@@ -145,7 +174,7 @@ async function handleFormSubmission(request: Request, env: Env) {
   const answers = (body.answers && typeof body.answers === "object" ? body.answers : {}) as Record<string, unknown>;
   return storeManagedSubmission(env, {
     activity,
-    answers,
+    answers: normalizeAnswersRecord(answers),
     formId: String(body.formId || "").trim(),
     sourceId: String(body.responseId || body.submissionId || body.editResponseUrl || "").trim(),
     submittedAt: String(body.submittedAt || new Date().toISOString()),
@@ -197,6 +226,41 @@ function clean(value: unknown) {
 
 function asRecord(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
+}
+
+function answerValue(value: unknown): unknown {
+  if (Array.isArray(value)) {
+    return value.map((item) => answerValue(item)).filter((item) => clean(item)).join(", ");
+  }
+  if (value && typeof value === "object") {
+    const record = asRecord(value);
+    for (const key of ["value", "answer", "label", "name", "text", "display", "display_value", "formatted", "url", "file_name"]) {
+      const next = answerValue(record[key]);
+      if (clean(next)) return next;
+    }
+    const scalarValues = Object.values(record)
+      .map((item) => answerValue(item))
+      .filter((item) => clean(item));
+    if (scalarValues.length) return scalarValues.join(", ");
+    return "";
+  }
+  return value ?? "";
+}
+
+function normalizeAnswersRecord(record: Record<string, unknown>) {
+  const output: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(record || {})) output[key] = answerValue(value);
+  return output;
+}
+
+function stableSubmissionSourceId(payload: Record<string, unknown>, data: Record<string, unknown>, formId: string, submittedAt: string) {
+  return firstClean(
+    payload.submission_id,
+    payload.submissionId,
+    payload.id,
+    data.id,
+    `${formId}:${submittedAt}:${data.email || ""}:${data.phone || ""}:${data.name || ""}`
+  );
 }
 
 function formMetaKey(formId: string) {
@@ -363,6 +427,7 @@ async function createOpnForm(request: Request, env: Env) {
     layout_rtl: false,
     uppercase_labels: false,
     no_branding: true,
+    redirect_url: firstClean(settings.redirectUrl, activity.redirectUrl, defaultLiffCloseUrl),
     transparent_background: false,
     submit_button_text: "送出報名",
     submitted_text: "報名已送出，謝謝您。",
@@ -442,9 +507,10 @@ async function listOpnFormWorkspaces(request: Request, env: Env) {
 }
 
 function normalizeOpnFormSubmission(payload: Record<string, unknown>, fallbackActivity: Record<string, unknown> = {}) {
-  const data = asRecord(payload.data || asRecord(payload.submission).data || payload.answers || payload.fields);
+  const data = normalizeAnswersRecord(asRecord(payload.data || asRecord(payload.submission).data || payload.answers || payload.fields));
   const form = asRecord(payload.form);
   const formId = clean(payload.form_id || payload.formId || form.id || fallbackActivity.formId || fallbackActivity.opnformFormId);
+  const submittedAt = clean(payload.submitted_at || payload.created_at || data.created_at) || new Date().toISOString();
   const activity = {
     id: clean(data.tdea_activity_id || fallbackActivity.id),
     activityNo: clean(data.tdea_activity_no || fallbackActivity.activityNo),
@@ -456,8 +522,8 @@ function normalizeOpnFormSubmission(payload: Record<string, unknown>, fallbackAc
   }
   return {
     formId,
-    sourceId: clean(payload.submission_id || payload.submissionId || payload.id || data.id),
-    submittedAt: clean(payload.submitted_at || payload.created_at || data.created_at) || new Date().toISOString(),
+    sourceId: stableSubmissionSourceId(payload, data, formId, submittedAt),
+    submittedAt,
     activity,
     answers
   };

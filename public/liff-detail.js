@@ -1,8 +1,9 @@
 (() => {
   const api = "https://tdeawork.fangwl591021.workers.dev";
   const params = new URLSearchParams(location.search);
+  const closeMode = params.get("close") === "1" || params.get("submitted") === "1";
   const detailId = params.get("monthlyDetail") || params.get("monthlyDetailId") || params.get("activityNo") || params.get("id");
-  if (!detailId) return;
+  if (!detailId && !closeMode) return;
 
   const esc = (value) => String(value ?? "").replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;").replaceAll("'", "&#039;");
 
@@ -25,8 +26,35 @@
       .liff-text{white-space:pre-wrap;line-height:1.7;color:#344054;font-size:16px}
       .liff-btn{display:block;margin-top:18px;padding:13px 16px;border-radius:10px;background:#06c755;color:#fff;text-align:center;text-decoration:none;font-weight:800}
       .liff-empty{padding:28px;text-align:center;color:#667085}
+      .liff-done{padding:34px 24px;text-align:center}
+      .liff-done h1{margin:0 0 10px;font-size:24px}
+      .liff-done p{margin:0;color:#667085;line-height:1.7}
     `;
     document.head.appendChild(el);
+  }
+
+  function closeWindowSoon() {
+    const fallback = () => setTimeout(() => { try { window.close(); } catch (_) {} }, 500);
+    const done = () => {
+      try {
+        if (window.liff?.isInClient?.()) {
+          setTimeout(() => window.liff.closeWindow(), 700);
+        } else {
+          fallback();
+        }
+      } catch (_) {
+        fallback();
+      }
+    };
+    if (window.liff) {
+      window.liff.init({ liffId: "2005868456-2jmxqyFU" }).then(done).catch(fallback);
+      return;
+    }
+    const script = document.createElement("script");
+    script.src = "https://static.line-scdn.net/liff/edge/2/sdk.js";
+    script.onload = () => window.liff?.init({ liffId: "2005868456-2jmxqyFU" }).then(done).catch(fallback);
+    script.onerror = fallback;
+    document.head.appendChild(script);
   }
 
   function matchPage(page) {
@@ -35,6 +63,11 @@
 
   async function load() {
     style();
+    if (closeMode) {
+      shell(`<main class="liff-detail"><section class="liff-card liff-done"><h1>報名完成</h1><p>感謝您的報名，畫面將自動關閉。</p></section></main>`);
+      closeWindowSoon();
+      return;
+    }
     shell(`<main class="liff-detail"><section class="liff-card"><div class="liff-empty">載入詳細說明中...</div></section></main>`);
     try {
       const res = await fetch(`${api}/api/monthly-activity`, { cache: "no-store" });
