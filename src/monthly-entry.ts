@@ -261,6 +261,11 @@ function opnFormIsLongText(type: unknown) {
   return key === "paragraph" || key === "textarea" || key === "long_text";
 }
 
+function opnFormUsesFlatChoices(type: unknown) {
+  const key = clean(type).toLowerCase();
+  return key === "radio" || key === "choice" || key === "checkbox" || key === "checkboxes";
+}
+
 function normalizeOptions(options: unknown) {
   return (Array.isArray(options) ? options : clean(options).split(/\n|,/))
     .map((item) => clean(item))
@@ -278,8 +283,10 @@ function firstClean(...values: unknown[]) {
 
 function opnFormIntroProperties(activity: Record<string, unknown>, settings: Record<string, unknown>) {
   const posterUrl = firstClean(activity.posterUrl, activity.imageUrl, activity.coverUrl, settings.posterUrl, settings.imageUrl, settings.coverUrl);
+  const detailText = firstClean(activity.detailText, settings.detailText, settings.description);
   const blocks: Record<string, unknown>[] = [];
   if (posterUrl) blocks.push({ id: "tdea_activity_poster", type: "nf-image", name: "活動海報", image_block: posterUrl, align: "center", width: "full" });
+  if (detailText) blocks.push({ id: "tdea_activity_description", type: "nf-text", name: "活動說明", content: `<p>${esc(detailText).replace(/\r?\n/g, "<br>")}</p>` });
   blocks.push({ id: "tdea_activity_divider", type: "nf-divider", name: "報名資料" });
   return blocks;
 }
@@ -297,7 +304,11 @@ function opnFormProperties(activity: Record<string, unknown>, settings: Record<s
       width: "full"
     };
     if (type === "text" && opnFormIsLongText(field.type)) property.multi_lines = true;
-    if (type === "select" || type === "multi_select") property.options = normalizeOptions(field.options);
+    if (type === "select" || type === "multi_select") {
+      const options = normalizeOptions(field.options);
+      property[type] = { options };
+      if (opnFormUsesFlatChoices(field.type)) property.without_dropdown = true;
+    }
     return property;
   });
   return [
