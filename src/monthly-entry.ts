@@ -293,6 +293,16 @@ function opnFormUrl(env: Env, form: Record<string, unknown>) {
   return slug || formId ? `${opnFormPublicBase(env)}/${encodeURIComponent(slug || formId)}` : "";
 }
 
+async function resolveOpnFormWorkspaceId(env: Env) {
+  const configured = Number(clean(env.OPNFORM_WORKSPACE_ID));
+  const list = await opnFormRawJson(env, "/open/workspaces", { method: "GET" });
+  const rows = Array.isArray(list.data) ? list.data.map((item) => asRecord(item)) : [];
+  const ids = rows.map((item) => Number(item.id)).filter((id) => Number.isFinite(id));
+  if (Number.isFinite(configured) && ids.includes(configured)) return { workspaceId: configured, configuredWorkspaceId: configured, workspaces: rows, autoSelected: false };
+  if (ids.length === 1) return { workspaceId: ids[0], configuredWorkspaceId: Number.isFinite(configured) ? configured : 0, workspaces: rows, autoSelected: true };
+  return { workspaceId: configured, configuredWorkspaceId: Number.isFinite(configured) ? configured : 0, workspaces: rows, autoSelected: false };
+}
+
 async function createOpnForm(request: Request, env: Env) {
   const guard = requireAdmin(request, env);
   if (guard) return guard;
@@ -301,8 +311,9 @@ async function createOpnForm(request: Request, env: Env) {
   const input = await request.json().catch(() => ({})) as Record<string, unknown>;
   const activity = asRecord(input.activity);
   const settings = asRecord(input.settings);
+  const workspace = await resolveOpnFormWorkspaceId(env);
   const payload = {
-    workspace_id: Number(clean(env.OPNFORM_WORKSPACE_ID)),
+    workspace_id: workspace.workspaceId,
     title: clean(activity.name) || "TDEA 活動報名",
     visibility: "public",
     language: "zh",
@@ -344,7 +355,7 @@ async function createOpnForm(request: Request, env: Env) {
       const list = await opnFormRawJson(env, "/open/workspaces", { method: "GET" });
       workspaces = list.response.ok ? list.data : list.data;
     }
-    return json({ success: false, code: "opnform_create_failed", message: clean(create.data.message) || "OpnForm create failed", workspaceId: Number(clean(env.OPNFORM_WORKSPACE_ID)), workspaces, data: create.data }, create.response.status);
+    return json({ success: false, code: "opnform_create_failed", message: clean(create.data.message) || "OpnForm create failed", workspaceId: workspace.workspaceId, configuredWorkspaceId: workspace.configuredWorkspaceId, workspaces: workspaces || workspace.workspaces, data: create.data }, create.response.status);
   }
 
   const form = asRecord(create.data.data || create.data.form || create.data);
@@ -381,6 +392,9 @@ async function createOpnForm(request: Request, env: Env) {
     editUrl: clean(form.edit_url || form.admin_url),
     webhookInstalled,
     webhookMessage,
+    workspaceId: workspace.workspaceId,
+    configuredWorkspaceId: workspace.configuredWorkspaceId,
+    workspaceAutoSelected: workspace.autoSelected,
     data: { form, webhookInstalled, webhookMessage }
   }, 201);
 }
