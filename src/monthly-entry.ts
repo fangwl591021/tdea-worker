@@ -2,7 +2,7 @@ import baseEntry from "./roster-sync-entry4";
 
 type Env = { ADMIN_EMAILS?: string; ASSETS_BUCKET?: R2Bucket; LINE_CHANNEL_SECRET?: string; LINE_CHANNEL_ACCESS_TOKEN?: string; GOOGLE_FORMS_SCRIPT_URL?: string; GOOGLE_FORMS_SHARED_SECRET?: string; OPNFORM_API_BASE?: string; OPNFORM_PUBLIC_BASE?: string; OPNFORM_API_TOKEN?: string; OPNFORM_WORKSPACE_ID?: string; OPNFORM_WEBHOOK_SECRET?: string };
 type LineEvent = { type?: string; replyToken?: string; message?: { type?: string; text?: string }; postback?: { data?: string } };
-type MonthlyPage = { id?: string; activityNo?: string; imageUrl?: string; detailTitle?: string; detailText?: string; detailUrl?: string; formUrl?: string; shareUrl?: string; order?: number };
+type MonthlyPage = { id?: string; activityNo?: string; imageUrl?: string; formImageUrl?: string; detailTitle?: string; detailText?: string; detailUrl?: string; formUrl?: string; shareUrl?: string; order?: number };
 type MonthlyConfig = { enabled?: boolean; keyword?: string; month?: string; altText?: string; detailBaseUrl?: string; pages?: MonthlyPage[]; updatedAt?: string };
 type RegistrationRecord = { activityId?: string; activityNo?: string; activityName?: string; formId?: string; count: number; lastSubmittedAt?: string };
 type RegistrationSummary = { updatedAt?: string; activities: Record<string, RegistrationRecord> };
@@ -607,6 +607,7 @@ function normalizeConfig(config: MonthlyConfig): MonthlyConfig {
       id: String(page.id || crypto.randomUUID()),
       activityNo: String(page.activityNo || "").trim(),
       imageUrl: String(page.imageUrl || "").trim(),
+      formImageUrl: String(page.formImageUrl || "").trim(),
       detailTitle: String(page.detailTitle || "詳細說明").trim() || "詳細說明",
       detailText: String(page.detailText || "").trim(),
       detailUrl: String(page.detailUrl || "").trim(),
