@@ -48,6 +48,13 @@
     const activity = findActivity(data, form);
     if (!activity) return data;
     activity.detailText = textarea.value;
+    data.formSettings ||= {};
+    const detail = textarea.value;
+    const keys = [activity.id, activity.activityNo, activity.name].map((value) => String(value || "").trim()).filter(Boolean);
+    keys.forEach((key) => {
+      data.formSettings[key] ||= {};
+      data.formSettings[key].detailText = detail;
+    });
     return data;
   }
 

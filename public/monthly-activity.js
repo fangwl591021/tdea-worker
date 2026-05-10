@@ -36,6 +36,22 @@
     return settings[activity?.id] || settings[activity?.activityNo] || settings[activity?.name] || {};
   }
 
+  function allFormSettingsFor(activity) {
+    const data = localData();
+    const settings = data.formSettings || {};
+    return [activity?.id, activity?.activityNo, activity?.name]
+      .map((key) => settings[String(key || "").trim()])
+      .filter((item) => item && typeof item === "object");
+  }
+
+  function firstText(...values) {
+    for (const value of values.flat()) {
+      const text = trim(value);
+      if (text) return text;
+    }
+    return "";
+  }
+
   function firstUrl(...values) {
     for (const value of values.flat()) {
       const text = trim(value);
@@ -77,8 +93,29 @@
 
   function detailTextFor(activity) {
     if (!activity) return "";
-    const settings = formSettingsFor(activity);
-    return trim(activity.detailText) || trim(activity.description) || trim(activity.detail) || trim(settings.detailText) || trim(settings.description) || "";
+    const settingsRows = allFormSettingsFor(activity);
+    return firstText(
+      activity.detailText,
+      activity.description,
+      activity.detail,
+      activity.details,
+      activity.detailDescription,
+      activity.activityDetail,
+      activity.eventDetail,
+      activity.content,
+      activity.introduction,
+      settingsRows.map((settings) => [
+        settings.detailText,
+        settings.description,
+        settings.detail,
+        settings.details,
+        settings.detailDescription,
+        settings.activityDetail,
+        settings.eventDetail,
+        settings.content,
+        settings.introduction
+      ])
+    );
   }
 
   function posterUrlFor(activity) {

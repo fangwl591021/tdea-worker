@@ -24,7 +24,14 @@
     const id = form.querySelector("input[name='id']")?.value || "";
     const name = form.querySelector("input[name='name']")?.value?.trim() || "";
     const activity = (id && data.activities.find((item) => item.id === id)) || (name && data.activities.find((item) => String(item.name || "").trim() === name)) || data.activities[0];
-    if (activity) activity.detailText = textarea.value;
+    if (activity) {
+      activity.detailText = textarea.value;
+      data.formSettings ||= {};
+      [activity.id, activity.activityNo, activity.name].map((value) => String(value || "").trim()).filter(Boolean).forEach((key) => {
+        data.formSettings[key] ||= {};
+        data.formSettings[key].detailText = textarea.value;
+      });
+    }
     return data;
   }
 
