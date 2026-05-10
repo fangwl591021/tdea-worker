@@ -235,6 +235,14 @@ async function opnFormJson(env: Env, path: string, init: RequestInit = {}) {
   return { response, data: asRecord(data) };
 }
 
+async function opnFormRawJson(env: Env, path: string, init: RequestInit = {}) {
+  const response = await fetch(`${opnFormApiBase(env)}${path}`, { ...init, headers: { ...opnFormHeaders(env), ...(init.headers || {}) } });
+  const text = await response.text().catch(() => "");
+  let data: unknown = {};
+  try { data = text ? JSON.parse(text) : {}; } catch (_) { data = { raw: text }; }
+  return { response, data };
+}
+
 function opnFormType(type: unknown) {
   const key = clean(type).toLowerCase();
   if (key === "paragraph" || key === "textarea" || key === "long_text") return "long_text";
@@ -333,7 +341,7 @@ async function createOpnForm(request: Request, env: Env) {
   if (!create.response.ok) {
     let workspaces: unknown = undefined;
     if (create.response.status === 401 || create.response.status === 403) {
-      const list = await opnFormJson(env, "/open/workspaces", { method: "GET" });
+      const list = await opnFormRawJson(env, "/open/workspaces", { method: "GET" });
       workspaces = list.response.ok ? list.data : list.data;
     }
     return json({ success: false, code: "opnform_create_failed", message: clean(create.data.message) || "OpnForm create failed", workspaceId: Number(clean(env.OPNFORM_WORKSPACE_ID)), workspaces, data: create.data }, create.response.status);
@@ -381,7 +389,7 @@ async function listOpnFormWorkspaces(request: Request, env: Env) {
   const guard = requireAdmin(request, env);
   if (guard) return guard;
   if (!clean(env.OPNFORM_API_TOKEN)) return json({ success: false, code: "opnform_not_configured", message: "OPNFORM_API_TOKEN is not configured" }, 503);
-  const result = await opnFormJson(env, "/open/workspaces", { method: "GET" });
+  const result = await opnFormRawJson(env, "/open/workspaces", { method: "GET" });
   return json({ success: result.response.ok, configuredWorkspaceId: clean(env.OPNFORM_WORKSPACE_ID), data: result.data }, result.response.ok ? 200 : result.response.status);
 }
 
