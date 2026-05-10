@@ -29,7 +29,7 @@
 
   let registrationSyncing = false;
   function registrationCandidates(activity) {
-    return [activity?.id, activity?.activityNo, activity?.name, activity?.formId, activity?.googleFormId, activity?.opnformFormId]
+    return [activity?.id, activity?.activityNo, activity?.formId, activity?.googleFormId, activity?.opnformFormId, activity?.name]
       .map(value => String(value || "").trim())
       .filter(Boolean);
   }
