@@ -49,6 +49,7 @@
     const settings = formSettingsFor(activity);
     return firstUrl(
       activity.formUrl,
+      activity.opnformFormUrl,
       activity.googleFormUrl,
       activity.googleFormPublishedUrl,
       activity.registrationFormUrl,
@@ -61,6 +62,7 @@
       activity.googleForm?.publishedUrl,
       activity.googleForm?.responderUri,
       settings.formUrl,
+      settings.opnformFormUrl,
       settings.googleFormUrl,
       settings.googleFormPublishedUrl,
       settings.registrationFormUrl,
@@ -209,7 +211,7 @@
   function formIdFor(activity) {
     if (!activity) return "";
     const settings = formSettingsFor(activity);
-    return trim(activity.formId) || trim(activity.googleFormId) || trim(settings.formId) || trim(settings.googleFormId);
+    return trim(activity.formId) || trim(activity.opnformFormId) || trim(activity.googleFormId) || trim(settings.formId) || trim(settings.opnformFormId) || trim(settings.googleFormId);
   }
   function basicFields() {
     return `<div class="monthly-basic-grid"><div class="field"><label>月份</label><input name="month" data-monthly-basic value="${esc(config.month || "")}" placeholder="2026-05"></div><div class="monthly-keyword-pill"><span>觸發關鍵字</span><strong>${fixedKeyword}</strong></div><label class="monthly-enabled"><input type="checkbox" name="enabled" data-monthly-enabled ${config.enabled ? "checked" : ""}> 啟用此關鍵字</label></div>`;
@@ -283,6 +285,23 @@
     };
   }
 
+  function generatedProviderMeta(formUrl, meta = {}) {
+    const data = meta.data || {};
+    const provider = meta.provider || data.provider || "google_form";
+    const formId = meta.formId || meta.opnformFormId || data.formId || data.opnformFormId || "";
+    return {
+      provider,
+      formId,
+      formUrl,
+      editUrl: meta.editUrl || data.editUrl || "",
+      sheetUrl: meta.sheetUrl || data.sheetUrl || "",
+      googleFormId: meta.googleFormId || (provider === "google_form" ? formId : ""),
+      googleFormUrl: meta.googleFormUrl || (provider === "google_form" ? formUrl : ""),
+      opnformFormId: meta.opnformFormId || (provider === "opnform" ? formId : ""),
+      opnformFormUrl: meta.opnformFormUrl || (provider === "opnform" ? formUrl : "")
+    };
+  }
+
   function persistGeneratedFormUrl(activity, formUrl, meta = {}) {
     const data = localData();
     data.formSettings ||= {};
@@ -290,15 +309,18 @@
       ? data.activities.find((item) => String(item.id || "") === String(activity.id || "") || String(item.activityNo || "") === String(activity.activityNo || "") || String(item.name || "") === String(activity.name || ""))
       : null;
     const target = row || activity;
-    target.formMode = "google_form";
+    const normalized = generatedProviderMeta(formUrl, meta);
+    target.formMode = normalized.provider;
     target.formUrl = formUrl;
-    target.googleFormUrl = formUrl;
-    target.formId = meta.formId || target.formId || "";
-    target.googleFormId = meta.formId || target.googleFormId || "";
-    target.googleFormEditUrl = meta.editUrl || target.googleFormEditUrl || "";
-    target.googleSheetUrl = meta.sheetUrl || target.googleSheetUrl || "";
+    target.formId = normalized.formId || target.formId || "";
+    target.googleFormUrl = normalized.googleFormUrl || target.googleFormUrl || "";
+    target.googleFormId = normalized.googleFormId || target.googleFormId || "";
+    target.googleFormEditUrl = normalized.provider === "google_form" ? (normalized.editUrl || target.googleFormEditUrl || "") : (target.googleFormEditUrl || "");
+    target.googleSheetUrl = normalized.sheetUrl || target.googleSheetUrl || "";
+    target.opnformFormUrl = normalized.opnformFormUrl || target.opnformFormUrl || "";
+    target.opnformFormId = normalized.opnformFormId || target.opnformFormId || "";
     data.formSettings[target.id] ||= {};
-    Object.assign(data.formSettings[target.id], formSettingsFor(activity), { formUrl, googleFormUrl: formUrl, formId: target.formId, googleFormId: target.googleFormId, editUrl: target.googleFormEditUrl, sheetUrl: target.googleSheetUrl });
+    Object.assign(data.formSettings[target.id], formSettingsFor(activity), { formUrl, formMode: target.formMode, formId: target.formId, googleFormUrl: target.googleFormUrl, googleFormId: target.googleFormId, opnformFormUrl: target.opnformFormUrl, opnformFormId: target.opnformFormId, editUrl: target.googleFormEditUrl, sheetUrl: target.googleSheetUrl });
     if (target.activityNo) {
       data.formSettings[target.activityNo] ||= {};
       Object.assign(data.formSettings[target.activityNo], data.formSettings[target.id]);
@@ -324,6 +346,43 @@
     const formUrl = result.formUrl || result.responderUri || result.data?.formUrl || result.data?.responderUri;
     if (!formUrl) throw new Error("Google 報名表已建立，但沒有收到公開報名網址");
     return { formUrl, formId: result.formId || result.data?.formId || "", editUrl: result.editUrl || result.data?.editUrl || "", sheetUrl: result.sheetUrl || result.data?.sheetUrl || "" };
+  }
+
+  async function generateManagedFormForActivity(activity, email) {
+    const payload = formPayloadForActivity(activity);
+    const opnform = await fetch(`${api}/api/opnform/create`, {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-admin-email": email },
+      body: JSON.stringify(payload)
+    });
+    const opnformResult = await opnform.json().catch(() => ({}));
+    if (opnform.ok && opnformResult.success) {
+      return {
+        provider: "opnform",
+        formUrl: opnformResult.formUrl || opnformResult.opnformFormUrl || opnformResult.data?.formUrl || opnformResult.data?.opnformFormUrl || "",
+        formId: opnformResult.formId || opnformResult.opnformFormId || opnformResult.data?.formId || opnformResult.data?.opnformFormId || "",
+        opnformFormId: opnformResult.opnformFormId || opnformResult.formId || opnformResult.data?.opnformFormId || "",
+        opnformFormUrl: opnformResult.opnformFormUrl || opnformResult.formUrl || opnformResult.data?.opnformFormUrl || ""
+      };
+    }
+    if (opnform.status && opnform.status !== 404 && opnform.status !== 503 && opnformResult.code !== "opnform_not_configured") {
+      throw new Error(opnformResult.message || "OpnForm 報名表產生失敗");
+    }
+
+    const response = await fetch(`${api}/api/google-forms/create`, {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-admin-email": email },
+      body: JSON.stringify(payload)
+    });
+    const result = await response.json().catch(() => ({}));
+    if (!response.ok || !result.success) throw new Error(result.message || "Google 報名表產生失敗");
+    const formUrl = result.formUrl || result.responderUri || result.data?.formUrl || result.data?.responderUri;
+    if (!formUrl) throw new Error("報名表已建立，但沒有取得公開網址。");
+    return { provider: "google_form", formUrl, formId: result.formId || result.data?.formId || "", editUrl: result.editUrl || result.data?.editUrl || "", sheetUrl: result.sheetUrl || result.data?.sheetUrl || "" };
+  }
+
+  async function generateFormForActivity(activity, email) {
+    return generateManagedFormForActivity(activity, email);
   }
 
   async function ensureFormUrls(email) {

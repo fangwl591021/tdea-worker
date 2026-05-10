@@ -1,12 +1,13 @@
 import baseEntry from "./roster-sync-entry4";
 
-type Env = { ADMIN_EMAILS?: string; ASSETS_BUCKET?: R2Bucket; LINE_CHANNEL_SECRET?: string; LINE_CHANNEL_ACCESS_TOKEN?: string; GOOGLE_FORMS_SCRIPT_URL?: string; GOOGLE_FORMS_SHARED_SECRET?: string };
+type Env = { ADMIN_EMAILS?: string; ASSETS_BUCKET?: R2Bucket; LINE_CHANNEL_SECRET?: string; LINE_CHANNEL_ACCESS_TOKEN?: string; GOOGLE_FORMS_SCRIPT_URL?: string; GOOGLE_FORMS_SHARED_SECRET?: string; OPNFORM_API_BASE?: string; OPNFORM_PUBLIC_BASE?: string; OPNFORM_API_TOKEN?: string; OPNFORM_WORKSPACE_ID?: string; OPNFORM_WEBHOOK_SECRET?: string };
 type LineEvent = { type?: string; replyToken?: string; message?: { type?: string; text?: string }; postback?: { data?: string } };
 type MonthlyPage = { id?: string; activityNo?: string; imageUrl?: string; detailTitle?: string; detailText?: string; detailUrl?: string; formUrl?: string; shareUrl?: string; order?: number };
 type MonthlyConfig = { enabled?: boolean; keyword?: string; month?: string; altText?: string; detailBaseUrl?: string; pages?: MonthlyPage[]; updatedAt?: string };
 type RegistrationRecord = { activityId?: string; activityNo?: string; activityName?: string; formId?: string; count: number; lastSubmittedAt?: string };
 type RegistrationSummary = { updatedAt?: string; activities: Record<string, RegistrationRecord> };
 type RegistrationEntry = { id: string; sourceId?: string; formId?: string; submittedAt?: string; activity?: Record<string, unknown>; answers?: Record<string, unknown> };
+type ManagedSubmission = { formId?: string; sourceId?: string; submittedAt?: string; activity: Record<string, unknown>; answers: Record<string, unknown>; raw?: unknown };
 
 const monthlyKey = "flex/monthly-activity.json";
 const registrationSummaryKey = "registrations/summary.json";
@@ -99,14 +100,10 @@ async function listRegistrations(request: Request, env: Env) {
   return json({ success: true, key: keys[0] || "", data: [] });
 }
 
-async function handleFormSubmission(request: Request, env: Env) {
+async function storeManagedSubmission(env: Env, submission: ManagedSubmission) {
   if (!env.ASSETS_BUCKET) return json({ success: false, message: "R2 bucket is not configured" }, 503);
-  const body = await request.json().catch(() => ({})) as Record<string, unknown>;
-  if (body.action && body.action !== "FORM_SUBMISSION") return json({ success: false, message: "Unknown action" }, 400);
-  if (env.GOOGLE_FORMS_SHARED_SECRET && body.sharedSecret !== env.GOOGLE_FORMS_SHARED_SECRET) return json({ success: false, message: "Invalid shared secret" }, 403);
-
-  const activity = (body.activity && typeof body.activity === "object" ? body.activity : {}) as Record<string, unknown>;
-  const formId = String(body.formId || "").trim();
+  const activity = submission.activity || {};
+  const formId = String(submission.formId || "").trim();
   const keys = registrationKeys(activity, formId);
   if (!keys.length) return json({ success: false, message: "Missing activity or form id" }, 400);
 
@@ -118,16 +115,16 @@ async function handleFormSubmission(request: Request, env: Env) {
     activityName: String(activity.name || existing?.activityName || "").trim(),
     formId: formId || existing?.formId || "",
     count: Number(existing?.count || 0),
-    lastSubmittedAt: String(body.submittedAt || new Date().toISOString())
+    lastSubmittedAt: String(submission.submittedAt || new Date().toISOString())
   };
 
   const entry: RegistrationEntry = {
     id: crypto.randomUUID(),
-    sourceId: String(body.responseId || body.submissionId || body.editResponseUrl || `${formId}:${record.lastSubmittedAt}`).trim(),
+    sourceId: String(submission.sourceId || `${formId}:${record.lastSubmittedAt}`).trim(),
     formId,
     submittedAt: record.lastSubmittedAt,
     activity,
-    answers: (body.answers && typeof body.answers === "object" ? body.answers : {}) as Record<string, unknown>
+    answers: submission.answers || {}
   };
   const count = await appendRegistrationList(env, keys, entry);
   record.count = Math.max(Number(existing?.count || 0), Number(count || 0));
@@ -136,8 +133,24 @@ async function handleFormSubmission(request: Request, env: Env) {
   await writeRegistrationSummary(env, summary);
 
   const eventKey = `registrations/events/${Date.now()}-${crypto.randomUUID()}.json`;
-  await env.ASSETS_BUCKET.put(eventKey, JSON.stringify(body, null, 2), { httpMetadata: { contentType: "application/json; charset=utf-8", cacheControl: "no-store" } });
+  await env.ASSETS_BUCKET.put(eventKey, JSON.stringify(submission.raw || submission, null, 2), { httpMetadata: { contentType: "application/json; charset=utf-8", cacheControl: "no-store" } });
   return json({ success: true, data: record });
+}
+
+async function handleFormSubmission(request: Request, env: Env) {
+  const body = await request.json().catch(() => ({})) as Record<string, unknown>;
+  if (body.action && body.action !== "FORM_SUBMISSION") return json({ success: false, message: "Unknown action" }, 400);
+  if (env.GOOGLE_FORMS_SHARED_SECRET && body.sharedSecret !== env.GOOGLE_FORMS_SHARED_SECRET) return json({ success: false, message: "Invalid shared secret" }, 403);
+  const activity = (body.activity && typeof body.activity === "object" ? body.activity : {}) as Record<string, unknown>;
+  const answers = (body.answers && typeof body.answers === "object" ? body.answers : {}) as Record<string, unknown>;
+  return storeManagedSubmission(env, {
+    activity,
+    answers,
+    formId: String(body.formId || "").trim(),
+    sourceId: String(body.responseId || body.submissionId || body.editResponseUrl || "").trim(),
+    submittedAt: String(body.submittedAt || new Date().toISOString()),
+    raw: body
+  });
 }
 
 async function syncGoogleFormResponses(request: Request, env: Env) {
@@ -176,6 +189,251 @@ async function syncGoogleFormResponses(request: Request, env: Env) {
   }
 
   return json({ success: true, imported, results, data: await readRegistrationSummary(env) });
+}
+
+function clean(value: unknown) {
+  return String(value ?? "").trim();
+}
+
+function asRecord(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
+}
+
+function formMetaKey(formId: string) {
+  return `forms/opnform/${encodeURIComponent(formId)}.json`;
+}
+
+async function writeOpnFormMeta(env: Env, formId: string, activity: Record<string, unknown>, form: Record<string, unknown>) {
+  if (!env.ASSETS_BUCKET || !formId) return;
+  const meta = { provider: "opnform", formId, activity, form, updatedAt: new Date().toISOString() };
+  await env.ASSETS_BUCKET.put(formMetaKey(formId), JSON.stringify(meta, null, 2), { httpMetadata: { contentType: "application/json; charset=utf-8", cacheControl: "no-store" } });
+}
+
+async function readOpnFormMeta(env: Env, formId: string) {
+  if (!env.ASSETS_BUCKET || !formId) return {};
+  const object = await env.ASSETS_BUCKET.get(formMetaKey(formId));
+  return object ? asRecord(await object.json().catch(() => ({}))) : {};
+}
+
+function opnFormApiBase(env: Env) {
+  return clean(env.OPNFORM_API_BASE || "https://api.opnform.com").replace(/\/+$/, "");
+}
+
+function opnFormPublicBase(env: Env) {
+  return clean(env.OPNFORM_PUBLIC_BASE || "https://opnform.com/forms").replace(/\/+$/, "");
+}
+
+function opnFormHeaders(env: Env) {
+  return { authorization: `Bearer ${clean(env.OPNFORM_API_TOKEN)}`, "content-type": "application/json", accept: "application/json" };
+}
+
+async function opnFormJson(env: Env, path: string, init: RequestInit = {}) {
+  const response = await fetch(`${opnFormApiBase(env)}${path}`, { ...init, headers: { ...opnFormHeaders(env), ...(init.headers || {}) } });
+  const text = await response.text().catch(() => "");
+  let data: unknown = {};
+  try { data = text ? JSON.parse(text) : {}; } catch (_) { data = { raw: text }; }
+  return { response, data: asRecord(data) };
+}
+
+function opnFormType(type: unknown) {
+  const key = clean(type).toLowerCase();
+  if (key === "paragraph" || key === "textarea" || key === "long_text") return "long_text";
+  if (key === "email") return "email";
+  if (key === "phone" || key === "tel") return "phone_number";
+  if (key === "number") return "number";
+  if (key === "date") return "date";
+  if (key === "file" || key === "files") return "files";
+  if (key === "checkbox" || key === "checkboxes" || key === "multi_select") return "multi_select";
+  if (key === "radio" || key === "choice" || key === "dropdown" || key === "select") return "select";
+  return "short_text";
+}
+
+function normalizeOptions(options: unknown) {
+  return (Array.isArray(options) ? options : clean(options).split(/\n|,/))
+    .map((item) => clean(item))
+    .filter(Boolean)
+    .map((name) => ({ name }));
+}
+
+function opnFormProperties(fields: unknown) {
+  const rows = Array.isArray(fields) ? fields as Array<Record<string, unknown>> : [];
+  const normal = rows.map((field, index) => {
+    const type = opnFormType(field.type);
+    const property: Record<string, unknown> = {
+      id: clean(field.key) || `field_${index + 1}`,
+      type,
+      name: clean(field.label) || `欄位 ${index + 1}`,
+      required: Boolean(field.required),
+      width: "full"
+    };
+    if (type === "select" || type === "multi_select") property.options = normalizeOptions(field.options);
+    return property;
+  });
+  return [
+    ...normal,
+    { id: "tdea_activity_id", type: "short_text", name: "TDEA Activity ID", hidden: true, required: false, width: "full" },
+    { id: "tdea_activity_no", type: "short_text", name: "TDEA Activity No", hidden: true, required: false, width: "full" },
+    { id: "tdea_activity_name", type: "short_text", name: "TDEA Activity Name", hidden: true, required: false, width: "full" }
+  ];
+}
+
+function opnFormUrl(env: Env, form: Record<string, unknown>) {
+  const direct = clean(form.share_url || form.public_url || form.url || form.shareUrl || form.publicUrl);
+  if (/^https?:\/\//i.test(direct)) return direct;
+  const slug = clean(form.slug);
+  const formId = clean(form.id || form.uuid);
+  return slug || formId ? `${opnFormPublicBase(env)}/${encodeURIComponent(slug || formId)}` : "";
+}
+
+async function createOpnForm(request: Request, env: Env) {
+  const guard = requireAdmin(request, env);
+  if (guard) return guard;
+  if (!clean(env.OPNFORM_API_TOKEN) || !clean(env.OPNFORM_WORKSPACE_ID)) return json({ success: false, code: "opnform_not_configured", message: "OPNFORM_API_TOKEN / OPNFORM_WORKSPACE_ID is not configured" }, 503);
+
+  const input = await request.json().catch(() => ({})) as Record<string, unknown>;
+  const activity = asRecord(input.activity);
+  const settings = asRecord(input.settings);
+  const payload = {
+    workspace_id: Number(clean(env.OPNFORM_WORKSPACE_ID)),
+    title: clean(activity.name) || "TDEA 活動報名",
+    visibility: "public",
+    language: "zh",
+    tags: ["TDEA"],
+    width: "centered",
+    size: "md",
+    border_radius: "small",
+    submit_button_text: "送出報名",
+    submitted_text: "報名已送出，謝謝您。",
+    show_progress_bar: true,
+    max_submissions_count: Number(activity.capacity || 0) > 0 ? Number(activity.capacity) : undefined,
+    properties: opnFormProperties(settings.fields)
+  };
+  const create = await opnFormJson(env, "/open/forms", { method: "POST", body: JSON.stringify(payload) });
+  if (!create.response.ok) return json({ success: false, code: "opnform_create_failed", message: clean(create.data.message) || "OpnForm create failed", data: create.data }, create.response.status);
+
+  const form = asRecord(create.data.data || create.data.form || create.data);
+  const formId = clean(form.id || form.uuid);
+  const formUrl = opnFormUrl(env, form);
+  if (formId) await writeOpnFormMeta(env, formId, activity, form);
+
+  let webhookInstalled = false;
+  let webhookMessage = "";
+  if (formId) {
+    const webhookSecret = clean(env.OPNFORM_WEBHOOK_SECRET);
+    const webhookUrl = `${new URL(request.url).origin}/api/opnform/webhook`;
+    const webhookPayload = {
+      integration_id: "webhook",
+      status: "active",
+      data: {
+        webhook_url: webhookUrl,
+        ...(webhookSecret ? { webhook_secret: webhookSecret } : {})
+      }
+    };
+    const integration = await opnFormJson(env, `/open/forms/${encodeURIComponent(formId)}/integrations`, { method: "POST", body: JSON.stringify(webhookPayload) });
+    webhookInstalled = integration.response.ok;
+    webhookMessage = webhookInstalled ? "" : clean(integration.data.message || integration.data.error || "Webhook integration was not installed");
+  }
+
+  return json({
+    success: true,
+    provider: "opnform",
+    formId,
+    opnformFormId: formId,
+    formUrl,
+    opnformFormUrl: formUrl,
+    slug: clean(form.slug),
+    editUrl: clean(form.edit_url || form.admin_url),
+    webhookInstalled,
+    webhookMessage,
+    data: { form, webhookInstalled, webhookMessage }
+  }, 201);
+}
+
+function normalizeOpnFormSubmission(payload: Record<string, unknown>, fallbackActivity: Record<string, unknown> = {}) {
+  const data = asRecord(payload.data || asRecord(payload.submission).data || payload.answers || payload.fields);
+  const form = asRecord(payload.form);
+  const formId = clean(payload.form_id || payload.formId || form.id || fallbackActivity.formId || fallbackActivity.opnformFormId);
+  const activity = {
+    id: clean(data.tdea_activity_id || fallbackActivity.id),
+    activityNo: clean(data.tdea_activity_no || fallbackActivity.activityNo),
+    name: clean(data.tdea_activity_name || fallbackActivity.name)
+  };
+  const answers: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(data)) {
+    if (!key.startsWith("tdea_") && key !== "status" && key !== "created_at" && key !== "id") answers[key] = value;
+  }
+  return {
+    formId,
+    sourceId: clean(payload.submission_id || payload.submissionId || payload.id || data.id),
+    submittedAt: clean(payload.submitted_at || payload.created_at || data.created_at) || new Date().toISOString(),
+    activity,
+    answers
+  };
+}
+
+function hex(bytes: ArrayBuffer) {
+  return [...new Uint8Array(bytes)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+
+function constantTextEqual(a: string, b: string) {
+  if (a.length !== b.length) return false;
+  let diff = 0;
+  for (let index = 0; index < a.length; index += 1) diff |= a.charCodeAt(index) ^ b.charCodeAt(index);
+  return diff === 0;
+}
+
+async function verifyOpnFormSignature(rawBody: string, signature: string | null, secret?: string) {
+  const cleanSecret = clean(secret);
+  if (!cleanSecret) return true;
+  const cleanSignature = clean(signature).replace(/^sha256=/i, "");
+  if (!cleanSignature) return false;
+  const encoder = new TextEncoder();
+  const key = await crypto.subtle.importKey("raw", encoder.encode(cleanSecret), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
+  const digest = await crypto.subtle.sign("HMAC", key, encoder.encode(rawBody));
+  const expectedHex = hex(digest);
+  const expectedBase64 = btoa(String.fromCharCode(...new Uint8Array(digest)));
+  return constantTextEqual(cleanSignature, expectedHex) || constantTextEqual(cleanSignature, expectedBase64);
+}
+
+async function handleOpnFormWebhook(request: Request, env: Env) {
+  const rawBody = await request.text();
+  const signature = request.headers.get("x-opnform-signature") || request.headers.get("x-webhook-signature") || request.headers.get("x-signature");
+  if (!await verifyOpnFormSignature(rawBody, signature, env.OPNFORM_WEBHOOK_SECRET)) return json({ success: false, message: "Invalid signature" }, 403);
+  const payload = await JSON.parse(rawBody || "{}") as Record<string, unknown>;
+  const normalized = normalizeOpnFormSubmission(payload);
+  const meta = asRecord(await readOpnFormMeta(env, normalized.formId || ""));
+  const metaActivity = asRecord(meta.activity);
+  const activity = normalized.activity.id || normalized.activity.activityNo || normalized.activity.name ? normalized.activity : metaActivity;
+  return storeManagedSubmission(env, { ...normalized, activity, raw: payload });
+}
+
+async function syncOpnFormResponses(request: Request, env: Env) {
+  const guard = requireAdmin(request, env);
+  if (guard) return guard;
+  if (!clean(env.OPNFORM_API_TOKEN)) return json({ success: false, code: "opnform_not_configured", message: "OPNFORM_API_TOKEN is not configured" }, 503);
+  const input = await request.json().catch(() => ({})) as Record<string, unknown>;
+  const activities = Array.isArray(input.activities) ? input.activities as Array<Record<string, unknown>> : [];
+  const results = [];
+  let imported = 0;
+
+  for (const activity of activities) {
+    const formId = clean(activity.opnformFormId || activity.formId);
+    if (!formId) continue;
+    const response = await opnFormJson(env, `/open/forms/${encodeURIComponent(formId)}/submissions?per_page=100&status=completed`, { method: "GET" });
+    if (!response.response.ok) {
+      results.push({ activity: activity.name || activity.id, formId, success: false, message: clean(response.data.message) || "OpnForm sync failed" });
+      continue;
+    }
+    const submissions = Array.isArray(response.data.data) ? response.data.data as Array<Record<string, unknown>> : [];
+    for (const submission of submissions) {
+      const normalized = normalizeOpnFormSubmission({ ...submission, form_id: formId }, activity);
+      await storeManagedSubmission(env, { ...normalized, activity: normalized.activity.id || normalized.activity.activityNo || normalized.activity.name ? normalized.activity : activity, raw: submission });
+      imported += 1;
+    }
+    results.push({ activity: activity.name || activity.id, formId, success: true, count: submissions.length });
+  }
+
+  return json({ success: true, provider: "opnform", imported, results, data: await readRegistrationSummary(env) });
 }
 
 function normalizeConfig(config: MonthlyConfig): MonthlyConfig {
@@ -275,6 +533,9 @@ export default {
     if (request.method === "GET" && url.pathname === "/api/monthly-activity") return json({ success: true, data: await readMonthly(env) });
     if ((request.method === "PUT" || request.method === "POST") && url.pathname === "/api/monthly-activity") { const guard = requireAdmin(request, env); if (guard) return guard; if (!env.ASSETS_BUCKET) return json({ success: false, message: "R2 bucket is not configured" }, 503); const config = await request.json().catch(() => ({})) as MonthlyConfig; await writeMonthly(env, config); return json({ success: true, data: await readMonthly(env), flex: buildMonthlyFlex(config) }); }
     if (request.method === "GET" && url.pathname === "/api/monthly-activity/flex") { const config = await readMonthly(env); return json({ success: true, flex: buildMonthlyFlex(config), data: config }); }
+    if (request.method === "POST" && url.pathname === "/api/opnform/create") return createOpnForm(request, env);
+    if (request.method === "POST" && url.pathname === "/api/opnform/webhook") return handleOpnFormWebhook(request, env);
+    if (request.method === "POST" && url.pathname === "/api/opnform/sync") return syncOpnFormResponses(request, env);
     if (request.method === "POST" && url.pathname === "/api/google-forms/submission") return handleFormSubmission(request, env);
     if (request.method === "POST" && url.pathname === "/api/google-forms/sync") return syncGoogleFormResponses(request, env);
     if (request.method === "GET" && url.pathname === "/api/registrations/summary") return json({ success: true, data: await readRegistrationSummary(env) });

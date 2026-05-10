@@ -29,7 +29,7 @@
 
   let registrationSyncing = false;
   function registrationCandidates(activity) {
-    return [activity?.id, activity?.activityNo, activity?.name, activity?.formId, activity?.googleFormId]
+    return [activity?.id, activity?.activityNo, activity?.name, activity?.formId, activity?.googleFormId, activity?.opnformFormId]
       .map(value => String(value || "").trim())
       .filter(Boolean);
   }
@@ -39,7 +39,7 @@
     if (registrationSyncing || state.view !== "dashboard") return;
     registrationSyncing = true;
     try {
-      if (showMessage || autoSyncEnabled()) await pullGoogleResponses(showMessage);
+      if (showMessage || autoSyncEnabled()) await pullRemoteResponses(showMessage);
       const res = await fetch(api + "/api/registrations/summary", { cache: "no-store" });
       const result = await res.json().catch(() => ({}));
       const records = result?.data?.activities || {};
@@ -93,6 +93,58 @@
     const result = await response.json().catch(() => ({}));
     if (!response.ok || !result.success) throw new Error(result.message || "Google 表單同步失敗");
     if (showMessage) toast(`已同步 ${Number(result.imported || 0)} 筆表單回覆`);
+  }
+
+  async function pullRemoteResponses(showMessage = false) {
+    const email = localStorage.getItem("tdea-admin-email") || sessionStorage.getItem("tdea-admin-email") || "";
+    if (!email) {
+      if (showMessage) toast("請先登入管理者，才能同步報名。");
+      return;
+    }
+    const activities = (state.data.activities || []).map(activity => ({
+      id: activity.id || "",
+      activityNo: activity.activityNo || "",
+      name: activity.name || "",
+      formMode: activity.formMode || "",
+      formId: activity.formId || activity.googleFormId || activity.opnformFormId || "",
+      googleFormId: activity.googleFormId || "",
+      opnformFormId: activity.opnformFormId || "",
+      formUrl: activity.formUrl || activity.googleFormUrl || activity.opnformFormUrl || "",
+      googleFormUrl: activity.googleFormUrl || "",
+      opnformFormUrl: activity.opnformFormUrl || "",
+      editUrl: activity.googleFormEditUrl || activity.editUrl || "",
+      googleFormEditUrl: activity.googleFormEditUrl || activity.editUrl || ""
+    })).filter(activity => activity.name || activity.formId || activity.formUrl);
+    if (!activities.length) return;
+
+    let imported = 0;
+    let attempted = false;
+    const opnformActivities = activities.filter(activity => activity.opnformFormId || activity.formMode === "opnform");
+    if (opnformActivities.length) {
+      attempted = true;
+      const response = await fetch(api + "/api/opnform/sync", {
+        method: "POST",
+        headers: { "content-type": "application/json", "x-admin-email": email },
+        body: JSON.stringify({ activities: opnformActivities })
+      });
+      const result = await response.json().catch(() => ({}));
+      if (response.ok && result.success) imported += Number(result.imported || 0);
+      else if (result.code !== "opnform_not_configured") throw new Error(result.message || "OpnForm 同步失敗");
+    }
+
+    const googleActivities = activities.filter(activity => activity.googleFormId || activity.formMode === "google_form");
+    if (googleActivities.length) {
+      attempted = true;
+      const response = await fetch(api + "/api/google-forms/sync", {
+        method: "POST",
+        headers: { "content-type": "application/json", "x-admin-email": email },
+        body: JSON.stringify({ activities: googleActivities })
+      });
+      const result = await response.json().catch(() => ({}));
+      if (response.ok && result.success) imported += Number(result.imported || 0);
+      else if (response.status !== 503) throw new Error(result.message || "Google 表單同步失敗");
+    }
+    if (showMessage) toast(attempted ? `同步完成，讀取 ${imported} 筆報名。` : "目前沒有可同步的報名表。");
   }
 
   function render() {
