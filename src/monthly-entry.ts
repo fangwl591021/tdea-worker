@@ -330,7 +330,14 @@ async function createOpnForm(request: Request, env: Env) {
     properties: opnFormProperties(settings.fields)
   };
   const create = await opnFormJson(env, "/open/forms", { method: "POST", body: JSON.stringify(payload) });
-  if (!create.response.ok) return json({ success: false, code: "opnform_create_failed", message: clean(create.data.message) || "OpnForm create failed", data: create.data }, create.response.status);
+  if (!create.response.ok) {
+    let workspaces: unknown = undefined;
+    if (create.response.status === 401 || create.response.status === 403) {
+      const list = await opnFormJson(env, "/open/workspaces", { method: "GET" });
+      workspaces = list.response.ok ? list.data : list.data;
+    }
+    return json({ success: false, code: "opnform_create_failed", message: clean(create.data.message) || "OpnForm create failed", workspaceId: Number(clean(env.OPNFORM_WORKSPACE_ID)), workspaces, data: create.data }, create.response.status);
+  }
 
   const form = asRecord(create.data.data || create.data.form || create.data);
   const formId = clean(form.id || form.uuid);
@@ -368,6 +375,14 @@ async function createOpnForm(request: Request, env: Env) {
     webhookMessage,
     data: { form, webhookInstalled, webhookMessage }
   }, 201);
+}
+
+async function listOpnFormWorkspaces(request: Request, env: Env) {
+  const guard = requireAdmin(request, env);
+  if (guard) return guard;
+  if (!clean(env.OPNFORM_API_TOKEN)) return json({ success: false, code: "opnform_not_configured", message: "OPNFORM_API_TOKEN is not configured" }, 503);
+  const result = await opnFormJson(env, "/open/workspaces", { method: "GET" });
+  return json({ success: result.response.ok, configuredWorkspaceId: clean(env.OPNFORM_WORKSPACE_ID), data: result.data }, result.response.ok ? 200 : result.response.status);
 }
 
 function normalizeOpnFormSubmission(payload: Record<string, unknown>, fallbackActivity: Record<string, unknown> = {}) {
@@ -554,6 +569,7 @@ export default {
     if (request.method === "GET" && url.pathname === "/api/monthly-activity") return json({ success: true, data: await readMonthly(env) });
     if ((request.method === "PUT" || request.method === "POST") && url.pathname === "/api/monthly-activity") { const guard = requireAdmin(request, env); if (guard) return guard; if (!env.ASSETS_BUCKET) return json({ success: false, message: "R2 bucket is not configured" }, 503); const config = await request.json().catch(() => ({})) as MonthlyConfig; await writeMonthly(env, config); return json({ success: true, data: await readMonthly(env), flex: buildMonthlyFlex(config) }); }
     if (request.method === "GET" && url.pathname === "/api/monthly-activity/flex") { const config = await readMonthly(env); return json({ success: true, flex: buildMonthlyFlex(config), data: config }); }
+    if (request.method === "GET" && url.pathname === "/api/opnform/workspaces") return listOpnFormWorkspaces(request, env);
     if (request.method === "POST" && url.pathname === "/api/opnform/create") return createOpnForm(request, env);
     if (request.method === "POST" && url.pathname === "/api/opnform/webhook") return handleOpnFormWebhook(request, env);
     if (request.method === "POST" && url.pathname === "/api/opnform/sync") return syncOpnFormResponses(request, env);
