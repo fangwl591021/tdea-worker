@@ -99,7 +99,15 @@
           <option value="none">不需要</option>
         </select>
       </div>
-      <div class="custom-fields-block">
+	      <div class="sessions-block" data-sessions-block>
+	        <div class="sessions-head">
+	          <strong>梯次設定</strong>
+	          <button class="btn" type="button" data-add-session>新增梯次</button>
+	        </div>
+	        <small class="form-builder-hint">沒有梯次時會使用活動時間作為「一般報名」。可設定每個梯次名稱、時間與名額。</small>
+	        <div class="sessions-list" data-sessions></div>
+	      </div>
+	      <div class="custom-fields-block">
         <div class="custom-fields-head">
           <strong>自訂欄位</strong>
           <button class="btn" type="button" data-add-custom-field>新增欄位</button>
@@ -122,7 +130,23 @@
 
     submit?.insertAdjacentElement("beforebegin", block);
     submit.textContent = "建立 Google 表單設定";
-    block.querySelector("[data-add-custom-field]")?.addEventListener("click", () => addCustomField(block));
+	    block.querySelector("[data-add-custom-field]")?.addEventListener("click", () => addCustomField(block));
+	    block.querySelector("[data-add-session]")?.addEventListener("click", () => addSession(block));
+	  }
+
+  function addSession(scope, value = {}) {
+    const list = scope.querySelector("[data-sessions]");
+    if (!list) return;
+    const row = document.createElement("div");
+    row.className = "session-row";
+    row.dataset.sessionRow = "1";
+    row.innerHTML = `
+      <input name="sessionName" value="${escapeHtml(value.name || "")}" placeholder="梯次名稱，例如：上午場">
+      <input name="sessionTime" value="${escapeHtml(value.time || value.startTime || "")}" placeholder="時間，例如：09:30-12:00">
+      <input name="sessionCapacity" type="number" min="0" value="${escapeHtml(value.capacity || "")}" placeholder="名額">
+      <button class="btn danger" type="button" data-remove-session>刪除</button>`;
+    row.querySelector("[data-remove-session]")?.addEventListener("click", () => row.remove());
+    list.appendChild(row);
   }
 
   function addCustomField(scope, value = {}) {
@@ -273,6 +297,15 @@
     }).filter(field => field.label);
   }
 
+  function collectSessions(form) {
+    return [...form.querySelectorAll("[data-session-row]")].map((row, index) => {
+      const name = row.querySelector("[name='sessionName']")?.value?.trim() || "";
+      const time = row.querySelector("[name='sessionTime']")?.value?.trim() || "";
+      const capacity = Number(row.querySelector("[name='sessionCapacity']")?.value || 0) || 0;
+      return { id: "session_" + (index + 1), name, startTime: time, capacity, status: "open" };
+    }).filter(session => session.name);
+  }
+
   document.addEventListener("submit", event => {
     const form = event.target;
     if (!(form instanceof HTMLFormElement) || form.id !== "activity-form") return;
@@ -281,6 +314,7 @@
     const status = form.querySelector(".form-upload-status");
     const formUrl = form.formUrl?.value?.trim() || "";
     const customFields = collectCustomFields(form);
+    const sessions = collectSessions(form);
     const settings = {
       posterUrl: form.posterUrl?.value?.trim() || "",
       posterR2Key: "",
@@ -291,6 +325,7 @@
       genderField: form.genderField?.value || "required",
       memberField: form.memberField?.value || "required",
       mealField: form.mealField?.value || "required",
+      sessions,
       customFields,
       fields: [
         { key: "name", label: "姓名", type: "text", required: true },
@@ -361,6 +396,10 @@
     .form-schema-preview span,.form-builder-hint{color:#667085;font-size:13px;line-height:1.6}
     .form-upload-status{min-height:18px;color:#2563eb;font-size:13px}
     .custom-fields-block{display:grid;gap:12px;border:1px solid #d0d5dd;border-radius:8px;background:#fff;padding:14px}
+    .sessions-block{display:grid;gap:12px;border:1px solid #d0d5dd;border-radius:8px;background:#fff;padding:14px}
+    .sessions-head{display:flex;align-items:center;justify-content:space-between;gap:12px}
+    .sessions-list{display:grid;gap:10px}
+    .session-row{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr) 120px auto;gap:10px;align-items:center}
     .custom-fields-head{display:flex;align-items:center;justify-content:space-between;gap:12px}
     .custom-fields-list{display:grid;gap:12px}
     .custom-question-card{display:grid;gap:14px;border:1px solid #e5e7eb;border-radius:8px;background:#fff;padding:16px;box-shadow:0 4px 12px rgba(15,23,42,.06)}
@@ -381,7 +420,7 @@
     .custom-sort-actions{display:flex;gap:8px;margin-right:auto}
     .custom-required{display:flex;align-items:center;gap:6px;min-height:42px;font-weight:700;color:#344054}
     .custom-required input{width:auto}
-    @media(max-width:900px){.custom-question-top{grid-template-columns:1fr}.custom-required{min-height:auto}}
+    @media(max-width:900px){.custom-question-top,.session-row{grid-template-columns:1fr}.custom-required{min-height:auto}}
   `;
   document.head.appendChild(style);
 

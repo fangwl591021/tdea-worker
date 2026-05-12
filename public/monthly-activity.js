@@ -65,6 +65,7 @@
     const settings = formSettingsFor(activity);
     return firstUrl(
       activity.formUrl,
+      activity.nativeFormUrl,
       activity.opnformFormUrl,
       activity.googleFormUrl,
       activity.googleFormPublishedUrl,
@@ -78,6 +79,7 @@
       activity.googleForm?.publishedUrl,
       activity.googleForm?.responderUri,
       settings.formUrl,
+      settings.nativeFormUrl,
       settings.opnformFormUrl,
       settings.googleFormUrl,
       settings.googleFormPublishedUrl,
@@ -259,7 +261,7 @@
   function formIdFor(activity) {
     if (!activity) return "";
     const settings = formSettingsFor(activity);
-    return trim(activity.formId) || trim(activity.opnformFormId) || trim(activity.googleFormId) || trim(settings.formId) || trim(settings.opnformFormId) || trim(settings.googleFormId);
+    return trim(activity.formId) || trim(activity.nativeFormId) || trim(activity.opnformFormId) || trim(activity.googleFormId) || trim(settings.formId) || trim(settings.nativeFormId) || trim(settings.opnformFormId) || trim(settings.googleFormId);
   }
   function basicFields() {
     return `<div class="monthly-basic-grid"><div class="field"><label>月份</label><input name="month" data-monthly-basic value="${esc(config.month || "")}" placeholder="2026-05"></div><div class="monthly-keyword-pill"><span>觸發關鍵字</span><strong>${fixedKeyword}</strong></div><label class="monthly-enabled"><input type="checkbox" name="enabled" data-monthly-enabled ${config.enabled ? "checked" : ""}> 啟用此關鍵字</label></div>`;
@@ -338,14 +340,16 @@
 
   function generatedProviderMeta(formUrl, meta = {}) {
     const data = meta.data || {};
-    const provider = meta.provider || data.provider || "google_form";
-    const formId = meta.formId || meta.opnformFormId || data.formId || data.opnformFormId || "";
+    const provider = meta.provider || data.provider || "native_form";
+    const formId = meta.formId || meta.nativeFormId || meta.opnformFormId || data.formId || data.nativeFormId || data.opnformFormId || "";
     return {
       provider,
       formId,
       formUrl,
       editUrl: meta.editUrl || data.editUrl || "",
       sheetUrl: meta.sheetUrl || data.sheetUrl || "",
+      nativeFormId: meta.nativeFormId || (provider === "native_form" ? formId : ""),
+      nativeFormUrl: meta.nativeFormUrl || (provider === "native_form" ? formUrl : ""),
       googleFormId: meta.googleFormId || (provider === "google_form" ? formId : ""),
       googleFormUrl: meta.googleFormUrl || (provider === "google_form" ? formUrl : ""),
       opnformFormId: meta.opnformFormId || (provider === "opnform" ? formId : ""),
@@ -364,6 +368,8 @@
     target.formMode = normalized.provider;
     target.formUrl = formUrl;
     target.formId = normalized.formId || target.formId || "";
+    target.nativeFormUrl = normalized.nativeFormUrl || target.nativeFormUrl || "";
+    target.nativeFormId = normalized.nativeFormId || target.nativeFormId || "";
     target.googleFormUrl = normalized.googleFormUrl || target.googleFormUrl || "";
     target.googleFormId = normalized.googleFormId || target.googleFormId || "";
     target.googleFormEditUrl = normalized.provider === "google_form" ? (normalized.editUrl || target.googleFormEditUrl || "") : (target.googleFormEditUrl || "");
@@ -371,7 +377,7 @@
     target.opnformFormUrl = normalized.opnformFormUrl || target.opnformFormUrl || "";
     target.opnformFormId = normalized.opnformFormId || target.opnformFormId || "";
     data.formSettings[target.id] ||= {};
-    Object.assign(data.formSettings[target.id], formSettingsFor(activity), { formUrl, formMode: target.formMode, formId: target.formId, googleFormUrl: target.googleFormUrl, googleFormId: target.googleFormId, opnformFormUrl: target.opnformFormUrl, opnformFormId: target.opnformFormId, editUrl: target.googleFormEditUrl, sheetUrl: target.googleSheetUrl });
+    Object.assign(data.formSettings[target.id], formSettingsFor(activity), { formUrl, formMode: target.formMode, formId: target.formId, nativeFormUrl: target.nativeFormUrl, nativeFormId: target.nativeFormId, googleFormUrl: target.googleFormUrl, googleFormId: target.googleFormId, opnformFormUrl: target.opnformFormUrl, opnformFormId: target.opnformFormId, editUrl: target.googleFormEditUrl, sheetUrl: target.googleSheetUrl });
     if (target.activityNo) {
       data.formSettings[target.activityNo] ||= {};
       Object.assign(data.formSettings[target.activityNo], data.formSettings[target.id]);
@@ -401,6 +407,23 @@
 
   async function generateManagedFormForActivity(activity, email) {
     const payload = formPayloadForActivity(activity);
+    const native = await fetch(`${api}/api/native-forms/create`, {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-admin-email": email },
+      body: JSON.stringify(payload)
+    });
+    const nativeResult = await native.json().catch(() => ({}));
+    if (!native.ok || !nativeResult.success) throw new Error(nativeResult.message || "自建報名表產生失敗");
+    const nativeUrl = nativeResult.formUrl || nativeResult.nativeFormUrl || nativeResult.data?.formUrl || nativeResult.data?.nativeFormUrl || "";
+    if (!nativeUrl) throw new Error("報名表已建立，但沒有取得公開網址。");
+    return {
+      provider: "native_form",
+      formUrl: nativeUrl,
+      formId: nativeResult.formId || nativeResult.nativeFormId || nativeResult.data?.formId || "",
+      nativeFormId: nativeResult.nativeFormId || nativeResult.formId || nativeResult.data?.nativeFormId || "",
+      nativeFormUrl: nativeUrl
+    };
+
     const opnform = await fetch(`${api}/api/opnform/create`, {
       method: "POST",
       headers: { "content-type": "application/json", "x-admin-email": email },

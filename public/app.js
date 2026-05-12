@@ -29,7 +29,7 @@
 
   let registrationSyncing = false;
   function registrationCandidates(activity) {
-    return [activity?.id, activity?.activityNo, activity?.formId, activity?.googleFormId, activity?.opnformFormId, activity?.name]
+    return [activity?.id, activity?.activityNo, activity?.formId, activity?.nativeFormId, activity?.googleFormId, activity?.opnformFormId, activity?.name]
       .map(value => String(value || "").trim())
       .filter(Boolean);
   }
@@ -106,10 +106,10 @@
       activityNo: activity.activityNo || "",
       name: activity.name || "",
       formMode: activity.formMode || "",
-      formId: activity.formId || activity.googleFormId || activity.opnformFormId || "",
+      formId: activity.formId || activity.nativeFormId || activity.googleFormId || activity.opnformFormId || "",
       googleFormId: activity.googleFormId || "",
       opnformFormId: activity.opnformFormId || "",
-      formUrl: activity.formUrl || activity.googleFormUrl || activity.opnformFormUrl || "",
+      formUrl: activity.formUrl || activity.nativeFormUrl || activity.googleFormUrl || activity.opnformFormUrl || "",
       googleFormUrl: activity.googleFormUrl || "",
       opnformFormUrl: activity.opnformFormUrl || "",
       editUrl: activity.googleFormEditUrl || activity.editUrl || "",
@@ -328,7 +328,12 @@
     const autoSync = document.querySelector("[data-auto-sync]"); if (autoSync) autoSync.onchange = () => { setAutoSyncEnabled(autoSync.checked); toast(autoSync.checked ? "已開啟自動同步" : "已關閉自動同步"); };
     const syncButton = document.querySelector("[data-sync-registrations]"); if (syncButton) syncButton.onclick = () => syncRegistrations(true);
     const clearTest = document.querySelector("[data-clear-test]"); if (clearTest) clearTest.onclick = clearTestData;
-    document.querySelectorAll("[data-register]").forEach(b => b.onclick = () => { const x = state.data.activities.find(r => r.id === b.dataset.register); if (x) x.reg = Number(x.reg || 0) + 1; save(); toast("已模擬新增一筆報名"); render(); });
+    document.querySelectorAll("[data-register]").forEach(b => b.onclick = () => {
+      const x = state.data.activities.find(r => r.id === b.dataset.register);
+      const url = x?.formUrl || x?.nativeFormUrl || x?.googleFormUrl || x?.opnformFormUrl || "";
+      if (url) location.href = url;
+      else toast("這個活動尚未建立報名表，請到編輯活動產生。");
+    });
     const af = document.querySelector("#activity-form"); if (af) af.onsubmit = e => { e.preventDefault(); const d = Object.fromEntries(new FormData(af)); state.data.activities.unshift({ id: uid(), name: d.name.trim(), type: d.type, courseTime: d.courseTime, deadline: d.deadline, capacity: Number(d.capacity || 0), reg: 0, check: 0, status: d.status, formUrl: "" }); save(); state.view = "dashboard"; render(); toast("活動已建立"); };
     const ea = document.querySelector("#drawer-activity"); if (ea) ea.onsubmit = e => { e.preventDefault(); const d = Object.fromEntries(new FormData(ea)); const x = state.data.activities.find(r => r.id === d.id); if (x) Object.assign(x, { name: d.name, type: d.type, courseTime: d.courseTime, deadline: d.deadline, capacity: Number(d.capacity || 0), reg: Number(d.reg || 0), check: Number(d.check || 0), status: d.status, formUrl: d.formUrl }); state.drawer = ""; save(); render(); toast("活動已儲存"); };
     const mf = document.querySelector("#drawer-member"); if (mf) mf.onsubmit = e => { e.preventDefault(); const type = mf.dataset.type; const d = Object.fromEntries(new FormData(mf)); const rows = state.data[type]; const old = rows.find(r => r.id === d.id); const item = { ...d, id: d.id || uid() }; old ? Object.assign(old, item) : rows.unshift(item); state.drawer = ""; save(); render(); toast("名冊已儲存"); };

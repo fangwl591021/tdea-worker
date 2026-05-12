@@ -6,8 +6,11 @@ type MonthlyPage = { id?: string; activityNo?: string; imageUrl?: string; formIm
 type MonthlyConfig = { enabled?: boolean; keyword?: string; month?: string; altText?: string; detailBaseUrl?: string; pages?: MonthlyPage[]; updatedAt?: string };
 type RegistrationRecord = { activityId?: string; activityNo?: string; activityName?: string; formId?: string; count: number; lastSubmittedAt?: string };
 type RegistrationSummary = { updatedAt?: string; activities: Record<string, RegistrationRecord> };
-type RegistrationEntry = { id: string; sourceId?: string; formId?: string; submittedAt?: string; activity?: Record<string, unknown>; answers?: Record<string, unknown> };
+type RegistrationEntry = { id: string; sourceId?: string; formId?: string; submittedAt?: string; activity?: Record<string, unknown>; answers?: Record<string, unknown>; status?: string; checkedInAt?: string; sessionId?: string; queryCode?: string; checkinToken?: string; cancelledAt?: string };
 type ManagedSubmission = { formId?: string; sourceId?: string; submittedAt?: string; activity: Record<string, unknown>; answers: Record<string, unknown>; raw?: unknown };
+type NativeField = { key: string; label: string; type: string; required?: boolean; options?: string[] };
+type NativeSession = { id: string; name: string; startTime?: string; endTime?: string; capacity?: number; status?: string };
+type NativeForm = { id: string; provider: "native_form"; activity: Record<string, unknown>; settings: Record<string, unknown>; fields: NativeField[]; sessions: NativeSession[]; formUrl: string; createdAt: string; updatedAt: string };
 
 const monthlyKey = "flex/monthly-activity.json";
 const registrationSummaryKey = "registrations/summary.json";
@@ -15,6 +18,8 @@ const workerBaseUrl = "https://tdeawork.fangwl591021.workers.dev";
 const fixedKeyword = "TDEA每月活動";
 const defaultLiffBase = "https://liff.line.me/2005868456-2jmxqyFU?monthlyDetail={id}";
 const defaultLiffCloseUrl = "https://liff.line.me/2005868456-2jmxqyFU?close=1";
+const publicAppUrl = "https://fangwl591021.github.io/tdea-worker/";
+const publicLiffUrl = "https://liff.line.me/2005868456-2jmxqyFU";
 const headers = { "access-control-allow-origin": "*", "access-control-allow-methods": "GET,POST,PUT,OPTIONS", "access-control-allow-headers": "content-type,x-admin-email,x-aiwe-token,x-line-signature" };
 
 const json = (data: unknown, status = 200) => new Response(JSON.stringify(data), { status, headers: { "content-type": "application/json; charset=utf-8", "cache-control": "no-store", ...headers } });
@@ -49,7 +54,7 @@ async function readRegistrationSummary(env: Env): Promise<RegistrationSummary> {
   const activities = data && typeof data === "object" && typeof (data as RegistrationSummary).activities === "object" ? (data as RegistrationSummary).activities : {};
   for (const [key, record] of Object.entries(activities || {})) {
     const list = await readRegistrationList(env, key);
-    if (list.length) record.count = dedupeRegistrations(list).length;
+    if (list.length) record.count = activeRegistrations(list).length;
   }
   return { updatedAt: (data as RegistrationSummary).updatedAt, activities: activities || {} };
 }
@@ -75,6 +80,15 @@ async function readRegistrationList(env: Env, key: string): Promise<Registration
   if (!object) return [];
   const data = await object.json().catch(() => []);
   return Array.isArray(data) ? data as RegistrationEntry[] : [];
+}
+
+async function writeRegistrationList(env: Env, key: string, list: RegistrationEntry[]) {
+  if (!env.ASSETS_BUCKET || !key) return;
+  await env.ASSETS_BUCKET.put(registrationListKey(key), JSON.stringify(list.slice(0, 1000), null, 2), { httpMetadata: { contentType: "application/json; charset=utf-8", cacheControl: "no-store" } });
+}
+
+function activeRegistrations(list: RegistrationEntry[]) {
+  return dedupeRegistrations(list).filter((item) => clean(item.status || "active") !== "cancelled");
 }
 
 function registrationFingerprint(entry: RegistrationEntry) {
@@ -109,8 +123,8 @@ async function appendRegistrationList(env: Env, keys: string[], entry: Registrat
     const fingerprint = registrationFingerprint(entry);
     const exists = list.some((item) => (item.sourceId || item.id) === sourceId || registrationFingerprint(item) === fingerprint);
     const nextList = exists ? list : [entry, ...list];
-    maxCount = Math.max(maxCount, nextList.length);
-    await env.ASSETS_BUCKET.put(registrationListKey(key), JSON.stringify(nextList.slice(0, 1000), null, 2), { httpMetadata: { contentType: "application/json; charset=utf-8", cacheControl: "no-store" } });
+    maxCount = Math.max(maxCount, activeRegistrations(nextList).length);
+    await writeRegistrationList(env, key, nextList);
   }
   return maxCount;
 }
@@ -153,7 +167,8 @@ async function storeManagedSubmission(env: Env, submission: ManagedSubmission) {
     formId,
     submittedAt: record.lastSubmittedAt,
     activity,
-    answers: normalizeAnswersRecord(submission.answers || {})
+    answers: normalizeAnswersRecord(submission.answers || {}),
+    status: "active"
   };
   const count = await appendRegistrationList(env, keys, entry);
   record.count = Number(count || 0);
@@ -343,6 +358,297 @@ function firstClean(...values: unknown[]) {
     if (text) return text;
   }
   return "";
+}
+
+function nativeFormKey(formId: string) {
+  return `forms/native/${encodeURIComponent(formId)}.json`;
+}
+
+function nativeRegistrationKey(registrationId: string) {
+  return `registrations/native/${encodeURIComponent(registrationId)}.json`;
+}
+
+function nativeQueryKey(queryCode: string) {
+  return `registrations/native-query/${encodeURIComponent(queryCode)}.json`;
+}
+
+function nativeTokenKey(token: string) {
+  return `registrations/native-token/${encodeURIComponent(token)}.json`;
+}
+
+function nativeFormUrl(formId: string) {
+  return `${publicLiffUrl}?register=${encodeURIComponent(formId)}`;
+}
+
+function nativeCheckinUrl(token: string) {
+  return `${publicAppUrl}?checkin=${encodeURIComponent(token)}`;
+}
+
+function codeToken(length = 8) {
+  const alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+  const bytes = new Uint8Array(length);
+  crypto.getRandomValues(bytes);
+  return [...bytes].map((byte) => alphabet[byte % alphabet.length]).join("");
+}
+
+function normalizeNativeFields(settings: Record<string, unknown>): NativeField[] {
+  const rows = Array.isArray(settings.fields) ? settings.fields as Array<Record<string, unknown>> : [];
+  return rows.map((field, index) => {
+    const type = clean(field.type || "text").toLowerCase();
+    const choice = ["select", "dropdown"].includes(type) ? "dropdown" : ["radio", "choice"].includes(type) ? "radio" : ["checkbox", "checkboxes", "multi_select"].includes(type) ? "checkbox" : type === "paragraph" ? "paragraph" : type === "email" ? "email" : "text";
+    return {
+      key: clean(field.key) || `field_${index + 1}`,
+      label: clean(field.label) || `欄位 ${index + 1}`,
+      type: choice,
+      required: Boolean(field.required),
+      options: normalizeOptions(field.options).map((option) => clean(option.name)).filter(Boolean)
+    };
+  }).filter((field) => field.label);
+}
+
+function normalizeNativeSessions(settings: Record<string, unknown>, activity: Record<string, unknown>): NativeSession[] {
+  const rows = Array.isArray(settings.sessions) ? settings.sessions as Array<Record<string, unknown>> : [];
+  const sessions = rows.map((row, index) => ({
+    id: clean(row.id) || `session_${index + 1}`,
+    name: clean(row.name) || `梯次 ${index + 1}`,
+    startTime: clean(row.startTime || row.time),
+    endTime: clean(row.endTime),
+    capacity: Number(row.capacity || 0) || 0,
+    status: clean(row.status || "open")
+  })).filter((row) => row.name);
+  if (sessions.length) return sessions;
+  return [{
+    id: "default",
+    name: clean(activity.courseTime) || "一般報名",
+    startTime: clean(activity.courseTime),
+    endTime: "",
+    capacity: Number(activity.capacity || 0) || 0,
+    status: "open"
+  }];
+}
+
+async function readNativeForm(env: Env, formId: string): Promise<NativeForm | null> {
+  if (!env.ASSETS_BUCKET || !formId) return null;
+  const object = await env.ASSETS_BUCKET.get(nativeFormKey(formId));
+  if (!object) return null;
+  const data = await object.json().catch(() => null) as NativeForm | null;
+  return data && data.id ? data : null;
+}
+
+async function writeNativeForm(env: Env, form: NativeForm) {
+  if (!env.ASSETS_BUCKET) return;
+  await env.ASSETS_BUCKET.put(nativeFormKey(form.id), JSON.stringify(form, null, 2), { httpMetadata: { contentType: "application/json; charset=utf-8", cacheControl: "no-store" } });
+}
+
+async function readNativeRegistration(env: Env, registrationId: string): Promise<RegistrationEntry | null> {
+  if (!env.ASSETS_BUCKET || !registrationId) return null;
+  const object = await env.ASSETS_BUCKET.get(nativeRegistrationKey(registrationId));
+  if (!object) return null;
+  return await object.json().catch(() => null) as RegistrationEntry | null;
+}
+
+async function writeNativeRegistration(env: Env, entry: RegistrationEntry) {
+  if (!env.ASSETS_BUCKET) return;
+  await env.ASSETS_BUCKET.put(nativeRegistrationKey(entry.id), JSON.stringify(entry, null, 2), { httpMetadata: { contentType: "application/json; charset=utf-8", cacheControl: "no-store" } });
+  if (entry.queryCode) await env.ASSETS_BUCKET.put(nativeQueryKey(entry.queryCode), entry.id, { httpMetadata: { contentType: "text/plain; charset=utf-8", cacheControl: "no-store" } });
+  if (entry.checkinToken) await env.ASSETS_BUCKET.put(nativeTokenKey(entry.checkinToken), entry.id, { httpMetadata: { contentType: "text/plain; charset=utf-8", cacheControl: "no-store" } });
+}
+
+function publicNativeForm(form: NativeForm) {
+  return {
+    id: form.id,
+    provider: form.provider,
+    activity: form.activity,
+    settings: { sessionsEnabled: form.sessions.length > 1 },
+    fields: form.fields,
+    sessions: form.sessions.filter((session) => clean(session.status || "open") !== "closed"),
+    formUrl: form.formUrl
+  };
+}
+
+async function createNativeForm(request: Request, env: Env) {
+  const guard = requireAdmin(request, env);
+  if (guard) return guard;
+  if (!env.ASSETS_BUCKET) return json({ success: false, message: "R2 bucket is not configured" }, 503);
+  const input = await request.json().catch(() => ({})) as Record<string, unknown>;
+  const activity = asRecord(input.activity);
+  const settings = asRecord(input.settings);
+  const formId = firstClean(activity.id, activity.activityNo, `native-${crypto.randomUUID()}`);
+  const now = new Date().toISOString();
+  const existing = await readNativeForm(env, formId);
+  const form: NativeForm = {
+    id: formId,
+    provider: "native_form",
+    activity: {
+      id: formId,
+      activityNo: clean(activity.activityNo),
+      name: firstClean(activity.name, "未命名活動"),
+      type: clean(activity.type),
+      courseTime: clean(activity.courseTime),
+      deadline: clean(activity.deadline),
+      capacity: Number(activity.capacity || 0) || 0,
+      detailText: clean(activity.detailText),
+      posterUrl: firstClean(activity.posterUrl, activity.imageUrl),
+      imageUrl: firstClean(activity.imageUrl, activity.posterUrl),
+      youtubeUrl: clean(activity.youtubeUrl)
+    },
+    settings,
+    fields: normalizeNativeFields(settings),
+    sessions: normalizeNativeSessions(settings, activity),
+    formUrl: nativeFormUrl(formId),
+    createdAt: existing?.createdAt || now,
+    updatedAt: now
+  };
+  await writeNativeForm(env, form);
+  return json({ success: true, provider: "native_form", formId, nativeFormId: formId, formUrl: form.formUrl, nativeFormUrl: form.formUrl, data: { form: publicNativeForm(form) } }, 201);
+}
+
+async function getNativeForm(request: Request, env: Env, formId: string) {
+  const form = await readNativeForm(env, formId);
+  if (!form) return json({ success: false, message: "找不到報名表" }, 404);
+  const list = activeRegistrations(await readRegistrationList(env, form.id));
+  const counts: Record<string, number> = {};
+  for (const item of list) counts[clean(item.sessionId || "default")] = (counts[clean(item.sessionId || "default")] || 0) + 1;
+  return json({ success: true, data: { ...publicNativeForm(form), counts, total: list.length } });
+}
+
+function validateNativeAnswers(form: NativeForm, answers: Record<string, unknown>, sessionId: string) {
+  const errors: string[] = [];
+  const session = form.sessions.find((item) => item.id === sessionId);
+  if (!session) errors.push("請選擇有效梯次");
+  for (const field of form.fields) {
+    const value = answers[field.key];
+    const hasValue = Array.isArray(value) ? value.length > 0 : clean(value) !== "";
+    if (field.required && !hasValue) errors.push(`${field.label} 為必填`);
+    if ((field.type === "radio" || field.type === "dropdown") && hasValue && field.options?.length && !field.options.includes(clean(value))) errors.push(`${field.label} 選項不正確`);
+    if (field.type === "checkbox" && hasValue && field.options?.length) {
+      const values = Array.isArray(value) ? value.map(clean) : [clean(value)];
+      if (values.some((item) => !field.options?.includes(item))) errors.push(`${field.label} 選項不正確`);
+    }
+  }
+  return errors;
+}
+
+async function submitNativeForm(request: Request, env: Env, formId: string) {
+  if (!env.ASSETS_BUCKET) return json({ success: false, message: "R2 bucket is not configured" }, 503);
+  const form = await readNativeForm(env, formId);
+  if (!form) return json({ success: false, message: "找不到報名表" }, 404);
+  const input = await request.json().catch(() => ({})) as Record<string, unknown>;
+  const rawAnswers = asRecord(input.answers);
+  const answers = normalizeAnswersRecord(rawAnswers);
+  const sessionId = clean(input.sessionId || "default");
+  const errors = validateNativeAnswers(form, rawAnswers, sessionId);
+  if (errors.length) return json({ success: false, message: errors[0], errors }, 400);
+  const active = activeRegistrations(await readRegistrationList(env, form.id));
+  const session = form.sessions.find((item) => item.id === sessionId);
+  const sessionCount = active.filter((item) => clean(item.sessionId || "default") === sessionId).length;
+  const sessionCapacity = Number(session?.capacity || 0);
+  const totalCapacity = Number(form.activity.capacity || 0);
+  if (sessionCapacity > 0 && sessionCount >= sessionCapacity) return json({ success: false, message: "此梯次已額滿" }, 409);
+  if (totalCapacity > 0 && active.length >= totalCapacity) return json({ success: false, message: "此活動已額滿" }, 409);
+
+  const registrationId = `REG-${Date.now()}-${codeToken(4)}`;
+  const queryCode = codeToken(8);
+  const checkinToken = crypto.randomUUID().replace(/-/g, "");
+  const submittedAt = new Date().toISOString();
+  const entry: RegistrationEntry = {
+    id: registrationId,
+    sourceId: registrationId,
+    formId: form.id,
+    submittedAt,
+    activity: form.activity,
+    answers,
+    status: "active",
+    sessionId,
+    queryCode,
+    checkinToken
+  };
+  const keys = registrationKeys(form.activity, form.id);
+  const count = await appendRegistrationList(env, keys, entry);
+  const summary = await readRegistrationSummary(env);
+  const record: RegistrationRecord = {
+    activityId: clean(form.activity.id),
+    activityNo: clean(form.activity.activityNo),
+    activityName: clean(form.activity.name),
+    formId: form.id,
+    count: Number(count || 0),
+    lastSubmittedAt: submittedAt
+  };
+  for (const key of keys) summary.activities[key] = record;
+  await writeRegistrationSummary(env, summary);
+  await writeNativeRegistration(env, entry);
+  return json({ success: true, data: { registrationId, queryCode, checkinUrl: nativeCheckinUrl(checkinToken), submittedAt, activity: form.activity, session } }, 201);
+}
+
+async function queryNativeRegistration(request: Request, env: Env) {
+  const url = new URL(request.url);
+  const queryCode = clean(url.searchParams.get("code"));
+  const registrationId = clean(url.searchParams.get("registrationId"));
+  let targetId = registrationId;
+  if (!targetId && queryCode && env.ASSETS_BUCKET) {
+    const object = await env.ASSETS_BUCKET.get(nativeQueryKey(queryCode));
+    targetId = object ? await object.text() : "";
+  }
+  const entry = await readNativeRegistration(env, targetId);
+  if (!entry || (queryCode && entry.queryCode !== queryCode)) return json({ success: false, message: "查無報名資料" }, 404);
+  return json({ success: true, data: { ...entry, checkinUrl: entry.checkinToken ? nativeCheckinUrl(entry.checkinToken) : "" } });
+}
+
+async function updateRegistrationEverywhere(env: Env, entry: RegistrationEntry) {
+  await writeNativeRegistration(env, entry);
+  const keys = registrationKeys(entry.activity || {}, clean(entry.formId));
+  for (const key of keys) {
+    const list = await readRegistrationList(env, key);
+    const next = list.map((item) => item.id === entry.id ? { ...item, ...entry } : item);
+    await writeRegistrationList(env, key, next);
+  }
+  const summary = await readRegistrationSummary(env);
+  const count = activeRegistrations(await readRegistrationList(env, clean(entry.formId))).length;
+  for (const key of keys) {
+    const existing = summary.activities[key];
+    if (existing) summary.activities[key] = { ...existing, count, lastSubmittedAt: existing.lastSubmittedAt };
+  }
+  await writeRegistrationSummary(env, summary);
+}
+
+async function cancelNativeRegistration(request: Request, env: Env) {
+  const input = await request.json().catch(() => ({})) as Record<string, unknown>;
+  const registrationId = clean(input.registrationId);
+  const queryCode = clean(input.queryCode);
+  const entry = await readNativeRegistration(env, registrationId);
+  if (!entry || entry.queryCode !== queryCode) return json({ success: false, message: "查無可取消的報名資料" }, 404);
+  if (clean(entry.status || "active") === "cancelled") return json({ success: true, data: entry });
+  entry.status = "cancelled";
+  entry.cancelledAt = new Date().toISOString();
+  await updateRegistrationEverywhere(env, entry);
+  return json({ success: true, data: entry });
+}
+
+async function verifyNativeCheckin(request: Request, env: Env) {
+  const url = new URL(request.url);
+  const token = clean(url.searchParams.get("token"));
+  if (!token || !env.ASSETS_BUCKET) return json({ success: false, message: "缺少核銷碼" }, 400);
+  const object = await env.ASSETS_BUCKET.get(nativeTokenKey(token));
+  const registrationId = object ? await object.text() : "";
+  const entry = await readNativeRegistration(env, registrationId);
+  if (!entry || entry.checkinToken !== token) return json({ success: false, message: "核銷碼無效" }, 404);
+  return json({ success: true, data: entry });
+}
+
+async function confirmNativeCheckin(request: Request, env: Env) {
+  const guard = requireAdmin(request, env);
+  if (guard) return guard;
+  const input = await request.json().catch(() => ({})) as Record<string, unknown>;
+  const token = clean(input.token);
+  if (!token || !env.ASSETS_BUCKET) return json({ success: false, message: "缺少核銷碼" }, 400);
+  const object = await env.ASSETS_BUCKET.get(nativeTokenKey(token));
+  const registrationId = object ? await object.text() : "";
+  const entry = await readNativeRegistration(env, registrationId);
+  if (!entry || entry.checkinToken !== token) return json({ success: false, message: "核銷碼無效" }, 404);
+  if (clean(entry.status || "active") === "cancelled") return json({ success: false, message: "此報名已取消，不能核銷" }, 409);
+  if (!entry.checkedInAt) entry.checkedInAt = new Date().toISOString();
+  await updateRegistrationEverywhere(env, entry);
+  return json({ success: true, data: entry });
 }
 
 function opnFormIntroProperties(activity: Record<string, unknown>, settings: Record<string, unknown>) {
@@ -689,10 +995,18 @@ export default {
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
     const url = new URL(request.url);
     if (request.method === "OPTIONS") return new Response(null, { status: 204, headers });
-    if (request.method === "GET" && url.pathname === "/api/monthly-activity") return json({ success: true, data: await readMonthly(env) });
-    if ((request.method === "PUT" || request.method === "POST") && url.pathname === "/api/monthly-activity") { const guard = requireAdmin(request, env); if (guard) return guard; if (!env.ASSETS_BUCKET) return json({ success: false, message: "R2 bucket is not configured" }, 503); const config = await request.json().catch(() => ({})) as MonthlyConfig; await writeMonthly(env, config); return json({ success: true, data: await readMonthly(env), flex: buildMonthlyFlex(config) }); }
-    if (request.method === "GET" && url.pathname === "/api/monthly-activity/flex") { const config = await readMonthly(env); return json({ success: true, flex: buildMonthlyFlex(config), data: config }); }
-    if (request.method === "GET" && url.pathname === "/api/opnform/workspaces") return listOpnFormWorkspaces(request, env);
+	    if (request.method === "GET" && url.pathname === "/api/monthly-activity") return json({ success: true, data: await readMonthly(env) });
+	    if ((request.method === "PUT" || request.method === "POST") && url.pathname === "/api/monthly-activity") { const guard = requireAdmin(request, env); if (guard) return guard; if (!env.ASSETS_BUCKET) return json({ success: false, message: "R2 bucket is not configured" }, 503); const config = await request.json().catch(() => ({})) as MonthlyConfig; await writeMonthly(env, config); return json({ success: true, data: await readMonthly(env), flex: buildMonthlyFlex(config) }); }
+	    if (request.method === "GET" && url.pathname === "/api/monthly-activity/flex") { const config = await readMonthly(env); return json({ success: true, flex: buildMonthlyFlex(config), data: config }); }
+	    if (request.method === "POST" && url.pathname === "/api/native-forms/create") return createNativeForm(request, env);
+	    const nativeFormMatch = url.pathname.match(/^\/api\/native-forms\/([^/]+)$/);
+	    if (nativeFormMatch && request.method === "GET") return getNativeForm(request, env, decodeURIComponent(nativeFormMatch[1]));
+	    if (nativeFormMatch && request.method === "POST") return submitNativeForm(request, env, decodeURIComponent(nativeFormMatch[1]));
+	    if (request.method === "GET" && url.pathname === "/api/native-registrations/query") return queryNativeRegistration(request, env);
+	    if (request.method === "POST" && url.pathname === "/api/native-registrations/cancel") return cancelNativeRegistration(request, env);
+	    if (request.method === "GET" && url.pathname === "/api/native-checkin/verify") return verifyNativeCheckin(request, env);
+	    if (request.method === "POST" && url.pathname === "/api/native-checkin/confirm") return confirmNativeCheckin(request, env);
+	    if (request.method === "GET" && url.pathname === "/api/opnform/workspaces") return listOpnFormWorkspaces(request, env);
     if (request.method === "POST" && url.pathname === "/api/opnform/create") return createOpnForm(request, env);
     if (request.method === "POST" && url.pathname === "/api/opnform/webhook") return handleOpnFormWebhook(request, env);
     if (request.method === "POST" && url.pathname === "/api/opnform/sync") return syncOpnFormResponses(request, env);

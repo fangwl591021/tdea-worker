@@ -39,6 +39,7 @@
       genderField: form.genderField?.value || "required",
       memberField: form.memberField?.value || "required",
       mealField: form.mealField?.value || "required",
+      sessions: collectSessions(form),
       customFields: collectCustomFields(form)
     };
     settings.fields = buildFields(settings);
@@ -90,19 +91,30 @@
     }).filter((field) => field.label);
   }
 
+  function collectSessions(form) {
+    return [...form.querySelectorAll("[data-session-row]")].map((row, index) => {
+      const name = row.querySelector("[name='sessionName']")?.value?.trim() || "";
+      const time = row.querySelector("[name='sessionTime']")?.value?.trim() || "";
+      const capacity = Number(row.querySelector("[name='sessionCapacity']")?.value || 0) || 0;
+      return { id: "session_" + (index + 1), name, startTime: time, capacity, status: "open" };
+    }).filter((session) => session.name);
+  }
+
   function providerMeta(meta = {}) {
     const data = meta.data || {};
-    const provider = meta.provider || data.provider || "google_form";
-    const formId = meta.formId || meta.opnformFormId || data.formId || data.opnformFormId || "";
-    const formUrl = meta.formUrl || meta.opnformFormUrl || meta.responderUri || data.formUrl || data.opnformFormUrl || data.responderUri || "";
+    const provider = meta.provider || data.provider || "native_form";
+    const formId = meta.formId || meta.nativeFormId || meta.opnformFormId || data.formId || data.nativeFormId || data.opnformFormId || "";
+    const formUrl = meta.formUrl || meta.nativeFormUrl || meta.opnformFormUrl || meta.responderUri || data.formUrl || data.nativeFormUrl || data.opnformFormUrl || data.responderUri || "";
     return {
       provider,
       formId,
       formUrl,
       editUrl: meta.editUrl || data.editUrl || "",
       sheetUrl: meta.sheetUrl || data.sheetUrl || "",
-      opnformFormId: meta.opnformFormId || formId,
-      opnformFormUrl: meta.opnformFormUrl || formUrl,
+      nativeFormId: meta.nativeFormId || (provider === "native_form" ? formId : ""),
+      nativeFormUrl: meta.nativeFormUrl || (provider === "native_form" ? formUrl : ""),
+      opnformFormId: provider === "opnform" ? (meta.opnformFormId || formId) : "",
+      opnformFormUrl: provider === "opnform" ? (meta.opnformFormUrl || formUrl) : "",
       googleFormId: meta.googleFormId || (provider === "google_form" ? formId : ""),
       googleFormUrl: meta.googleFormUrl || (provider === "google_form" ? formUrl : "")
     };
@@ -124,6 +136,8 @@
       formUrl,
       formMode: normalized.provider,
       formId: normalized.formId,
+      nativeFormId: normalized.nativeFormId,
+      nativeFormUrl: normalized.nativeFormUrl,
       editUrl: normalized.editUrl,
       sheetUrl: normalized.sheetUrl,
       googleFormUrl: normalized.googleFormUrl,
@@ -138,6 +152,8 @@
     activity.formMode = normalized.provider;
     activity.formUrl = formUrl;
     activity.formId = normalized.formId || activity.formId || "";
+    activity.nativeFormId = normalized.nativeFormId || activity.nativeFormId || "";
+    activity.nativeFormUrl = normalized.nativeFormUrl || activity.nativeFormUrl || "";
     activity.editUrl = normalized.editUrl || activity.editUrl || "";
     activity.googleFormUrl = normalized.googleFormUrl || activity.googleFormUrl || "";
     activity.googleFormId = normalized.googleFormId || activity.googleFormId || "";
@@ -216,28 +232,17 @@
 
   async function createManagedForm(form, email) {
     const payload = payloadFor(form);
-    const opnform = await fetch(`${apiBase}/api/opnform/create`, {
+    const native = await fetch(`${apiBase}/api/native-forms/create`, {
       method: "POST",
       headers: { "content-type": "application/json", "x-admin-email": email },
       body: JSON.stringify(payload)
     });
-    const opnformResult = await opnform.json().catch(() => ({}));
-    if (opnform.ok && opnformResult.success) return { ...opnformResult, provider: "opnform" };
-    if (opnform.status && opnform.status !== 404 && opnform.status !== 503 && opnformResult.code !== "opnform_not_configured") {
-      throw new Error(opnformResult.message || "OpnForm 報名表產生失敗");
-    }
-
-    const google = await fetch(`${apiBase}/api/google-forms/create`, {
-      method: "POST",
-      headers: { "content-type": "application/json", "x-admin-email": email },
-      body: JSON.stringify(payload)
-    });
-    const googleResult = await google.json().catch(() => ({}));
-    if (!google.ok || !googleResult.success) {
-      const message = google.status === 404 || googleResult.message === "Not found" ? engineInactiveMessage : (googleResult.message || engineInactiveMessage);
+    const nativeResult = await native.json().catch(() => ({}));
+    if (!native.ok || !nativeResult.success) {
+      const message = nativeResult.message || "自建報名表產生失敗";
       throw new Error(message);
     }
-    return { ...googleResult, provider: "google_form" };
+    return { ...nativeResult, provider: "native_form" };
   }
 
   async function generateForm(form, options = {}) {
@@ -250,14 +255,14 @@
     setStatus(form, "正在產生報名表...", "info");
     try {
       const result = await createManagedForm(form, email);
-      const formUrl = result.formUrl || result.opnformFormUrl || result.responderUri || result.data?.formUrl || result.data?.opnformFormUrl || result.data?.responderUri;
+      const formUrl = result.formUrl || result.nativeFormUrl || result.opnformFormUrl || result.responderUri || result.data?.formUrl || result.data?.nativeFormUrl || result.data?.opnformFormUrl || result.data?.responderUri;
       if (!formUrl) {
         setStatus(form, "報名表已建立，但沒有取得公開網址。", "warn");
         return null;
       }
 
       persistFormUrl(form, formUrl, result);
-      const providerName = result.provider === "opnform" ? "OpnForm" : "Google";
+      const providerName = result.provider === "native_form" ? "自建" : (result.provider === "opnform" ? "OpnForm" : "Google");
       setStatus(form, options.auto ? `活動已建立，${providerName} 報名表已產生。` : `${providerName} 報名表已產生並寫入活動。`, "ok");
       return formUrl;
     } catch (error) {
