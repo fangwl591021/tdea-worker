@@ -6,6 +6,8 @@
   const queryMode = params.has("query");
   const app = document.querySelector("#app");
   const liffId = "2005868456-2jmxqyFU";
+  let liffReady = null;
+  let lineUserId = "";
   const esc = (value) => String(value ?? "").replace(/[&<>"']/g, (ch) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#039;" }[ch]));
   const trim = (value) => String(value ?? "").trim();
   const fieldTypes = new Set(["text", "email", "paragraph", "radio", "checkbox", "dropdown"]);
@@ -143,12 +145,38 @@
   }
 
   function loadLiff() {
-    if (window.liff || document.querySelector("script[data-liff-sdk]")) return;
-    const script = document.createElement("script");
-    script.src = "https://static.line-scdn.net/liff/edge/2/sdk.js";
-    script.dataset.liffSdk = "1";
-    script.onload = () => window.liff?.init?.({ liffId }).catch(() => {});
-    document.head.appendChild(script);
+    if (liffReady) return liffReady;
+    liffReady = new Promise((resolve) => {
+      const finish = (value = "") => { lineUserId = value || lineUserId; resolve(lineUserId); };
+      const init = async () => {
+        try {
+          await window.liff?.init?.({ liffId });
+          if (window.liff?.isLoggedIn?.()) {
+            const profile = await window.liff.getProfile();
+            finish(profile?.userId || "");
+            return;
+          }
+        } catch (_) {}
+        finish("");
+      };
+      if (window.liff) {
+        init();
+        return;
+      }
+      const existing = document.querySelector("script[data-liff-sdk]");
+      if (existing) {
+        existing.addEventListener("load", init, { once: true });
+        setTimeout(() => finish(""), 3000);
+        return;
+      }
+      const script = document.createElement("script");
+      script.src = "https://static.line-scdn.net/liff/edge/2/sdk.js";
+      script.dataset.liffSdk = "1";
+      script.onload = init;
+      script.onerror = () => finish("");
+      document.head.appendChild(script);
+    });
+    return liffReady;
   }
 
   async function showRegister(id) {
@@ -182,7 +210,8 @@
       const submit = registerForm.querySelector("button[type='submit']");
       submit.disabled = true;
       submit.textContent = "送出中...";
-      const payload = { sessionId: registerForm.elements.sessionId?.value || "default", answers: collectAnswers(registerForm, fields) };
+      const uid = await loadLiff();
+      const payload = { sessionId: registerForm.elements.sessionId?.value || "default", lineUserId: uid || "", answers: collectAnswers(registerForm, fields) };
       const submitResponse = await fetch(`${api}/api/native-forms/${encodeURIComponent(id)}`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(payload) });
       const submitResult = await submitResponse.json().catch(() => ({}));
       if (!submitResponse.ok || !submitResult.success) {
@@ -240,11 +269,14 @@
     if (!response.ok || !result.success) return renderError(result.message || "核銷碼無效");
     const row = result.data || {};
     const answers = row.answers || {};
+    const pointResults = Array.isArray(row.pointResults) ? row.pointResults : [];
+    const pointHtml = pointResults.length ? `<div class="nf-detail"><strong>點數同步結果</strong><br>${pointResults.map((item) => `${item?.success ? "成功" : "未完成"}：${item?.message || item?.code || item?.get_point || ""}`).map(esc).join("<br>")}</div>` : "";
     const adminEmail = localStorage.getItem("tdea-admin-email") || sessionStorage.getItem("tdea-admin-email") || "";
     renderShell(`<section class="nf-card"><div class="nf-body">
       <h1 class="nf-title">報到核銷</h1>
       <div class="${row.checkedInAt ? "nf-ok" : "nf-alert"}">${row.checkedInAt ? `已核銷：${esc(row.checkedInAt)}` : "尚未核銷"}</div>
       <table class="nf-table"><tbody>${Object.entries(answers).map(([key, value]) => `<tr><th>${esc(key)}</th><td>${esc(Array.isArray(value) ? value.join(", ") : value)}</td></tr>`).join("")}</tbody></table>
+      ${pointHtml}
       <div class="nf-field"><label>管理者 Email</label><input data-admin-email value="${esc(adminEmail)}"></div>
       <div class="nf-actions"><button class="nf-btn primary" data-confirm-checkin>確認核銷</button></div>
     </div></section>`);

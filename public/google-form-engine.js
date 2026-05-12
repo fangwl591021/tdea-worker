@@ -191,6 +191,8 @@
         courseTime: trim(activity.courseTime) || trim(form.courseTime?.value),
         deadline: trim(activity.deadline) || trim(form.deadline?.value),
         capacity: Number(activity.capacity || form.capacity?.value || 0),
+        checkinPoints: Number(activity.checkinPoints || form.checkinPoints?.value || 0),
+        feePoints: Number(activity.feePoints || form.feePoints?.value || 0),
         detailText: trim(activity.detailText) || trim(form.detailText?.value),
         posterUrl: trim(activity.posterUrl) || trim(settings.posterUrl) || trim(form.posterUrl?.value),
         imageUrl: trim(activity.imageUrl) || trim(activity.posterUrl) || trim(settings.posterUrl) || trim(form.posterUrl?.value),

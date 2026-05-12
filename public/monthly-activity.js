@@ -333,6 +333,8 @@
         courseTime: activity.courseTime || "",
         deadline: activity.deadline || "",
         capacity: Number(activity.capacity || 0),
+        checkinPoints: Number(activity.checkinPoints || 0),
+        feePoints: Number(activity.feePoints || 0),
         detailText: detailTextFor(activity),
         posterUrl: posterUrlFor(activity),
         imageUrl: posterUrlFor(activity),
@@ -467,8 +469,6 @@
     for (let index = 0; index < config.pages.length; index += 1) {
       const page = hydratePage(config.pages[index]);
       const currentImageUrl = trim(page.imageUrl);
-      const needsImageRefresh = trim(page.formUrl) && currentImageUrl && trim(page.formImageUrl) !== currentImageUrl;
-      if (trim(page.formUrl) && !needsImageRefresh) continue;
       const activity = findActivity(page.activityNo || page.activityId);
       if (!activity) return `第 ${index + 1} 頁尚未選擇活動`;
       toast(`第 ${index + 1} 頁正在自動產生報名表...`);

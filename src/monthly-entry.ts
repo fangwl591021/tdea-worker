@@ -1,12 +1,12 @@
 import baseEntry from "./roster-sync-entry4";
 
-type Env = { ADMIN_EMAILS?: string; ASSETS_BUCKET?: R2Bucket; LINE_CHANNEL_SECRET?: string; LINE_CHANNEL_ACCESS_TOKEN?: string; GOOGLE_FORMS_SCRIPT_URL?: string; GOOGLE_FORMS_SHARED_SECRET?: string; OPNFORM_API_BASE?: string; OPNFORM_PUBLIC_BASE?: string; OPNFORM_API_TOKEN?: string; OPNFORM_WORKSPACE_ID?: string; OPNFORM_WEBHOOK_SECRET?: string };
+type Env = { ADMIN_EMAILS?: string; ASSETS_BUCKET?: R2Bucket; LINE_CHANNEL_SECRET?: string; LINE_CHANNEL_ACCESS_TOKEN?: string; GOOGLE_FORMS_SCRIPT_URL?: string; GOOGLE_FORMS_SHARED_SECRET?: string; OPNFORM_API_BASE?: string; OPNFORM_PUBLIC_BASE?: string; OPNFORM_API_TOKEN?: string; OPNFORM_WORKSPACE_ID?: string; OPNFORM_WEBHOOK_SECRET?: string; WETW_POINT_API_KEY?: string; WETW_SHOP_ID?: string; WETW_POINT_TYPE?: string };
 type LineEvent = { type?: string; replyToken?: string; message?: { type?: string; text?: string }; postback?: { data?: string } };
 type MonthlyPage = { id?: string; activityNo?: string; imageUrl?: string; formImageUrl?: string; detailTitle?: string; detailText?: string; detailUrl?: string; formUrl?: string; shareUrl?: string; order?: number };
 type MonthlyConfig = { enabled?: boolean; keyword?: string; month?: string; altText?: string; detailBaseUrl?: string; pages?: MonthlyPage[]; updatedAt?: string };
 type RegistrationRecord = { activityId?: string; activityNo?: string; activityName?: string; formId?: string; count: number; lastSubmittedAt?: string };
 type RegistrationSummary = { updatedAt?: string; activities: Record<string, RegistrationRecord> };
-type RegistrationEntry = { id: string; sourceId?: string; formId?: string; submittedAt?: string; activity?: Record<string, unknown>; answers?: Record<string, unknown>; status?: string; checkedInAt?: string; sessionId?: string; queryCode?: string; checkinToken?: string; cancelledAt?: string };
+type RegistrationEntry = { id: string; sourceId?: string; formId?: string; submittedAt?: string; activity?: Record<string, unknown>; answers?: Record<string, unknown>; status?: string; checkedInAt?: string; sessionId?: string; queryCode?: string; checkinToken?: string; cancelledAt?: string; lineUserId?: string; pointsSyncedAt?: string; pointResults?: unknown[] };
 type ManagedSubmission = { formId?: string; sourceId?: string; submittedAt?: string; activity: Record<string, unknown>; answers: Record<string, unknown>; raw?: unknown };
 type NativeField = { key: string; label: string; type: string; required?: boolean; options?: string[] };
 type NativeSession = { id: string; name: string; startTime?: string; endTime?: string; capacity?: number; status?: string };
@@ -16,10 +16,12 @@ const monthlyKey = "flex/monthly-activity.json";
 const registrationSummaryKey = "registrations/summary.json";
 const workerBaseUrl = "https://tdeawork.fangwl591021.workers.dev";
 const fixedKeyword = "TDEA每月活動";
+const queryKeyword = "TDEA活動查詢";
 const defaultLiffBase = "https://liff.line.me/2005868456-2jmxqyFU?monthlyDetail={id}";
 const defaultLiffCloseUrl = "https://liff.line.me/2005868456-2jmxqyFU?close=1";
 const publicAppUrl = "https://fangwl591021.github.io/tdea-worker/";
 const publicLiffUrl = "https://liff.line.me/2005868456-2jmxqyFU";
+const pointApiBase = "https://aiwe.cc/index.php/wp-json/wetw-point/v1";
 const headers = { "access-control-allow-origin": "*", "access-control-allow-methods": "GET,POST,PUT,OPTIONS", "access-control-allow-headers": "content-type,x-admin-email,x-aiwe-token,x-line-signature" };
 
 const json = (data: unknown, status = 200) => new Response(JSON.stringify(data), { status, headers: { "content-type": "application/json; charset=utf-8", "cache-control": "no-store", ...headers } });
@@ -239,6 +241,11 @@ function clean(value: unknown) {
   return String(value ?? "").trim();
 }
 
+function numberValue(value: unknown) {
+  const next = Number(value || 0);
+  return Number.isFinite(next) ? next : 0;
+}
+
 function asRecord(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
 }
@@ -454,6 +461,59 @@ async function writeNativeRegistration(env: Env, entry: RegistrationEntry) {
   if (entry.checkinToken) await env.ASSETS_BUCKET.put(nativeTokenKey(entry.checkinToken), entry.id, { httpMetadata: { contentType: "text/plain; charset=utf-8", cacheControl: "no-store" } });
 }
 
+async function insertMemberPoint(env: Env, input: { lineUserId: string; eventName: string; eventContent: string; points: number; remark?: string }) {
+  const apiKey = clean(env.WETW_POINT_API_KEY);
+  if (!apiKey) return { success: false, code: "missing_api_key", message: "WETW_POINT_API_KEY is not configured" };
+  if (!input.lineUserId || !input.eventName || !input.points) return { success: false, code: "missing_required_fields", message: "LINE_user_id, event_name and get_point are required" };
+  const response = await fetch(`${pointApiBase}/insert-user-point`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      api_key: apiKey,
+      LINE_user_id: input.lineUserId,
+      shop_id: Number(env.WETW_SHOP_ID || 35),
+      event_name: input.eventName,
+      event_content: input.eventContent || input.eventName,
+      point_type: env.WETW_POINT_TYPE || "system_point",
+      get_point: input.points,
+      shop_user_lineid: "",
+      child_shop_name: "",
+      child_shop_renew: 0,
+      shop_remark: input.remark || "TDEA Worker check-in"
+    })
+  });
+  const body = await response.json().catch(() => ({ success: false, message: "Invalid JSON response" }));
+  return { httpStatus: response.status, ...(body as Record<string, unknown>) };
+}
+
+async function syncCheckinPoints(env: Env, entry: RegistrationEntry) {
+  const activity = asRecord(entry.activity);
+  const answers = asRecord(entry.answers);
+  const lineUserId = firstClean(entry.lineUserId, answers.LINE_user_id, answers.lineUserId, answers.line_user_id, answers.uid, answers.UID);
+  if (!lineUserId) return [{ success: false, code: "missing_line_user_id", message: "registration has no LINE user id" }];
+
+  const eventName = firstClean(activity.name, activity.activityNo, "TDEA 活動簽到");
+  const eventContent = firstClean(activity.courseTime, activity.activityNo, entry.id);
+  const checkinPoints = numberValue(activity.checkinPoints || activity.checkinPointAmount);
+  const feePoints = numberValue(activity.feePoints || activity.feePointAmount);
+  const jobs: Array<{ label: string; points: number }> = [];
+  if (checkinPoints > 0) jobs.push({ label: "簽到贈點", points: checkinPoints });
+  if (feePoints > 0) jobs.push({ label: "費用扣抵", points: -Math.abs(feePoints) });
+  if (!jobs.length) return [];
+
+  const results = [];
+  for (const job of jobs) {
+    results.push(await insertMemberPoint(env, {
+      lineUserId,
+      eventName: `${eventName} ${job.label}`,
+      eventContent,
+      points: job.points,
+      remark: entry.id
+    }));
+  }
+  return results;
+}
+
 function publicNativeForm(form: NativeForm) {
   return {
     id: form.id,
@@ -487,6 +547,8 @@ async function createNativeForm(request: Request, env: Env) {
       courseTime: clean(activity.courseTime),
       deadline: clean(activity.deadline),
       capacity: Number(activity.capacity || 0) || 0,
+      checkinPoints: numberValue(activity.checkinPoints || activity.checkinPointAmount),
+      feePoints: numberValue(activity.feePoints || activity.feePointAmount),
       detailText: clean(activity.detailText),
       posterUrl: firstClean(activity.posterUrl, activity.imageUrl),
       imageUrl: firstClean(activity.imageUrl, activity.posterUrl),
@@ -536,6 +598,8 @@ async function submitNativeForm(request: Request, env: Env, formId: string) {
   const input = await request.json().catch(() => ({})) as Record<string, unknown>;
   const rawAnswers = asRecord(input.answers);
   const answers = normalizeAnswersRecord(rawAnswers);
+  const lineUserId = firstClean(input.lineUserId, rawAnswers.LINE_user_id, rawAnswers.lineUserId, rawAnswers.line_user_id, rawAnswers.uid, rawAnswers.UID);
+  if (lineUserId) answers.LINE_user_id = lineUserId;
   const sessionId = clean(input.sessionId || "default");
   const errors = validateNativeAnswers(form, rawAnswers, sessionId);
   if (errors.length) return json({ success: false, message: errors[0], errors }, 400);
@@ -561,7 +625,8 @@ async function submitNativeForm(request: Request, env: Env, formId: string) {
     status: "active",
     sessionId,
     queryCode,
-    checkinToken
+    checkinToken,
+    lineUserId
   };
   const keys = registrationKeys(form.activity, form.id);
   const count = await appendRegistrationList(env, keys, entry);
@@ -646,7 +711,12 @@ async function confirmNativeCheckin(request: Request, env: Env) {
   const entry = await readNativeRegistration(env, registrationId);
   if (!entry || entry.checkinToken !== token) return json({ success: false, message: "核銷碼無效" }, 404);
   if (clean(entry.status || "active") === "cancelled") return json({ success: false, message: "此報名已取消，不能核銷" }, 409);
-  if (!entry.checkedInAt) entry.checkedInAt = new Date().toISOString();
+  const firstCheckin = !entry.checkedInAt;
+  if (firstCheckin) {
+    entry.checkedInAt = new Date().toISOString();
+    entry.pointResults = await syncCheckinPoints(env, entry);
+    entry.pointsSyncedAt = new Date().toISOString();
+  }
   await updateRegistrationEverywhere(env, entry);
   return json({ success: true, data: entry });
 }
@@ -972,10 +1042,26 @@ function rebuildRequest(request: Request, rawBody: string) { return new Request(
 async function handleMonthlyWebhook(request: Request, env: Env, rawBody: string) {
   let payload: unknown;
   try { payload = JSON.parse(rawBody); } catch (_) { return null; }
-  const events = extractLineEvents(payload).filter((event) => normalizeKeyword(extractTriggerText(event)) === normalizeKeyword(fixedKeyword));
-  if (!events.length) return null;
+  const allEvents = extractLineEvents(payload);
+  const queryEvents = allEvents.filter((event) => normalizeKeyword(extractTriggerText(event)) === normalizeKeyword(queryKeyword));
+  const events = allEvents.filter((event) => normalizeKeyword(extractTriggerText(event)) === normalizeKeyword(fixedKeyword));
+  if (!queryEvents.length && !events.length) return null;
   const signature = request.headers.get("x-line-signature");
   if (!await verifyLineSignature(rawBody, signature, env.LINE_CHANNEL_SECRET)) return new Response("Invalid Signature", { status: 403, headers });
+  if (queryEvents.length) {
+    const queryUrl = `${publicLiffUrl}?query=1`;
+    const queryMessage = {
+      type: "template",
+      altText: "TDEA 活動查詢",
+      template: {
+        type: "buttons",
+        text: "請點下方按鈕開啟活動報名查詢與取消頁。",
+        actions: [{ type: "uri", label: "開啟活動查詢", uri: queryUrl }]
+      }
+    };
+    const lineReplies = await Promise.all(queryEvents.map((event) => event.replyToken ? replyToLine(event.replyToken, [queryMessage], env) : Promise.resolve({ ok: false, status: 400, message: "Missing replyToken" })));
+    return json({ success: true, mode: "registration-query", matched: [queryKeyword], forwarded: false, lineReplies });
+  }
   const config = await readMonthly(env);
   const pages = config.pages || [];
   const message = config.enabled && pages.length ? buildMonthlyFlex(config) as Record<string, unknown> : { type: "text", text: "TDEA每月活動尚未發布，請稍後再試。" };
