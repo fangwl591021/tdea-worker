@@ -383,6 +383,10 @@ function nativeTokenKey(token: string) {
   return `registrations/native-token/${encodeURIComponent(token)}.json`;
 }
 
+function nativeLineUserKey(lineUserId: string) {
+  return `registrations/native-line/${encodeURIComponent(lineUserId)}.json`;
+}
+
 function nativeFormUrl(formId: string) {
   return `${publicLiffUrl}?register=${encodeURIComponent(formId)}`;
 }
@@ -459,6 +463,14 @@ async function writeNativeRegistration(env: Env, entry: RegistrationEntry) {
   await env.ASSETS_BUCKET.put(nativeRegistrationKey(entry.id), JSON.stringify(entry, null, 2), { httpMetadata: { contentType: "application/json; charset=utf-8", cacheControl: "no-store" } });
   if (entry.queryCode) await env.ASSETS_BUCKET.put(nativeQueryKey(entry.queryCode), entry.id, { httpMetadata: { contentType: "text/plain; charset=utf-8", cacheControl: "no-store" } });
   if (entry.checkinToken) await env.ASSETS_BUCKET.put(nativeTokenKey(entry.checkinToken), entry.id, { httpMetadata: { contentType: "text/plain; charset=utf-8", cacheControl: "no-store" } });
+  if (entry.lineUserId) {
+    const key = nativeLineUserKey(entry.lineUserId);
+    const object = await env.ASSETS_BUCKET.get(key);
+    const ids = object ? await object.json().catch(() => []) as unknown : [];
+    const list = Array.isArray(ids) ? ids.map(clean).filter(Boolean) : [];
+    if (!list.includes(entry.id)) list.unshift(entry.id);
+    await env.ASSETS_BUCKET.put(key, JSON.stringify(list.slice(0, 300), null, 2), { httpMetadata: { contentType: "application/json; charset=utf-8", cacheControl: "no-store" } });
+  }
 }
 
 async function insertMemberPoint(env: Env, input: { lineUserId: string; eventName: string; eventContent: string; points: number; remark?: string }) {
@@ -657,6 +669,20 @@ async function queryNativeRegistration(request: Request, env: Env) {
   const entry = await readNativeRegistration(env, targetId);
   if (!entry || (queryCode && entry.queryCode !== queryCode)) return json({ success: false, message: "查無報名資料" }, 404);
   return json({ success: true, data: { ...entry, checkinUrl: entry.checkinToken ? nativeCheckinUrl(entry.checkinToken) : "" } });
+}
+
+async function queryNativeRegistrationsByLine(request: Request, env: Env) {
+  const url = new URL(request.url);
+  const lineUserId = clean(url.searchParams.get("lineUserId"));
+  if (!lineUserId || !env.ASSETS_BUCKET) return json({ success: false, message: "Missing LINE user id" }, 400);
+  const object = await env.ASSETS_BUCKET.get(nativeLineUserKey(lineUserId));
+  const ids = object ? await object.json().catch(() => []) as unknown : [];
+  const entries: RegistrationEntry[] = [];
+  for (const id of Array.isArray(ids) ? ids.map(clean).filter(Boolean) : []) {
+    const entry = await readNativeRegistration(env, id);
+    if (entry && clean(entry.lineUserId) === lineUserId) entries.push(entry);
+  }
+  return json({ success: true, data: entries.map((entry) => ({ ...entry, checkinUrl: entry.checkinToken ? nativeCheckinUrl(entry.checkinToken) : "" })) });
 }
 
 async function updateRegistrationEverywhere(env: Env, entry: RegistrationEntry) {
@@ -1089,6 +1115,7 @@ export default {
 	    if (nativeFormMatch && request.method === "GET") return getNativeForm(request, env, decodeURIComponent(nativeFormMatch[1]));
 	    if (nativeFormMatch && request.method === "POST") return submitNativeForm(request, env, decodeURIComponent(nativeFormMatch[1]));
 	    if (request.method === "GET" && url.pathname === "/api/native-registrations/query") return queryNativeRegistration(request, env);
+	    if (request.method === "GET" && url.pathname === "/api/native-registrations/me") return queryNativeRegistrationsByLine(request, env);
 	    if (request.method === "POST" && url.pathname === "/api/native-registrations/cancel") return cancelNativeRegistration(request, env);
 	    if (request.method === "GET" && url.pathname === "/api/native-checkin/verify") return verifyNativeCheckin(request, env);
 	    if (request.method === "POST" && url.pathname === "/api/native-checkin/confirm") return confirmNativeCheckin(request, env);

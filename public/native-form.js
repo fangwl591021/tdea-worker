@@ -144,7 +144,7 @@
     window.close();
   }
 
-  function loadLiff() {
+  function loadLiff(options = {}) {
     if (liffReady) return liffReady;
     liffReady = new Promise((resolve) => {
       const finish = (value = "") => { lineUserId = value || lineUserId; resolve(lineUserId); };
@@ -154,6 +154,10 @@
           if (window.liff?.isLoggedIn?.()) {
             const profile = await window.liff.getProfile();
             finish(profile?.userId || "");
+            return;
+          }
+          if (options.login && window.liff?.login && location.hostname.includes("liff.line.me")) {
+            window.liff.login({ redirectUri: location.href });
             return;
           }
         } catch (_) {}
@@ -223,6 +227,97 @@
     });
   }
 
+  function registrationStatus(row) {
+    if (row.status === "cancelled") return "已取消";
+    if (row.checkedInAt) return "已報到";
+    return "已報名";
+  }
+
+  function registrationCard(row) {
+    const activity = row.activity || {};
+    const answers = row.answers || {};
+    return `<article class="nf-card" style="box-shadow:none">
+      <div class="nf-body">
+        <div class="nf-meta"><span class="nf-pill">${esc(registrationStatus(row))}</span>${row.submittedAt ? `<span class="nf-pill">${esc(new Date(row.submittedAt).toLocaleString("zh-TW", { hour12: false }))}</span>` : ""}</div>
+        <h2 class="nf-title" style="font-size:22px">${esc(activity.name || row.formId || "活動報名")}</h2>
+        ${activity.courseTime ? `<div class="nf-detail">活動時間：${esc(activity.courseTime)}</div>` : ""}
+        <table class="nf-table"><tbody>${Object.entries(answers).filter(([key]) => key !== "LINE_user_id").map(([key, value]) => `<tr><th>${esc(key)}</th><td>${esc(Array.isArray(value) ? value.join(", ") : value)}</td></tr>`).join("")}</tbody></table>
+        ${row.status === "cancelled" ? "" : `<div class="nf-actions"><button class="nf-btn danger" data-cancel-registration="${esc(row.id)}" data-query-code="${esc(row.queryCode || "")}">取消報名</button></div>`}
+      </div>
+    </article>`;
+  }
+
+  async function showMyRegistrations() {
+    const initialCode = params.get("code") || "";
+    renderShell(`<section class="nf-card"><div class="nf-body">
+      <h1 class="nf-title">我的活動報名</h1>
+      <div data-my-query-result><div class="nf-ok">正在讀取 LINE 登入資料...</div></div>
+      <details>
+        <summary>使用查詢碼查詢</summary>
+        <form class="nf-form" data-query-form style="margin-top:14px">
+          <div class="nf-field"><label>查詢碼</label><input name="code" value="${esc(initialCode)}"></div>
+          <div class="nf-actions"><button class="nf-btn" type="submit">查詢</button></div>
+        </form>
+      </details>
+    </div></section>`);
+
+    async function bindCancel(container, refresh) {
+      container.querySelectorAll("[data-cancel-registration]").forEach((button) => {
+        button.addEventListener("click", async (event) => {
+          if (!confirm("確定取消這筆報名？")) return;
+          const cancelResponse = await fetch(`${api}/api/native-registrations/cancel`, {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ registrationId: event.currentTarget.dataset.cancelRegistration, queryCode: event.currentTarget.dataset.queryCode })
+          });
+          const cancelResult = await cancelResponse.json().catch(() => ({}));
+          if (!cancelResponse.ok || !cancelResult.success) return alert(cancelResult.message || "取消失敗");
+          refresh();
+        });
+      });
+    }
+
+    async function runCodeQuery(code) {
+      const box = app.querySelector("[data-my-query-result]");
+      box.innerHTML = `<div class="nf-ok">查詢中...</div>`;
+      const response = await fetch(`${api}/api/native-registrations/query?code=${encodeURIComponent(code)}`, { cache: "no-store" });
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok || !result.success) {
+        box.innerHTML = `<div class="nf-alert">${esc(result.message || "查無資料")}</div>`;
+        return;
+      }
+      box.innerHTML = registrationCard(result.data || {});
+      bindCancel(box, () => runCodeQuery(code));
+    }
+
+    async function runLoginQuery() {
+      const box = app.querySelector("[data-my-query-result]");
+      const uid = await loadLiff({ login: true });
+      if (!uid) {
+        box.innerHTML = `<div class="nf-alert">請從 LINE LIFF 開啟此頁，系統才能自動查詢你的報名紀錄。</div>`;
+        return;
+      }
+      box.innerHTML = `<div class="nf-ok">正在查詢你的報名紀錄...</div>`;
+      const response = await fetch(`${api}/api/native-registrations/me?lineUserId=${encodeURIComponent(uid)}`, { cache: "no-store" });
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok || !result.success) {
+        box.innerHTML = `<div class="nf-alert">${esc(result.message || "查詢失敗")}</div>`;
+        return;
+      }
+      const rows = Array.isArray(result.data) ? result.data : [];
+      box.innerHTML = rows.length ? `<div class="nf-form">${rows.map(registrationCard).join("")}</div>` : `<div class="nf-alert">目前沒有查到此 LINE 帳號的報名紀錄。</div>`;
+      bindCancel(box, runLoginQuery);
+    }
+
+    app.querySelector("[data-query-form]")?.addEventListener("submit", (event) => {
+      event.preventDefault();
+      const code = event.currentTarget.elements.code.value.trim();
+      if (code) runCodeQuery(code);
+    });
+    if (initialCode) runCodeQuery(initialCode);
+    else runLoginQuery();
+  }
+
   async function showQuery() {
     const initialCode = params.get("code") || "";
     renderShell(`<section class="nf-card"><div class="nf-body">
@@ -290,8 +385,7 @@
     });
   }
 
-  loadLiff();
   if (formId) showRegister(formId);
   else if (checkinToken) showCheckin(checkinToken);
-  else showQuery();
+  else showMyRegistrations();
 })();
