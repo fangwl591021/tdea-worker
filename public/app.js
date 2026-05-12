@@ -7,6 +7,7 @@
     association: ["協會名冊", "維護協會會員資料與會員資格，可匯入 CSV。"],
     vendor: ["廠商名冊", "維護廠商會員、統編、窗口與備註，可匯入 CSV。"],
     creator: ["創建活動", "建立活動草稿，之後可直接改接 D1。"],
+    keywords: ["關鍵字", "整理 LINE OA 觸發關鍵字、用途與回覆行為。"],
     preview: ["用戶預覽", "模擬一般使用者看到的活動報名頁。"]
   };
   const state = { view: "dashboard", drawer: "", data: load(), registrationLists: {} };
@@ -159,7 +160,7 @@
       <div class="shell">
         <aside class="sidebar">
           <div class="brand">TDEA 管理中心</div>
-          <nav class="nav">${nav("dashboard", "活動總覽")}${nav("association", "協會名冊")}${nav("vendor", "廠商名冊")}${nav("creator", "創建活動")}${nav("preview", "用戶預覽")}</nav>
+          <nav class="nav">${nav("dashboard", "活動總覽")}${nav("association", "協會名冊")}${nav("vendor", "廠商名冊")}${nav("creator", "創建活動")}${nav("keywords", "關鍵字")}${nav("preview", "用戶預覽")}</nav>
         </aside>
         <main class="main">
           <div class="topbar"><div><h1>${title}</h1><div class="subtitle">${sub}</div></div><div class="actions">${actions()}</div></div>
@@ -177,6 +178,7 @@
     if (state.view === "association") return `<button class="btn" data-import="association">匯入 CSV</button><button class="btn primary" data-drawer="association:new">新增協會會員</button>`;
     if (state.view === "vendor") return `<button class="btn" data-import="vendor">匯入 CSV</button><button class="btn primary" data-drawer="vendor:new">新增廠商會員</button>`;
     if (state.view === "creator") return `<button class="btn" data-reset>清空表單</button>`;
+    if (state.view === "keywords") return `<button class="btn" data-refresh-keywords>刷新列表</button>`;
     if (state.view === "preview") return `<button class="btn" data-copy>複製預覽網址</button>`;
     return `<label class="sync-toggle"><input type="checkbox" data-auto-sync ${autoSyncEnabled() ? "checked" : ""}> 自動同步</label><button class="btn" data-sync-registrations>同步報名</button><button class="btn" data-worker>檢查 Worker</button><button class="btn danger" data-clear-test>清空測試資料</button><button class="btn primary" data-nav="creator">新增活動</button>`;
   }
@@ -184,6 +186,7 @@
     if (state.view === "association") return members("association");
     if (state.view === "vendor") return members("vendor");
     if (state.view === "creator") return creator();
+    if (state.view === "keywords") return keywords();
     if (state.view === "preview") return preview();
     return dashboard();
   }
@@ -212,6 +215,33 @@
   function preview() {
     const rows = state.data.activities.filter(x => x.status === "上架");
     return `<section class="panel"><div class="panel-head"><h2 class="panel-title">官方活動預約</h2><span class="muted">TDEA 台灣數位教育發展協會</span></div><div style="padding:18px">${rows.length ? `<div class="cards">${rows.map(x => `<article class="activity-card"><span class="badge live">${esc(activityTypeLabel(x))}</span><h3>${esc(x.name)}</h3><div class="info-row"><span>課程時間</span><strong>${esc(x.courseTime || "未定")}</strong></div><div class="info-row"><span>截止</span><strong>${esc(x.deadline || "未定")}</strong></div><div class="info-row"><span>名額</span><strong>${esc(x.capacity || "不限")}</strong></div><div class="info-row"><span>狀況</span><strong>${n(x.reg)} 人報名</strong></div><button class="btn primary" style="width:100%;margin-top:14px" data-register="${x.id}">立即報名</button></article>`).join("")}</div>` : empty("目前暫無開放中的活動")}</div></section>`;
+  }
+
+  function keywordRows() {
+    const builtIn = [
+      { keyword: "TDEA每月活動", aliases: "無", purpose: "推送每月活動橫式多頁 FLEX", reply: "回覆每月活動 carousel，詳細說明走 LIFF，報名按鈕走自建報名表", owner: "每月活動", status: "啟用中" },
+      { keyword: "TDEA活動查詢", aliases: "無", purpose: "讓會員查詢或取消自己的活動報名", reply: "開啟 LIFF「我的活動報名」，以 LINE Login 查詢", owner: "報名系統", status: "啟用中" },
+      { keyword: "TDEA點數", aliases: "TDEA查點、TDEA點數查詢、TDEA紅利", purpose: "查詢發話者自己的母站點數", reply: "以 LINE userId 查母站點數 API，回覆餘額與最近紀錄", owner: "母站點數", status: "啟用中" },
+      { keyword: "TDEA點數+UID", aliases: "例：TDEA點數+Ub68b9724664b889e790c789ece72f717", purpose: "管理測試或客服查指定 LINE UID 點數", reply: "以指定 UID 查母站點數 API", owner: "母站點數", status: "啟用中" },
+      { keyword: "TDEA會員專區", aliases: "TDEA會員、TDEA會員中心、TDEA專區", purpose: "顯示會員入口選單", reply: "回覆會員專區 FLEX，含活動與點數入口", owner: "內建關鍵字", status: "啟用中" },
+      { keyword: "TDEA活動", aliases: "TDEA報名、TDEA課程", purpose: "活動資訊入口", reply: "回覆活動資訊 FLEX；每月活動請用 TDEA每月活動", owner: "內建關鍵字", status: "啟用中" },
+      { keyword: "TDEA說明", aliases: "TDEAHELP、TDEA幫助", purpose: "查看可用關鍵字說明", reply: "回覆文字版使用說明", owner: "內建關鍵字", status: "啟用中" }
+    ];
+    const flexRules = Array.isArray(state.data.flexRules) ? state.data.flexRules : [];
+    const custom = flexRules.map((rule) => ({
+      keyword: rule.keyword || "(未命名)",
+      aliases: rule.matchMode === "contains" ? "包含關鍵字" : "完全符合",
+      purpose: rule.title || "自訂 FLEX 回覆",
+      reply: rule.replyType === "text" ? "文字回覆" : "Flex Message",
+      owner: "FLEX專區",
+      status: rule.enabled ? "啟用中" : "停用"
+    }));
+    return [...builtIn, ...custom];
+  }
+
+  function keywords() {
+    const rows = keywordRows();
+    return `<section class="panel"><div class="panel-head"><h2 class="panel-title">LINE 關鍵字清單</h2><span class="muted">${rows.length} 組規則</span></div><div class="table-wrap"><table><thead><tr><th>關鍵字</th><th>別名 / 比對</th><th>用途</th><th>回覆行為</th><th>設定位置</th><th>狀態</th></tr></thead><tbody>${rows.map((row) => `<tr><td><strong>${esc(row.keyword)}</strong></td><td>${esc(row.aliases)}</td><td>${esc(row.purpose)}</td><td>${esc(row.reply)}</td><td>${esc(row.owner)}</td><td><span class="badge ${row.status === "啟用中" ? "live" : "off"}">${esc(row.status)}</span></td></tr>`).join("")}</tbody></table></div></section><section class="panel" style="margin-top:18px"><div class="panel-head"><h2 class="panel-title">使用原則</h2></div><div style="padding:18px;line-height:1.8;color:#344054">所有新版關鍵字都建議以 <strong>TDEA</strong> 開頭，避免和原本 LINE OA 舊系統互相干擾。沒有命中新版關鍵字的訊息會交給舊 webhook 繼續處理。</div></section>`;
   }
 
   function drawer() {
@@ -332,6 +362,7 @@
     document.querySelectorAll("[data-registration-list]").forEach(b => b.onclick = () => openRegistrationList(b.dataset.registrationList));
     document.querySelectorAll("[data-refresh-registration-list]").forEach(b => b.onclick = () => loadRegistrationList(b.dataset.refreshRegistrationList, true));
     const autoSync = document.querySelector("[data-auto-sync]"); if (autoSync) autoSync.onchange = () => { setAutoSyncEnabled(autoSync.checked); toast(autoSync.checked ? "已開啟自動同步" : "已關閉自動同步"); };
+    const refreshKeywords = document.querySelector("[data-refresh-keywords]"); if (refreshKeywords) refreshKeywords.onclick = () => { render(); toast("關鍵字列表已刷新"); };
     const syncButton = document.querySelector("[data-sync-registrations]"); if (syncButton) syncButton.onclick = () => syncRegistrations(true);
     const clearTest = document.querySelector("[data-clear-test]"); if (clearTest) clearTest.onclick = clearTestData;
     document.querySelectorAll("[data-register]").forEach(b => b.onclick = () => {
