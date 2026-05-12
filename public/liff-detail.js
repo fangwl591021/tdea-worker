@@ -6,6 +6,38 @@
   if (!detailId && !closeMode) return;
 
   const esc = (value) => String(value ?? "").replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;").replaceAll("'", "&#039;");
+  const trim = (value) => String(value ?? "").trim();
+
+  function meaningfulText(value) {
+    const text = trim(value);
+    return text.replace(/[,\s/\\|._\-，、。；;:：]+/g, "").length ? text : "";
+  }
+
+  function registerIdFromUrl(value) {
+    try {
+      const parsed = new URL(value);
+      const direct = parsed.searchParams.get("register");
+      if (direct) return direct;
+      const state = parsed.searchParams.get("liff.state");
+      if (!state) return "";
+      const stateParams = new URLSearchParams(decodeURIComponent(state).replace(/^\?/, ""));
+      return stateParams.get("register") || "";
+    } catch (_) {
+      return "";
+    }
+  }
+
+  async function fallbackDetailFromForm(page) {
+    const formId = registerIdFromUrl(page?.formUrl || "");
+    if (!formId) return "";
+    try {
+      const res = await fetch(`${api}/api/native-forms/${encodeURIComponent(formId)}`, { cache: "no-store" });
+      const result = await res.json();
+      return meaningfulText(result.data?.activity?.detailText);
+    } catch (_) {
+      return "";
+    }
+  }
 
   function mergedParams() {
     const output = new URLSearchParams(location.search);
@@ -92,8 +124,9 @@
         shell(`<main class="liff-detail"><section class="liff-card"><div class="liff-empty">找不到這筆活動說明。</div></section></main>`);
         return;
       }
+      const detailText = meaningfulText(page.detailText) || await fallbackDetailFromForm(page);
       document.title = page.detailTitle || "詳細說明";
-      shell(`<main class="liff-detail"><section class="liff-card">${page.imageUrl ? `<img src="${esc(page.imageUrl)}" alt="">` : ""}${page.activityNo ? `<div class="liff-meta">${esc(page.activityNo)}</div>` : ""}<h1>${esc(page.detailTitle || "詳細說明")}</h1><div class="liff-text">${esc(page.detailText || "尚未填寫詳細說明。")}</div>${page.formUrl ? `<a class="liff-btn" href="${esc(page.formUrl)}">點我報名</a>` : ""}</section></main>`);
+      shell(`<main class="liff-detail"><section class="liff-card">${page.imageUrl ? `<img src="${esc(page.imageUrl)}" alt="">` : ""}${page.activityNo ? `<div class="liff-meta">${esc(page.activityNo)}</div>` : ""}<h1>${esc(page.detailTitle || "詳細說明")}</h1><div class="liff-text">${esc(detailText || "尚未填寫詳細說明。")}</div>${page.formUrl ? `<a class="liff-btn" href="${esc(page.formUrl)}">點我報名</a>` : ""}</section></main>`);
     } catch (_) {
       shell(`<main class="liff-detail"><section class="liff-card"><div class="liff-empty">詳細說明載入失敗，請稍後再試。</div></section></main>`);
     }

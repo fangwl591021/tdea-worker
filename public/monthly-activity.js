@@ -12,6 +12,10 @@
   const esc = (value) => String(value ?? "").replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;").replaceAll("'", "&#039;");
   const id = () => "monthly-" + Math.random().toString(36).slice(2) + Date.now().toString(36);
   const trim = (value) => String(value ?? "").trim();
+  const meaningfulText = (value) => {
+    const text = trim(value);
+    return text.replace(/[,\s/\\|._\-，、。；;:：]+/g, "").length ? text : "";
+  };
 
   function adminEmail() { return sessionStorage.getItem(adminKey) || localStorage.getItem(adminKey) || ""; }
 
@@ -46,7 +50,7 @@
 
   function firstText(...values) {
     for (const value of values.flat()) {
-      const text = trim(value);
+      const text = meaningfulText(value);
       if (text) return text;
     }
     return "";
@@ -280,12 +284,12 @@
   function linkedInfo(page) {
     const hydrated = hydratePage(page);
     if (!hydrated.activityName && !hydrated.activityNo) return `<div class="monthly-linked-box monthly-empty-link"><strong>請先選擇活動</strong><span>選擇後會自動帶入詳細說明與報名表，不需要填 LIFF 網址。</span></div>`;
-    return `<div class="monthly-linked-box"><strong>${esc(hydrated.activityName || hydrated.activityNo)}</strong><div class="monthly-status-row"><span class="monthly-status ${trim(hydrated.detailText) ? "ok" : "bad"}">詳細說明：${trim(hydrated.detailText) ? "已帶入" : "未填"}</span><span class="monthly-status ${trim(hydrated.formUrl) ? "ok" : "bad"}">報名表：${trim(hydrated.formUrl) ? "已連動" : "未連動"}</span></div></div>`;
+    return `<div class="monthly-linked-box"><strong>${esc(hydrated.activityName || hydrated.activityNo)}</strong><div class="monthly-status-row"><span class="monthly-status ${meaningfulText(hydrated.detailText) ? "ok" : "bad"}">詳細說明：${meaningfulText(hydrated.detailText) ? "已帶入" : "未填"}</span><span class="monthly-status ${trim(hydrated.formUrl) ? "ok" : "bad"}">報名表：${trim(hydrated.formUrl) ? "已連動" : "未連動"}</span></div></div>`;
   }
   function pageForm(page) {
     const hydrated = hydratePage(page);
     const linked = trim(hydrated.activityNo || hydrated.activityId);
-    return `<div class="monthly-form"><div class="field"><label>連動活動</label>${activitySelect(page)}<div class="monthly-link-note">只要選活動即可。詳細說明走 LIFF，報名按鈕走該活動的報名表。</div></div>${linkedInfo(page)}<div class="field"><label>活動圖片</label><input type="file" accept="image/*" data-monthly-file><div class="muted">上傳後會自動更新預覽圖片。</div></div><div class="field"><label>圖片網址</label><input name="imageUrl" data-monthly-page value="${esc(page.imageUrl)}" placeholder="上傳後自動填入，也可貼既有海報網址"></div>${!linked ? `<div class="monthly-warning">這頁尚未選擇活動，發布前請先選擇活動。</div>` : ""}${linked && !trim(hydrated.formUrl) ? `<div class="monthly-warning">這個活動還沒有報名表；發布時系統會自動產生並寫回活動。</div>` : ""}${linked && !trim(hydrated.detailText) ? `<div class="monthly-warning">此活動沒有詳細說明，請回到活動編輯補上「詳細說明」。</div>` : ""}</div>`;
+    return `<div class="monthly-form"><div class="field"><label>連動活動</label>${activitySelect(page)}<div class="monthly-link-note">只要選活動即可。詳細說明走 LIFF，報名按鈕走該活動的報名表。</div></div>${linkedInfo(page)}<div class="field"><label>活動圖片</label><input type="file" accept="image/*" data-monthly-file><div class="muted">上傳後會自動更新預覽圖片。</div></div><div class="field"><label>圖片網址</label><input name="imageUrl" data-monthly-page value="${esc(page.imageUrl)}" placeholder="上傳後自動填入，也可貼既有海報網址"></div>${!linked ? `<div class="monthly-warning">這頁尚未選擇活動，發布前請先選擇活動。</div>` : ""}${linked && !trim(hydrated.formUrl) ? `<div class="monthly-warning">這個活動還沒有報名表；發布時系統會自動產生並寫回活動。</div>` : ""}${linked && !meaningfulText(hydrated.detailText) ? `<div class="monthly-warning">此活動沒有詳細說明，請回到活動編輯補上「詳細說明」。</div>` : ""}</div>`;
   }
   function preview() {
     return `<div class="monthly-phone"><div class="monthly-screen"><div class="monthly-carousel">${config.pages.map((rawPage, index) => {
@@ -494,7 +498,7 @@
     for (let index = 0; index < config.pages.length; index += 1) {
       const page = hydratePage(config.pages[index]);
       if (!trim(page.activityNo) && !trim(page.activityId)) return `第 ${index + 1} 頁尚未選擇活動`;
-      if (!trim(page.detailText)) return `第 ${index + 1} 頁連動活動缺少詳細說明`;
+      if (!meaningfulText(page.detailText)) return `第 ${index + 1} 頁連動活動缺少詳細說明`;
     }
     return "";
   }
