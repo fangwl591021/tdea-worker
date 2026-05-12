@@ -1,11 +1,25 @@
 (() => {
   const api = "https://tdeawork.fangwl591021.workers.dev";
-  const params = new URLSearchParams(location.search);
+  const params = mergedParams();
   const closeMode = params.get("close") === "1" || params.get("submitted") === "1";
   const detailId = params.get("monthlyDetail") || params.get("monthlyDetailId") || params.get("activityNo") || params.get("id");
   if (!detailId && !closeMode) return;
 
   const esc = (value) => String(value ?? "").replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;").replaceAll("'", "&#039;");
+
+  function mergedParams() {
+    const output = new URLSearchParams(location.search);
+    const state = output.get("liff.state");
+    if (!state) return output;
+    let raw = state;
+    try { raw = decodeURIComponent(state); } catch (_) {}
+    const query = raw.startsWith("?") ? raw.slice(1) : raw.includes("?") ? raw.split("?").slice(1).join("?") : raw;
+    const stateParams = new URLSearchParams(query);
+    stateParams.forEach((value, key) => {
+      if (!output.has(key)) output.set(key, value);
+    });
+    return output;
+  }
 
   function shell(content) {
     document.body.classList.add("liff-detail-mode");

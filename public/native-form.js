@@ -1,6 +1,6 @@
 (() => {
   const api = location.hostname.endsWith("github.io") ? "https://tdeawork.fangwl591021.workers.dev" : "";
-  const params = new URLSearchParams(location.search);
+  const params = mergedParams();
   const formId = params.get("register");
   const checkinToken = params.get("checkin");
   const queryMode = params.has("query");
@@ -11,6 +11,20 @@
   const fieldTypes = new Set(["text", "email", "paragraph", "radio", "checkbox", "dropdown"]);
 
   if (!app || (!formId && !checkinToken && !queryMode)) return;
+
+  function mergedParams() {
+    const output = new URLSearchParams(location.search);
+    const state = output.get("liff.state");
+    if (!state) return output;
+    let raw = state;
+    try { raw = decodeURIComponent(state); } catch (_) {}
+    const query = raw.startsWith("?") ? raw.slice(1) : raw.includes("?") ? raw.split("?").slice(1).join("?") : raw;
+    const stateParams = new URLSearchParams(query);
+    stateParams.forEach((value, key) => {
+      if (!output.has(key)) output.set(key, value);
+    });
+    return output;
+  }
 
   function installStyle() {
     if (document.querySelector("#native-form-style")) return;
