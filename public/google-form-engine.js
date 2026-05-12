@@ -100,6 +100,12 @@
     }).filter((session) => session.name);
   }
 
+  function activityTypeLabelValue(form) {
+    const value = trim(form.activityTypeLabel?.value);
+    if (value === "__custom") return trim(form.activityTypeLabelOther?.value);
+    return value;
+  }
+
   function providerMeta(meta = {}) {
     const data = meta.data || {};
     const provider = meta.provider || data.provider || "native_form";
@@ -181,7 +187,7 @@
         id: activity.id || formRowId(form) || "",
         activityNo: activity.activityNo || "",
         name: trim(activity.name) || trim(form.name?.value),
-        type: trim(activity.type) || trim(form.type?.value),
+        type: trim(activity.typeLabel) || trim(activity.type) || activityTypeLabelValue(form) || trim(form.type?.value),
         courseTime: trim(activity.courseTime) || trim(form.courseTime?.value),
         deadline: trim(activity.deadline) || trim(form.deadline?.value),
         capacity: Number(activity.capacity || form.capacity?.value || 0),

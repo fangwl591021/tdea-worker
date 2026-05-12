@@ -329,7 +329,7 @@
         id: activity.id || "",
         activityNo: activity.activityNo || "",
         name: activity.name || "未命名活動",
-        type: activity.type || "",
+        type: activity.typeLabel || activity.type || "",
         courseTime: activity.courseTime || "",
         deadline: activity.deadline || "",
         capacity: Number(activity.capacity || 0),
