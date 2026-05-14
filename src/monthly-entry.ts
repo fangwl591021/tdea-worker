@@ -1,6 +1,6 @@
 import baseEntry from "./roster-sync-entry4";
 
-type Env = { ADMIN_EMAILS?: string; ASSETS_BUCKET?: R2Bucket; LINE_CHANNEL_SECRET?: string; LINE_CHANNEL_ACCESS_TOKEN?: string; GOOGLE_FORMS_SCRIPT_URL?: string; GOOGLE_FORMS_SHARED_SECRET?: string; OPNFORM_API_BASE?: string; OPNFORM_PUBLIC_BASE?: string; OPNFORM_API_TOKEN?: string; OPNFORM_WORKSPACE_ID?: string; OPNFORM_WEBHOOK_SECRET?: string; WETW_POINT_API_KEY?: string; WETW_SHOP_ID?: string; WETW_POINT_TYPE?: string };
+type Env = { ADMIN_EMAILS?: string; ASSETS_BUCKET?: R2Bucket; LINE_CHANNEL_SECRET?: string; LINE_CHANNEL_ACCESS_TOKEN?: string; GOOGLE_FORMS_SCRIPT_URL?: string; GOOGLE_FORMS_SHARED_SECRET?: string; OPNFORM_API_BASE?: string; OPNFORM_PUBLIC_BASE?: string; OPNFORM_API_TOKEN?: string; OPNFORM_WORKSPACE_ID?: string; OPNFORM_WEBHOOK_SECRET?: string; WETW_POINT_API_KEY?: string; WETW_SHOP_ID?: string; WETW_POINT_TYPE?: string; TDEA_POINT_EXTERNAL_SYNC?: string };
 type LineEvent = { type?: string; replyToken?: string; message?: { type?: string; text?: string }; postback?: { data?: string } };
 type MonthlyPage = { id?: string; activityNo?: string; imageUrl?: string; formImageUrl?: string; detailTitle?: string; detailText?: string; detailUrl?: string; formUrl?: string; shareUrl?: string; order?: number };
 type MonthlyConfig = { enabled?: boolean; keyword?: string; month?: string; altText?: string; detailBaseUrl?: string; pages?: MonthlyPage[]; updatedAt?: string };
@@ -11,12 +11,26 @@ type ManagedSubmission = { formId?: string; sourceId?: string; submittedAt?: str
 type NativeField = { key: string; label: string; type: string; required?: boolean; options?: string[] };
 type NativeSession = { id: string; name: string; startTime?: string; endTime?: string; capacity?: number; status?: string };
 type NativeForm = { id: string; provider: "native_form"; activity: Record<string, unknown>; settings: Record<string, unknown>; fields: NativeField[]; sessions: NativeSession[]; formUrl: string; createdAt: string; updatedAt: string };
+type PointLog = { logId: string; lineUserId: string; type: "EARN" | "SPEND"; amount: number; points: number; reason: string; balanceAfter: number; createdAt: string; createdTs: number; source?: string; referenceId?: string; externalSync?: unknown };
+type PointAccount = { balance: number; logs: PointLog[]; updatedAt?: string };
+type RedeemMode = "fixed" | "manual" | "rate";
+type RedeemTransaction = { id: string; lineUserId: string; amount?: number; points: number; balanceBefore?: number; balanceAfter?: number; createdAt: string; note?: string; pointResult?: unknown };
+type RedeemRequest = { id: string; token: string; vendorId?: string; vendorName: string; amount?: number; points: number; maxPoints?: number; pointRate?: number; mode?: RedeemMode; note?: string; status: "active" | "pending" | "used" | "expired" | "closed"; createdAt: string; startsAt?: string; expiresAt: string; usedAt?: string; lineUserId?: string; pointBalance?: number; pointResult?: unknown; transactions?: RedeemTransaction[] };
+type PushTarget = { kind?: string; memberNoPrefix?: string; rosterType?: string; qualification?: string; manualUids?: string };
+type PushLog = { id: string; createdAt: string; mode: string; target: PushTarget; count: number; messageType: string; title?: string; dryRun?: boolean; responses?: unknown[]; error?: string };
 
 const monthlyKey = "flex/monthly-activity.json";
 const registrationSummaryKey = "registrations/summary.json";
+const redeemListKey = "redeem/records.json";
+const pointLedgerKey = "points/ledger.json";
+const pushLogKey = "push/logs.json";
+const aiweMembersKey = "aiwe/members.json";
+const defaultCalendarId = "7d66f2a96f192dda6cca2b04e60a6e549c7adf74f57721845d5b7e03f8b7ca89@group.calendar.google.com";
 const workerBaseUrl = "https://tdeawork.fangwl591021.workers.dev";
 const fixedKeyword = "TDEA每月活動";
 const queryKeyword = "TDEA活動查詢";
+const memberQrKeyword = "TDEA會員QR";
+const calendarKeyword = "TDEA行事曆";
 const defaultLiffBase = "https://liff.line.me/2005868456-2jmxqyFU?monthlyDetail={id}";
 const defaultLiffCloseUrl = "https://liff.line.me/2005868456-2jmxqyFU?close=1";
 const publicAppUrl = "https://fangwl591021.github.io/tdea-worker/";
@@ -387,8 +401,24 @@ function nativeLineUserKey(lineUserId: string) {
   return `registrations/native-line/${encodeURIComponent(lineUserId)}.json`;
 }
 
+function pointAccountKey(lineUserId: string) {
+  return `points/accounts/${encodeURIComponent(lineUserId)}.json`;
+}
+
+function pointLegacySyncKey(lineUserId: string) {
+  return `points/legacy-sync/${encodeURIComponent(lineUserId)}.json`;
+}
+
+function redeemKey(token: string) {
+  return `redeem/requests/${encodeURIComponent(token)}.json`;
+}
+
 function nativeFormUrl(formId: string) {
   return `${publicLiffUrl}?register=${encodeURIComponent(formId)}`;
+}
+
+function redeemUrl(token: string) {
+  return `${workerBaseUrl}/?redeemSession=${encodeURIComponent(token)}`;
 }
 
 function nativeCheckinUrl(token: string) {
@@ -498,6 +528,119 @@ async function insertMemberPoint(env: Env, input: { lineUserId: string; eventNam
   return { httpStatus: response.status, ...(body as Record<string, unknown>) };
 }
 
+async function queryPointBalance(env: Env, lineUserId: string) {
+  const apiKey = clean(env.WETW_POINT_API_KEY);
+  if (!apiKey) return { success: false, code: "missing_api_key", message: "WETW_POINT_API_KEY is not configured" };
+  if (!lineUserId) return { success: false, code: "missing_line_user_id", message: "LINE user id is required" };
+  const response = await fetch(`${pointApiBase}/query-user-point-list`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      api_key: apiKey,
+      LINE_user_id: lineUserId,
+      shop_id: Number(env.WETW_SHOP_ID || 35),
+      point_type: env.WETW_POINT_TYPE || "system_point",
+      page: 1,
+      per_page: 100
+    })
+  });
+  const body = await response.json().catch(() => ({ success: false, message: "Invalid JSON response" })) as Record<string, unknown>;
+  const data = asRecord(body.data);
+  const list = Array.isArray(data.list) ? data.list.map(asRecord) : [];
+  const firstBalance = list.map((item) => Number(item.point_balance)).find((value) => Number.isFinite(value));
+  const balance = Number.isFinite(firstBalance) ? Number(firstBalance) : list.reduce((sum, item) => sum + numberValue(item.get_point), 0);
+  return { httpStatus: response.status, ...body, balance, list };
+}
+
+async function readPointAccount(env: Env, lineUserId: string): Promise<PointAccount> {
+  if (!env.ASSETS_BUCKET || !lineUserId) return { balance: 0, logs: [] };
+  const object = await env.ASSETS_BUCKET.get(pointAccountKey(lineUserId));
+  if (!object) return { balance: 0, logs: [] };
+  const data = await object.json().catch(() => ({})) as Partial<PointAccount>;
+  return { balance: numberValue(data.balance), logs: Array.isArray(data.logs) ? data.logs as PointLog[] : [], updatedAt: clean(data.updatedAt) };
+}
+
+async function writePointAccount(env: Env, lineUserId: string, account: PointAccount) {
+  if (!env.ASSETS_BUCKET || !lineUserId) return;
+  account.updatedAt = new Date().toISOString();
+  await env.ASSETS_BUCKET.put(pointAccountKey(lineUserId), JSON.stringify(account, null, 2), { httpMetadata: { contentType: "application/json; charset=utf-8", cacheControl: "no-store" } });
+}
+
+async function appendPointLedger(env: Env, entry: PointLog) {
+  if (!env.ASSETS_BUCKET) return;
+  const object = await env.ASSETS_BUCKET.get(pointLedgerKey);
+  const current = object ? await object.json().catch(() => []) : [];
+  const list = Array.isArray(current) ? current as PointLog[] : [];
+  await env.ASSETS_BUCKET.put(pointLedgerKey, JSON.stringify([entry, ...list].slice(0, 5000), null, 2), { httpMetadata: { contentType: "application/json; charset=utf-8", cacheControl: "no-store" } });
+}
+
+async function updateLocalPoints(env: Env, lineUserId: string, amount: number, reason: string, options: { source?: string; referenceId?: string; skipExternalSync?: boolean } = {}) {
+  if (!env.ASSETS_BUCKET) return { success: false, message: "R2 bucket is not configured" };
+  const numericAmount = Number(amount || 0);
+  if (!lineUserId || !numericAmount) return { success: false, message: "缺少會員 UID 或點數異動數量" };
+  const account = await readPointAccount(env, lineUserId);
+  const nextBalance = numberValue(account.balance) + numericAmount;
+  const createdTs = Date.now();
+  const log: PointLog = {
+    logId: crypto.randomUUID ? crypto.randomUUID() : String(createdTs),
+    lineUserId,
+    type: numericAmount >= 0 ? "EARN" : "SPEND",
+    amount: numericAmount,
+    points: Math.abs(numericAmount),
+    reason,
+    balanceAfter: nextBalance,
+    createdAt: new Date(createdTs).toISOString(),
+    createdTs,
+    source: options.source || "tdea",
+    referenceId: options.referenceId || ""
+  };
+  if (!options.skipExternalSync && clean(env.TDEA_POINT_EXTERNAL_SYNC).toLowerCase() !== "false" && env.WETW_POINT_API_KEY) {
+    log.externalSync = await insertMemberPoint(env, { lineUserId, eventName: numericAmount >= 0 ? "TDEA 贈點" : "TDEA 扣點", eventContent: reason, points: numericAmount, remark: options.referenceId || "" });
+  }
+  const next: PointAccount = { balance: nextBalance, logs: [log, ...(account.logs || [])].slice(0, 100) };
+  await writePointAccount(env, lineUserId, next);
+  await appendPointLedger(env, log);
+  return { success: true, balance: nextBalance, log, account: next };
+}
+
+async function getLegacySyncRecord(env: Env, lineUserId: string) {
+  if (!env.ASSETS_BUCKET || !lineUserId) return null;
+  const object = await env.ASSETS_BUCKET.get(pointLegacySyncKey(lineUserId));
+  return object ? await object.json().catch(() => null) as Record<string, unknown> | null : null;
+}
+
+async function importLegacyPointsOnce(env: Env, lineUserId: string, force = false) {
+  if (!env.ASSETS_BUCKET) return { success: false, reason: "missing_r2", imported: 0, message: "R2 bucket is not configured" };
+  if (!lineUserId) return { success: false, reason: "missing_uid", imported: 0, message: "缺少會員 UID" };
+  const synced = await getLegacySyncRecord(env, lineUserId);
+  if (synced?.importedAt && !force) return { success: false, reason: "already_synced", imported: 0, ...synced };
+  const legacy = await queryPointBalance(env, lineUserId) as Record<string, unknown>;
+  if (legacy.success === false) return { success: false, reason: clean(legacy.code) || "legacy_query_failed", imported: 0, message: clean(legacy.message) || "母站點數查詢失敗", raw: legacy };
+  const balance = Math.max(0, Number(legacy.balance || 0));
+  if (balance <= 0) {
+    const importedAt = new Date().toISOString();
+    const record = { imported: 0, importedAt, source: "wetw-point/query-user-point-list", raw: legacy };
+    await env.ASSETS_BUCKET.put(pointLegacySyncKey(lineUserId), JSON.stringify(record, null, 2), { httpMetadata: { contentType: "application/json; charset=utf-8", cacheControl: "no-store" } });
+    return { success: false, reason: "no_legacy_points", imported: 0, balance: 0, importedAt };
+  }
+  const update = await updateLocalPoints(env, lineUserId, balance, "母站點數補登", { source: "legacy_import", skipExternalSync: true });
+  const importedAt = new Date().toISOString();
+  const record = { imported: balance, importedAt, source: "wetw-point/query-user-point-list", raw: legacy };
+  await env.ASSETS_BUCKET.put(pointLegacySyncKey(lineUserId), JSON.stringify(record, null, 2), { httpMetadata: { contentType: "application/json; charset=utf-8", cacheControl: "no-store" } });
+  return { success: true, imported: balance, importedAt, balance: (update as Record<string, unknown>).balance, raw: legacy };
+}
+
+async function getUnifiedPointAccount(env: Env, lineUserId: string, options: { autoImport?: boolean } = {}) {
+  const before = await readPointAccount(env, lineUserId);
+  let importResult: unknown = null;
+  const synced = await getLegacySyncRecord(env, lineUserId);
+  if (options.autoImport && !synced?.importedAt && numberValue(before.balance) <= 0) {
+    importResult = await importLegacyPointsOnce(env, lineUserId);
+  }
+  const account = await readPointAccount(env, lineUserId);
+  return { success: true, balance: numberValue(account.balance), logs: account.logs || [], imported: importResult, legacySynced: await getLegacySyncRecord(env, lineUserId) };
+}
+
 async function syncCheckinPoints(env: Env, entry: RegistrationEntry) {
   const activity = asRecord(entry.activity);
   const answers = asRecord(entry.answers);
@@ -524,6 +667,202 @@ async function syncCheckinPoints(env: Env, entry: RegistrationEntry) {
     }));
   }
   return results;
+}
+
+async function readRedeem(env: Env, token: string): Promise<RedeemRequest | null> {
+  if (!env.ASSETS_BUCKET || !token) return null;
+  const object = await env.ASSETS_BUCKET.get(redeemKey(token));
+  if (!object) return null;
+  const data = await object.json().catch(() => null) as RedeemRequest | null;
+  return data && data.token ? data : null;
+}
+
+async function readRedeemList(env: Env): Promise<RedeemRequest[]> {
+  if (!env.ASSETS_BUCKET) return [];
+  const object = await env.ASSETS_BUCKET.get(redeemListKey);
+  if (!object) return [];
+  const data = await object.json().catch(() => []);
+  return Array.isArray(data) ? data as RedeemRequest[] : [];
+}
+
+async function writeRedeem(env: Env, redeem: RedeemRequest) {
+  if (!env.ASSETS_BUCKET) return;
+  const now = Date.now();
+  const expired = ["active", "pending"].includes(redeem.status) && now > new Date(redeem.expiresAt).getTime();
+  const next = expired ? { ...redeem, status: "expired" as const } : redeem;
+  await env.ASSETS_BUCKET.put(redeemKey(next.token), JSON.stringify(next, null, 2), { httpMetadata: { contentType: "application/json; charset=utf-8", cacheControl: "no-store" } });
+  const list = (await readRedeemList(env)).filter((item) => item.token !== next.token);
+  list.unshift(next);
+  await env.ASSETS_BUCKET.put(redeemListKey, JSON.stringify(list.slice(0, 500), null, 2), { httpMetadata: { contentType: "application/json; charset=utf-8", cacheControl: "no-store" } });
+}
+
+function publicRedeem(redeem: RedeemRequest, extra: Record<string, unknown> = {}) {
+  const status = ["active", "pending"].includes(redeem.status) && Date.now() > new Date(redeem.expiresAt).getTime() ? "expired" : redeem.status;
+  const transactions = Array.isArray(redeem.transactions) ? redeem.transactions : [];
+  return {
+    id: redeem.id,
+    token: redeem.token,
+    vendorName: redeem.vendorName,
+    amount: redeem.amount || 0,
+    points: redeem.points,
+    maxPoints: redeem.maxPoints || 0,
+    pointRate: redeem.pointRate || 0,
+    mode: redeem.mode || "fixed",
+    note: redeem.note || "",
+    status,
+    createdAt: redeem.createdAt,
+    startsAt: redeem.startsAt || redeem.createdAt,
+    expiresAt: redeem.expiresAt,
+    usedAt: redeem.usedAt || "",
+    redeemUrl: redeemUrl(redeem.token),
+    sessionUrl: redeemUrl(redeem.token),
+    transactions,
+    usageCount: transactions.length,
+    ...extra
+  };
+}
+
+async function createRedeemRequest(request: Request, env: Env) {
+  const guard = requireAdmin(request, env);
+  if (guard) return guard;
+  if (!env.ASSETS_BUCKET) return json({ success: false, message: "R2 bucket is not configured" }, 503);
+  const input = await request.json().catch(() => ({})) as Record<string, unknown>;
+  const vendorName = firstClean(input.vendorName, input.vendor, "合作店家");
+  const now = new Date();
+  const mode = (["fixed", "manual", "rate"].includes(clean(input.mode)) ? clean(input.mode) : "fixed") as RedeemMode;
+  const points = Math.abs(numberValue(input.points));
+  const maxPoints = Math.abs(numberValue(input.maxPoints));
+  const pointRate = Math.abs(numberValue(input.pointRate));
+  if (mode === "fixed" && !points) return json({ success: false, message: "固定點數模式請輸入每次扣抵點數" }, 400);
+  if (mode === "rate" && !pointRate) return json({ success: false, message: "金額換算模式請輸入換算比例" }, 400);
+  const startsAtInput = clean(input.startsAt);
+  const expiresAtInput = clean(input.expiresAt);
+  const ttl = Math.min(Math.max(numberValue(input.ttlMinutes) || 60, 1), 1440);
+  const startsAt = startsAtInput ? new Date(startsAtInput) : now;
+  const expiresAt = expiresAtInput ? new Date(expiresAtInput) : new Date(startsAt.getTime() + ttl * 60 * 1000);
+  if (Number.isNaN(startsAt.getTime()) || Number.isNaN(expiresAt.getTime())) return json({ success: false, message: "授權起訖日期格式錯誤" }, 400);
+  if (expiresAt.getTime() <= startsAt.getTime()) return json({ success: false, message: "授權結束時間必須晚於開始時間" }, 400);
+  const token = `${codeToken(6)}${crypto.randomUUID().replace(/-/g, "").slice(0, 10)}`;
+  const redeem: RedeemRequest = {
+    id: `REDEEM-${Date.now()}-${codeToken(4)}`,
+    token,
+    vendorId: clean(input.vendorId),
+    vendorName,
+    amount: numberValue(input.amount),
+    points,
+    maxPoints,
+    pointRate,
+    mode,
+    note: clean(input.note),
+    status: "active",
+    createdAt: now.toISOString(),
+    startsAt: startsAt.toISOString(),
+    expiresAt: expiresAt.toISOString(),
+    transactions: []
+  };
+  await writeRedeem(env, redeem);
+  return json({ success: true, data: publicRedeem(redeem), redeemUrl: redeemUrl(token) }, 201);
+}
+
+async function listRedeemRequests(request: Request, env: Env) {
+  const guard = requireAdmin(request, env);
+  if (guard) return guard;
+  const list = await readRedeemList(env);
+  return json({ success: true, data: list.map((item) => publicRedeem(item)) });
+}
+
+async function getRedeemRequest(request: Request, env: Env, token: string) {
+  const redeem = await readRedeem(env, token);
+  if (!redeem) return json({ success: false, message: "折抵碼不存在" }, 404);
+  const url = new URL(request.url);
+  const lineUserId = clean(url.searchParams.get("lineUserId"));
+  let balanceInfo: Record<string, unknown> = {};
+  if (lineUserId && ["active", "pending"].includes(redeem.status)) {
+    const account = await getUnifiedPointAccount(env, lineUserId, { autoImport: true }) as Record<string, unknown>;
+    balanceInfo = { balance: account.balance, pointAccount: account };
+  }
+  await writeRedeem(env, redeem);
+  return json({ success: true, data: publicRedeem(redeem, balanceInfo) });
+}
+
+async function confirmRedeemRequest(request: Request, env: Env, token: string) {
+  const redeem = await readRedeem(env, token);
+  if (!redeem) return json({ success: false, message: "折抵碼不存在" }, 404);
+  if (!["active", "pending"].includes(redeem.status)) return json({ success: false, message: redeem.status === "closed" ? "此店家授權已關閉" : "此店家授權已失效" }, 409);
+  const nowMs = Date.now();
+  if (redeem.startsAt && nowMs < new Date(redeem.startsAt).getTime()) return json({ success: false, message: "此店家授權尚未開始" }, 409);
+  if (nowMs > new Date(redeem.expiresAt).getTime()) {
+    redeem.status = "expired";
+    await writeRedeem(env, redeem);
+    return json({ success: false, message: "此店家授權已過期" }, 409);
+  }
+  const input = await request.json().catch(() => ({})) as Record<string, unknown>;
+  const lineUserId = clean(input.lineUserId);
+  if (!lineUserId) return json({ success: false, message: "請先掃描會員 QR Code" }, 400);
+  const mode = redeem.mode || "fixed";
+  const amount = Math.abs(numberValue(input.amount));
+  let points = Math.abs(numberValue(input.points));
+  if (mode === "fixed") points = Math.abs(numberValue(redeem.points));
+  if (mode === "rate") {
+    if (!amount) return json({ success: false, message: "請輸入消費金額" }, 400);
+    points = Math.floor(amount * Math.abs(numberValue(redeem.pointRate)));
+  }
+  if (!points) return json({ success: false, message: "請輸入扣抵點數" }, 400);
+  if (redeem.maxPoints && points > redeem.maxPoints) return json({ success: false, message: `超過本授權單次可扣上限 ${redeem.maxPoints} 點` }, 409);
+  const account = await getUnifiedPointAccount(env, lineUserId, { autoImport: true }) as Record<string, unknown>;
+  const pointBalance = Number(account.balance || 0);
+  if (pointBalance < points) return json({ success: false, message: `點數不足，目前可用 ${pointBalance} 點`, data: { balance: pointBalance, required: points } }, 409);
+  const reason = firstClean(clean(input.note), redeem.note, amount ? `${redeem.vendorName} 消費金額 ${amount}` : `${redeem.vendorName} 扣抵 ${points} 點`);
+  const result = await updateLocalPoints(env, lineUserId, -Math.abs(points), reason, { source: "vendor_redeem", referenceId: redeem.id }) as Record<string, unknown>;
+  if (result.success !== true) return json({ success: false, message: clean(result.message) || "扣點失敗", data: result }, 400);
+  const createdAt = new Date().toISOString();
+  const transaction: RedeemTransaction = {
+    id: `TX-${Date.now()}-${codeToken(4)}`,
+    lineUserId,
+    amount,
+    points: -Math.abs(points),
+    balanceBefore: pointBalance,
+    balanceAfter: pointBalance - points,
+    createdAt,
+    note: clean(input.note),
+    pointResult: result
+  };
+  redeem.status = "active";
+  redeem.usedAt = createdAt;
+  redeem.lineUserId = lineUserId;
+  redeem.pointBalance = pointBalance - points;
+  redeem.pointResult = result;
+  redeem.transactions = [transaction, ...(Array.isArray(redeem.transactions) ? redeem.transactions : [])].slice(0, 200);
+  await writeRedeem(env, redeem);
+  return json({ success: true, data: publicRedeem(redeem, { balance: redeem.pointBalance, pointResult: result, transaction }) });
+}
+
+async function getPointAccountApi(request: Request, env: Env, lineUserId: string) {
+  const guard = requireAdmin(request, env);
+  if (guard) return guard;
+  if (!lineUserId) return json({ success: false, message: "缺少會員 UID" }, 400);
+  return json({ success: true, data: await getUnifiedPointAccount(env, lineUserId, { autoImport: true }) });
+}
+
+async function syncLegacyPointApi(request: Request, env: Env) {
+  const guard = requireAdmin(request, env);
+  if (guard) return guard;
+  const input = await request.json().catch(() => ({})) as Record<string, unknown>;
+  const lineUserId = firstClean(input.lineUserId, input.uid, input.LINE_user_id);
+  if (!lineUserId) return json({ success: false, message: "缺少會員 UID" }, 400);
+  const force = Boolean(input.force);
+  return json({ success: true, data: await importLegacyPointsOnce(env, lineUserId, force) });
+}
+
+async function listPointLedgerApi(request: Request, env: Env) {
+  const guard = requireAdmin(request, env);
+  if (guard) return guard;
+  if (!env.ASSETS_BUCKET) return json({ success: true, data: [] });
+  const url = new URL(request.url);
+  const limit = Math.max(1, Math.min(numberValue(url.searchParams.get("limit")) || 500, 5000));
+  const object = await env.ASSETS_BUCKET.get(pointLedgerKey);
+  const data = object ? await object.json().catch(() => []) : [];
+  return json({ success: true, data: Array.isArray(data) ? data.slice(0, limit) : [] });
 }
 
 function publicNativeForm(form: NativeForm) {
@@ -1065,13 +1404,242 @@ function extractTriggerText(event: LineEvent) { if (event.message?.type === "tex
 async function replyToLine(replyToken: string, messages: Array<Record<string, unknown>>, env: Env) { const token = env.LINE_CHANNEL_ACCESS_TOKEN?.trim(); if (!token) return { ok: false, status: 503, message: "LINE token is not configured" }; const response = await fetch("https://api.line.me/v2/bot/message/reply", { method: "POST", headers: { authorization: `Bearer ${token}`, "content-type": "application/json" }, body: JSON.stringify({ replyToken, messages }) }); return { ok: response.ok, status: response.status, body: await response.text().catch(() => "") }; }
 function rebuildRequest(request: Request, rawBody: string) { return new Request(request.url, { method: request.method, headers: request.headers, body: rawBody }); }
 
+async function readAiweMembers(env: Env): Promise<Array<Record<string, unknown>>> {
+  if (!env.ASSETS_BUCKET) return [];
+  const object = await env.ASSETS_BUCKET.get(aiweMembersKey);
+  const rows = object ? await object.json().catch(() => []) : [];
+  return Array.isArray(rows) ? rows.map(asRecord) : [];
+}
+
+function lineUidFromText(value: unknown) {
+  const match = String(value || "").match(/U[0-9a-f]{32}/i);
+  return match ? match[0] : "";
+}
+
+function memberLineUid(row: Record<string, unknown>) {
+  return firstClean(row.lineUserId, row.LINE_user_id, row.uid, row.user_login, row.email, lineUidFromText(JSON.stringify(row)));
+}
+
+function manualLineUids(value: unknown) {
+  return Array.from(new Set(String(value || "").match(/U[0-9a-f]{32}/gi) || []));
+}
+
+function pushTargetMatches(row: Record<string, unknown>, target: PushTarget) {
+  const kind = clean(target.kind || "known");
+  const rosterType = clean(row.rosterType);
+  const qualification = firstClean(row.qualification, row.memberQualification, row.status);
+  const memberNo = firstClean(row.rosterMemberNo, row.memberNo).toUpperCase();
+  if (kind === "association") return rosterType === "association";
+  if (kind === "vendor") return rosterType === "vendor";
+  if (kind === "qualified") return qualification.toUpperCase() === "Y";
+  if (kind === "memberPrefix") return Boolean(target.memberNoPrefix && memberNo.startsWith(clean(target.memberNoPrefix).toUpperCase()));
+  return true;
+}
+
+async function resolvePushRecipients(env: Env, target: PushTarget) {
+  const kind = clean(target.kind || "known");
+  if (kind === "broadcast") return { mode: "broadcast", recipients: [] as string[], totalKnown: 0 };
+  const members = await readAiweMembers(env);
+  const manual = manualLineUids(target.manualUids);
+  if (kind === "manual") return { mode: "multicast", recipients: manual, totalKnown: members.length };
+  const fromMembers = members.filter((row) => pushTargetMatches(row, target)).map(memberLineUid).filter(Boolean);
+  const recipients = Array.from(new Set([...fromMembers, ...manual]));
+  return { mode: "multicast", recipients, totalKnown: members.length };
+}
+
+function buildPushMessages(input: Record<string, unknown>) {
+  const messageType = clean(input.messageType || "text");
+  if (messageType === "flex") {
+    const altText = firstClean(input.altText, input.title, "TDEA 推播訊息");
+    const raw = firstClean(input.flexJson, input.contents);
+    const parsed = raw ? JSON.parse(raw) : asRecord(input.flexContents || input.contents);
+    const contents = parsed.type === "flex" ? parsed.contents : parsed;
+    if (!contents || typeof contents !== "object" || !clean((contents as Record<string, unknown>).type)) throw new Error("Flex JSON 缺少 contents/type");
+    return [{ type: "flex", altText, contents } as Record<string, unknown>];
+  }
+  const title = clean(input.title);
+  const text = clean(input.text || input.body);
+  if (!text) throw new Error("請輸入推播文字");
+  return [{ type: "text", text: title ? `${title}\n\n${text}` : text }];
+}
+
+async function sendLineApi(env: Env, path: string, payload: Record<string, unknown>) {
+  const token = clean(env.LINE_CHANNEL_ACCESS_TOKEN);
+  if (!token) return { ok: false, status: 503, body: "LINE_CHANNEL_ACCESS_TOKEN is not configured" };
+  const response = await fetch(`https://api.line.me/v2/bot/message/${path}`, {
+    method: "POST",
+    headers: {
+      authorization: `Bearer ${token}`,
+      "content-type": "application/json",
+      "x-line-retry-key": crypto.randomUUID()
+    },
+    body: JSON.stringify(payload)
+  });
+  return { ok: response.ok, status: response.status, body: await response.text().catch(() => "") };
+}
+
+async function readPushLogs(env: Env): Promise<PushLog[]> {
+  if (!env.ASSETS_BUCKET) return [];
+  const object = await env.ASSETS_BUCKET.get(pushLogKey);
+  const rows = object ? await object.json().catch(() => []) : [];
+  return Array.isArray(rows) ? rows as PushLog[] : [];
+}
+
+async function appendPushLog(env: Env, log: PushLog) {
+  if (!env.ASSETS_BUCKET) return;
+  const rows = await readPushLogs(env);
+  await env.ASSETS_BUCKET.put(pushLogKey, JSON.stringify([log, ...rows].slice(0, 300), null, 2), { httpMetadata: { contentType: "application/json; charset=utf-8", cacheControl: "no-store" } });
+}
+
+async function getPushSegments(request: Request, env: Env) {
+  const guard = requireAdmin(request, env);
+  if (guard) return guard;
+  const members = await readAiweMembers(env);
+  const counts = {
+    known: members.map(memberLineUid).filter(Boolean).length,
+    association: members.filter((row) => pushTargetMatches(row, { kind: "association" })).map(memberLineUid).filter(Boolean).length,
+    vendor: members.filter((row) => pushTargetMatches(row, { kind: "vendor" })).map(memberLineUid).filter(Boolean).length,
+    qualified: members.filter((row) => pushTargetMatches(row, { kind: "qualified" })).map(memberLineUid).filter(Boolean).length
+  };
+  return json({ success: true, data: { total: members.length, counts, logs: (await readPushLogs(env)).slice(0, 100) } });
+}
+
+async function resolvePushTargetsApi(request: Request, env: Env) {
+  const guard = requireAdmin(request, env);
+  if (guard) return guard;
+  const input = await request.json().catch(() => ({})) as Record<string, unknown>;
+  const target = asRecord(input.target) as PushTarget;
+  const resolved = await resolvePushRecipients(env, target);
+  return json({ success: true, data: { mode: resolved.mode, count: resolved.mode === "broadcast" ? null : resolved.recipients.length, sample: resolved.recipients.slice(0, 10), totalKnown: resolved.totalKnown } });
+}
+
+async function sendPushApi(request: Request, env: Env) {
+  const guard = requireAdmin(request, env);
+  if (guard) return guard;
+  const input = await request.json().catch(() => ({})) as Record<string, unknown>;
+  const target = asRecord(input.target) as PushTarget;
+  const dryRun = Boolean(input.dryRun);
+  let messages: Array<Record<string, unknown>>;
+  try { messages = buildPushMessages(input); }
+  catch (error) { return json({ success: false, message: String((error as Error).message || error) }, 400); }
+  const resolved = await resolvePushRecipients(env, target);
+  const responses: unknown[] = [];
+  if (!dryRun) {
+    if (resolved.mode === "broadcast") {
+      responses.push(await sendLineApi(env, "broadcast", { messages, notificationDisabled: Boolean(input.notificationDisabled) }));
+    } else {
+      if (!resolved.recipients.length) return json({ success: false, message: "此分眾沒有可推播的 LINE UID" }, 400);
+      for (let index = 0; index < resolved.recipients.length; index += 500) {
+        responses.push(await sendLineApi(env, "multicast", { to: resolved.recipients.slice(index, index + 500), messages, notificationDisabled: Boolean(input.notificationDisabled) }));
+      }
+    }
+  }
+  const failed = responses.filter((item) => !(item as Record<string, unknown>).ok);
+  const log: PushLog = {
+    id: `PUSH-${Date.now()}`,
+    createdAt: new Date().toISOString(),
+    mode: resolved.mode,
+    target,
+    count: resolved.mode === "broadcast" ? 0 : resolved.recipients.length,
+    messageType: clean(input.messageType || "text"),
+    title: clean(input.title || input.altText),
+    dryRun,
+    responses
+  };
+  await appendPushLog(env, log);
+  return json({ success: !failed.length, data: log, message: dryRun ? "已完成試算，尚未送出" : failed.length ? "部分或全部推播失敗" : "推播已送出" }, failed.length ? 502 : 200);
+}
+
+function unfoldIcs(text: string) {
+  return text.replace(/\r?\n[ \t]/g, "");
+}
+
+function icsClean(value: string) {
+  return String(value || "")
+    .replace(/\\n/g, "\n")
+    .replace(/\\,/g, ",")
+    .replace(/\\;/g, ";")
+    .replace(/\\\\/g, "\\")
+    .trim();
+}
+
+function parseIcsDate(value: string) {
+  const cleanValue = clean(value);
+  const dateOnly = cleanValue.match(/^(\d{4})(\d{2})(\d{2})$/);
+  if (dateOnly) return `${dateOnly[1]}-${dateOnly[2]}-${dateOnly[3]}`;
+  const match = cleanValue.match(/^(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})(Z?)$/);
+  if (!match) return cleanValue;
+  const [, year, month, day, hour, minute, second, zulu] = match;
+  const iso = `${year}-${month}-${day}T${hour}:${minute}:${second}${zulu ? "Z" : "+08:00"}`;
+  const date = new Date(iso);
+  return Number.isNaN(date.getTime()) ? iso : date.toISOString();
+}
+
+function calendarDisplayTime(value: string) {
+  if (!value) return "";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return date.toLocaleString("zh-TW", { timeZone: "Asia/Taipei", hour12: false, year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" }).replace(/\//g, "/");
+}
+
+function parseIcsEvents(ics: string) {
+  const source = unfoldIcs(ics);
+  const blocks = source.match(/BEGIN:VEVENT[\s\S]*?END:VEVENT/g) || [];
+  return blocks.map((block) => {
+    const event: Record<string, string> = {};
+    for (const rawLine of block.split(/\r?\n/)) {
+      const index = rawLine.indexOf(":");
+      if (index < 0) continue;
+      const left = rawLine.slice(0, index);
+      const value = rawLine.slice(index + 1);
+      const key = left.split(";")[0].toUpperCase();
+      event[key] = icsClean(value);
+    }
+    const start = parseIcsDate(event.DTSTART || "");
+    const end = parseIcsDate(event.DTEND || "");
+    const summary = event.SUMMARY || "未命名活動";
+    return {
+      id: event.UID || `${summary}-${start}`,
+      uid: event.UID || "",
+      name: summary,
+      summary,
+      description: event.DESCRIPTION || "",
+      location: event.LOCATION || "",
+      start,
+      end,
+      courseTime: calendarDisplayTime(start),
+      deadline: "",
+      status: event.STATUS || "",
+      url: event.URL || "",
+      updatedAt: parseIcsDate(event["LAST-MODIFIED"] || event.DTSTAMP || "")
+    };
+  }).filter((event) => clean(event.name) || clean(event.start));
+}
+
+async function fetchCalendarEvents(request: Request) {
+  const url = new URL(request.url);
+  const calendarId = clean(url.searchParams.get("calendarId")) || defaultCalendarId;
+  const from = url.searchParams.get("from") ? new Date(String(url.searchParams.get("from"))) : null;
+  const to = url.searchParams.get("to") ? new Date(String(url.searchParams.get("to"))) : null;
+  const icsUrl = `https://calendar.google.com/calendar/ical/${encodeURIComponent(calendarId)}/public/basic.ics`;
+  const response = await fetch(icsUrl, { headers: { accept: "text/calendar,text/plain,*/*" } });
+  const textBody = await response.text().catch(() => "");
+  if (!response.ok) return json({ success: false, message: `Google Calendar 讀取失敗：HTTP ${response.status}。請確認日曆已設為公開。`, calendarId }, 502);
+  let events = parseIcsEvents(textBody).sort((a, b) => String(a.start).localeCompare(String(b.start)));
+  if (from && !Number.isNaN(from.getTime())) events = events.filter((event) => new Date(event.start).getTime() >= from.getTime());
+  if (to && !Number.isNaN(to.getTime())) events = events.filter((event) => new Date(event.start).getTime() <= to.getTime());
+  return json({ success: true, calendarId, total: events.length, data: events, icsUrl });
+}
+
 async function handleMonthlyWebhook(request: Request, env: Env, rawBody: string) {
   let payload: unknown;
   try { payload = JSON.parse(rawBody); } catch (_) { return null; }
   const allEvents = extractLineEvents(payload);
   const queryEvents = allEvents.filter((event) => normalizeKeyword(extractTriggerText(event)) === normalizeKeyword(queryKeyword));
+  const memberQrEvents = allEvents.filter((event) => normalizeKeyword(extractTriggerText(event)) === normalizeKeyword(memberQrKeyword));
+  const calendarEvents = allEvents.filter((event) => normalizeKeyword(extractTriggerText(event)) === normalizeKeyword(calendarKeyword));
   const events = allEvents.filter((event) => normalizeKeyword(extractTriggerText(event)) === normalizeKeyword(fixedKeyword));
-  if (!queryEvents.length && !events.length) return null;
+  if (!queryEvents.length && !memberQrEvents.length && !calendarEvents.length && !events.length) return null;
   const signature = request.headers.get("x-line-signature");
   if (!await verifyLineSignature(rawBody, signature, env.LINE_CHANNEL_SECRET)) return new Response("Invalid Signature", { status: 403, headers });
   if (queryEvents.length) {
@@ -1087,6 +1655,35 @@ async function handleMonthlyWebhook(request: Request, env: Env, rawBody: string)
     };
     const lineReplies = await Promise.all(queryEvents.map((event) => event.replyToken ? replyToLine(event.replyToken, [queryMessage], env) : Promise.resolve({ ok: false, status: 400, message: "Missing replyToken" })));
     return json({ success: true, mode: "registration-query", matched: [queryKeyword], forwarded: false, lineReplies });
+  }
+  if (memberQrEvents.length) {
+    const memberQrUrl = `${publicLiffUrl}?memberQr=1`;
+    const memberQrMessage = {
+      type: "template",
+      altText: "TDEA 會員 QR",
+      template: {
+        type: "buttons",
+        text: "請點下方按鈕開啟個人會員 QR，給合作店家掃描扣點。",
+        actions: [{ type: "uri", label: "開啟會員 QR", uri: memberQrUrl }]
+      }
+    };
+    const lineReplies = await Promise.all(memberQrEvents.map((event) => event.replyToken ? replyToLine(event.replyToken, [memberQrMessage], env) : Promise.resolve({ ok: false, status: 400, message: "Missing replyToken" })));
+    return json({ success: true, mode: "member-qr", matched: [memberQrKeyword], forwarded: false, lineReplies });
+  }
+  if (calendarEvents.length) {
+    const calendarUrl = `${publicLiffUrl}?calendar=1`;
+    const calendarMessage = {
+      type: "template",
+      altText: "TDEA 行事曆",
+      template: {
+        type: "buttons",
+        title: "TDEA 行事曆",
+        text: "查看協會 Google 行事曆與年度活動安排。",
+        actions: [{ type: "uri", label: "開啟行事曆", uri: calendarUrl }]
+      }
+    };
+    const lineReplies = await Promise.all(calendarEvents.map((event) => event.replyToken ? replyToLine(event.replyToken, [calendarMessage], env) : Promise.resolve({ ok: false, status: 400, message: "Missing replyToken" })));
+    return json({ success: true, mode: "calendar", matched: [calendarKeyword], forwarded: false, lineReplies });
   }
   const config = await readMonthly(env);
   const pages = config.pages || [];
@@ -1119,6 +1716,19 @@ export default {
 	    if (request.method === "POST" && url.pathname === "/api/native-registrations/cancel") return cancelNativeRegistration(request, env);
 	    if (request.method === "GET" && url.pathname === "/api/native-checkin/verify") return verifyNativeCheckin(request, env);
 	    if (request.method === "POST" && url.pathname === "/api/native-checkin/confirm") return confirmNativeCheckin(request, env);
+	    if (request.method === "POST" && url.pathname === "/api/redeem/create") return createRedeemRequest(request, env);
+	    if (request.method === "GET" && url.pathname === "/api/redeem/list") return listRedeemRequests(request, env);
+	    const redeemMatch = url.pathname.match(/^\/api\/redeem\/([^/]+)$/);
+	    if (redeemMatch && request.method === "GET") return getRedeemRequest(request, env, decodeURIComponent(redeemMatch[1]));
+	    if (redeemMatch && request.method === "POST") return confirmRedeemRequest(request, env, decodeURIComponent(redeemMatch[1]));
+	    if (request.method === "POST" && url.pathname === "/api/points/sync-legacy") return syncLegacyPointApi(request, env);
+	    if (request.method === "GET" && url.pathname === "/api/points/ledger") return listPointLedgerApi(request, env);
+	    const pointMatch = url.pathname.match(/^\/api\/points\/([^/]+)$/);
+	    if (pointMatch && request.method === "GET") return getPointAccountApi(request, env, decodeURIComponent(pointMatch[1]));
+	    if (request.method === "GET" && url.pathname === "/api/push/segments") return getPushSegments(request, env);
+	    if (request.method === "POST" && url.pathname === "/api/push/resolve") return resolvePushTargetsApi(request, env);
+	    if (request.method === "POST" && url.pathname === "/api/push/send") return sendPushApi(request, env);
+	    if (request.method === "GET" && url.pathname === "/api/calendar/events") return fetchCalendarEvents(request);
 	    if (request.method === "GET" && url.pathname === "/api/opnform/workspaces") return listOpnFormWorkspaces(request, env);
     if (request.method === "POST" && url.pathname === "/api/opnform/create") return createOpnForm(request, env);
     if (request.method === "POST" && url.pathname === "/api/opnform/webhook") return handleOpnFormWebhook(request, env);

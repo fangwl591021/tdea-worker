@@ -6,15 +6,17 @@
   const redeemToken = params.get("redeemSession") || params.get("redeem");
   const queryMode = params.has("query");
   const memberQrMode = params.has("memberQr");
+  const calendarMode = params.has("calendar");
   const app = document.querySelector("#app");
   const liffId = "2005868456-2jmxqyFU";
+  const calendarId = "7d66f2a96f192dda6cca2b04e60a6e549c7adf74f57721845d5b7e03f8b7ca89@group.calendar.google.com";
   let liffReady = null;
   let lineUserId = "";
   const esc = (value) => String(value ?? "").replace(/[&<>"']/g, (ch) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#039;" }[ch]));
   const trim = (value) => String(value ?? "").trim();
   const fieldTypes = new Set(["text", "email", "paragraph", "radio", "checkbox", "dropdown"]);
 
-  if (!app || (!formId && !checkinToken && !redeemToken && !queryMode && !memberQrMode)) return;
+  if (!app || (!formId && !checkinToken && !redeemToken && !queryMode && !memberQrMode && !calendarMode)) return;
 
   function mergedParams() {
     const output = new URLSearchParams(location.search);
@@ -627,9 +629,23 @@
     app.querySelector("[data-close-window]")?.addEventListener("click", closeWindow);
   }
 
+  function showCalendar() {
+    const embedUrl = `https://calendar.google.com/calendar/embed?src=${encodeURIComponent(calendarId)}&ctz=Asia%2FTaipei&mode=AGENDA&showTitle=0&showPrint=0&showTabs=1&showCalendars=0`;
+    const publicUrl = `https://calendar.google.com/calendar/u/0?cid=${encodeURIComponent(calendarId)}`;
+    renderShell(`<section class="nf-card"><div class="nf-body">
+      <h1 class="nf-title">TDEA 行事曆</h1>
+      <div class="nf-detail">協會年度活動與每月活動安排會同步顯示在這裡。</div>
+      <iframe title="TDEA Google Calendar" src="${esc(embedUrl)}" style="width:100%;height:72vh;min-height:560px;border:1px solid #e4e7ec;border-radius:10px;background:#fff"></iframe>
+      <div class="nf-actions">
+        <a class="nf-btn primary" href="${esc(publicUrl)}" target="_blank" rel="noopener">用 Google 日曆開啟</a>
+      </div>
+    </div></section>`);
+  }
+
   if (formId) showRegister(formId);
   else if (checkinToken) showCheckin(checkinToken);
   else if (redeemToken) showVendorRedeem(redeemToken);
   else if (memberQrMode) showMemberQr();
+  else if (calendarMode) showCalendar();
   else showMyRegistrations();
 })();
