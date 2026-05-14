@@ -1,6 +1,7 @@
 (() => {
   const key = "tdea-manager-v3";
   const api = "https://tdeawork.fangwl591021.workers.dev";
+  const liffBase = "https://liff.line.me/2005868456-2jmxqyFU";
   const autoSyncKey = "tdea-auto-sync-registrations";
   const labels = {
     dashboard: ["活動總覽", "查看活動狀態、報名與簽到概況。"],
@@ -21,6 +22,32 @@
     const custom = String(data.activityTypeLabel || "").trim();
     const other = String(data.activityTypeLabelOther || "").trim();
     return custom === "__custom" ? (other || data.type) : (custom || data.type);
+  }
+  function firstUri(value) {
+    if (!value) return "";
+    if (typeof value === "string") return /^https?:\/\//i.test(value) ? value : "";
+    if (Array.isArray(value)) {
+      for (const item of value) {
+        const uri = firstUri(item);
+        if (uri) return uri;
+      }
+      return "";
+    }
+    if (typeof value === "object") {
+      if (typeof value.uri === "string" && /^https?:\/\//i.test(value.uri)) return value.uri;
+      for (const item of Object.values(value)) {
+        const uri = firstUri(item);
+        if (uri) return uri;
+      }
+    }
+    return "";
+  }
+  function flexEntryUrl(rule) {
+    try { return firstUri(JSON.parse(rule.flexJson || "{}")); } catch (_) { return ""; }
+  }
+  function entryCell(url) {
+    if (!url) return `<span class="muted">無</span>`;
+    return `<a class="link" href="${esc(url)}" target="_blank" rel="noopener noreferrer">${esc(url)}</a>`;
   }
   function save() { localStorage.setItem(key, JSON.stringify(state.data)); }
   function load() {
@@ -225,15 +252,15 @@
 
   function keywordRows() {
     const builtIn = [
-      { keyword: "TDEA每月活動", aliases: "無", purpose: "推送每月活動橫式多頁 FLEX", reply: "回覆每月活動 carousel，詳細說明走 LIFF，報名按鈕走自建報名表", owner: "每月活動", status: "啟用中" },
-      { keyword: "TDEA活動查詢", aliases: "無", purpose: "讓會員查詢或取消自己的活動報名", reply: "開啟 LIFF「我的活動報名」，以 LINE Login 查詢", owner: "報名系統", status: "啟用中" },
-      { keyword: "TDEA會員QR", aliases: "無", purpose: "會員開啟自己的扣點 QR，給合作店家掃描", reply: "開啟 LIFF「會員 QR」頁面", owner: "點數折抵", status: "啟用中" },
-      { keyword: "TDEA行事曆", aliases: "TDEA日曆、TDEA年度活動", purpose: "開啟協會 Google 行事曆", reply: "開啟 LIFF 行事曆頁面，嵌入 TDEA Google Calendar", owner: "行事曆", status: "啟用中" },
-      { keyword: "TDEA點數", aliases: "TDEA查點、TDEA點數查詢、TDEA紅利", purpose: "查詢發話者自己的母站點數", reply: "以 LINE userId 查母站點數 API，回覆餘額與最近紀錄", owner: "母站點數", status: "啟用中" },
-      { keyword: "TDEA點數+UID", aliases: "例：TDEA點數+Ub68b9724664b889e790c789ece72f717", purpose: "管理測試或客服查指定 LINE UID 點數", reply: "以指定 UID 查母站點數 API", owner: "母站點數", status: "啟用中" },
-      { keyword: "TDEA會員專區", aliases: "TDEA會員、TDEA會員中心、TDEA專區", purpose: "顯示會員入口選單", reply: "回覆會員專區 FLEX，含活動與點數入口", owner: "內建關鍵字", status: "啟用中" },
-      { keyword: "TDEA活動", aliases: "TDEA報名、TDEA課程", purpose: "活動資訊入口", reply: "回覆活動資訊 FLEX；每月活動請用 TDEA每月活動", owner: "內建關鍵字", status: "啟用中" },
-      { keyword: "TDEA說明", aliases: "TDEAHELP、TDEA幫助", purpose: "查看可用關鍵字說明", reply: "回覆文字版使用說明", owner: "內建關鍵字", status: "啟用中" }
+      { keyword: "TDEA每月活動", aliases: "無", purpose: "推送每月活動橫式多頁 FLEX", reply: "回覆每月活動 carousel，詳細說明走 LIFF，報名按鈕走自建報名表", entry: `${liffBase}?monthlyDetail={活動編號}`, owner: "每月活動", status: "啟用中" },
+      { keyword: "TDEA活動查詢", aliases: "無", purpose: "讓會員查詢或取消自己的活動報名", reply: "開啟 LIFF「我的活動報名」，以 LINE Login 查詢", entry: `${liffBase}?query=1`, owner: "報名系統", status: "啟用中" },
+      { keyword: "TDEA會員QR", aliases: "無", purpose: "會員開啟自己的扣點 QR，給合作店家掃描", reply: "開啟 LIFF「會員 QR」頁面", entry: `${liffBase}?memberQr=1`, owner: "點數折抵", status: "啟用中" },
+      { keyword: "TDEA行事曆", aliases: "TDEA日曆、TDEA年度活動", purpose: "開啟協會 Google 行事曆", reply: "開啟 LIFF 行事曆頁面，嵌入 TDEA Google Calendar", entry: `${liffBase}?calendar=1`, owner: "行事曆", status: "啟用中" },
+      { keyword: "TDEA點數", aliases: "TDEA查點、TDEA點數查詢、TDEA紅利", purpose: "查詢發話者自己的母站點數", reply: "以 LINE userId 查母站點數 API，回覆餘額與最近紀錄", entry: "", owner: "母站點數", status: "啟用中" },
+      { keyword: "TDEA點數+UID", aliases: "例：TDEA點數+Ub68b9724664b889e790c789ece72f717", purpose: "管理測試或客服查指定 LINE UID 點數", reply: "以指定 UID 查母站點數 API", entry: "", owner: "母站點數", status: "啟用中" },
+      { keyword: "TDEA會員專區", aliases: "TDEA會員、TDEA會員中心、TDEA專區", purpose: "顯示會員入口選單", reply: "回覆會員專區 FLEX，含活動與點數入口", entry: liffBase, owner: "內建關鍵字", status: "啟用中" },
+      { keyword: "TDEA活動", aliases: "TDEA報名、TDEA課程", purpose: "活動資訊入口", reply: "回覆活動資訊 FLEX；每月活動請用 TDEA每月活動", entry: liffBase, owner: "內建關鍵字", status: "啟用中" },
+      { keyword: "TDEA說明", aliases: "TDEAHELP、TDEA幫助", purpose: "查看可用關鍵字說明", reply: "回覆文字版使用說明", entry: "", owner: "內建關鍵字", status: "啟用中" }
     ];
     const flexRules = Array.isArray(state.data.flexRules) ? state.data.flexRules : [];
     const custom = flexRules.map((rule) => ({
@@ -241,6 +268,7 @@
       aliases: rule.matchMode === "contains" ? "包含關鍵字" : "完全符合",
       purpose: rule.title || "自訂 FLEX 回覆",
       reply: rule.replyType === "text" ? "文字回覆" : "Flex Message",
+      entry: rule.replyType === "text" ? "" : flexEntryUrl(rule),
       owner: "FLEX專區",
       status: rule.enabled ? "啟用中" : "停用"
     }));
@@ -249,7 +277,7 @@
 
   function keywords() {
     const rows = keywordRows();
-    return `<section class="panel"><div class="panel-head"><h2 class="panel-title">LINE 關鍵字清單</h2><span class="muted">${rows.length} 組規則</span></div><div class="table-wrap"><table><thead><tr><th>關鍵字</th><th>別名 / 比對</th><th>用途</th><th>回覆行為</th><th>設定位置</th><th>狀態</th></tr></thead><tbody>${rows.map((row) => `<tr><td><strong>${esc(row.keyword)}</strong></td><td>${esc(row.aliases)}</td><td>${esc(row.purpose)}</td><td>${esc(row.reply)}</td><td>${esc(row.owner)}</td><td><span class="badge ${row.status === "啟用中" ? "live" : "off"}">${esc(row.status)}</span></td></tr>`).join("")}</tbody></table></div></section><section class="panel" style="margin-top:18px"><div class="panel-head"><h2 class="panel-title">使用原則</h2></div><div style="padding:18px;line-height:1.8;color:#344054">所有新版關鍵字都建議以 <strong>TDEA</strong> 開頭，避免和原本 LINE OA 舊系統互相干擾。沒有命中新版關鍵字的訊息會交給舊 webhook 繼續處理。</div></section>`;
+    return `<section class="panel"><div class="panel-head"><h2 class="panel-title">LINE 關鍵字清單</h2><span class="muted">${rows.length} 組規則</span></div><div class="table-wrap"><table><thead><tr><th>關鍵字</th><th>別名 / 比對</th><th>用途</th><th>回覆行為</th><th>網址 / 入口</th><th>設定位置</th><th>狀態</th></tr></thead><tbody>${rows.map((row) => `<tr><td><strong>${esc(row.keyword)}</strong></td><td>${esc(row.aliases)}</td><td>${esc(row.purpose)}</td><td>${esc(row.reply)}</td><td style="max-width:360px;white-space:normal;word-break:break-all">${entryCell(row.entry)}</td><td>${esc(row.owner)}</td><td><span class="badge ${row.status === "啟用中" ? "live" : "off"}">${esc(row.status)}</span></td></tr>`).join("")}</tbody></table></div></section><section class="panel" style="margin-top:18px"><div class="panel-head"><h2 class="panel-title">使用原則</h2></div><div style="padding:18px;line-height:1.8;color:#344054">所有新版關鍵字都建議以 <strong>TDEA</strong> 開頭，避免和原本 LINE OA 舊系統互相干擾。沒有命中新版關鍵字的訊息會交給舊 webhook 繼續處理。</div></section>`;
   }
 
   function redeem() {
