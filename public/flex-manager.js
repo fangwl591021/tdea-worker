@@ -18,6 +18,16 @@
   const flexRules = () => { const data = loadData(); data.flexRules ||= []; return { data, rows: data.flexRules }; };
 
   function ensureNav() {
+    if (window.TDEALineNav) {
+      window.TDEALineNav.register({
+        id: "flex",
+        label: "FLEX專區",
+        order: 20,
+        onClick: () => showFlexZone(),
+        isActive: () => flexActive
+      });
+      return;
+    }
     const nav = document.querySelector(".nav");
     if (!nav || nav.querySelector("[data-flex-zone]")) return;
     const button = document.createElement("button");
@@ -30,6 +40,11 @@
 
   function setActiveNav() {
     document.querySelectorAll(".nav button").forEach((button) => button.classList.remove("active"));
+    if (window.TDEALineNav) {
+      window.TDEALineNav.setOpen(true);
+      window.TDEALineNav.refresh();
+      return;
+    }
     document.querySelector("[data-flex-zone]")?.classList.add("active");
   }
 
@@ -208,6 +223,9 @@
 
   function schedule() { ensureNav(); if (flexActive) setActiveNav(); }
   new MutationObserver(schedule).observe(document.body, { childList: true, subtree: true });
-  document.addEventListener("click", (event) => { if (event.target.closest(".nav button:not([data-flex-zone])")) flexActive = false; }, true);
+  document.addEventListener("click", (event) => {
+    const navButton = event.target.closest(".nav button");
+    if (navButton && !event.target.closest('[data-line-item="flex"]') && !event.target.closest("[data-line-parent]") && !event.target.closest("[data-flex-zone]")) flexActive = false;
+  }, true);
   schedule();
 })();

@@ -3,7 +3,9 @@
   const params = mergedParams();
   const formId = params.get("register");
   const checkinToken = params.get("checkin");
+  const redeemToken = params.get("redeemSession") || params.get("redeem");
   const queryMode = params.has("query");
+  const memberQrMode = params.has("memberQr");
   const app = document.querySelector("#app");
   const liffId = "2005868456-2jmxqyFU";
   let liffReady = null;
@@ -12,7 +14,7 @@
   const trim = (value) => String(value ?? "").trim();
   const fieldTypes = new Set(["text", "email", "paragraph", "radio", "checkbox", "dropdown"]);
 
-  if (!app || (!formId && !checkinToken && !queryMode)) return;
+  if (!app || (!formId && !checkinToken && !redeemToken && !queryMode && !memberQrMode)) return;
 
   function mergedParams() {
     const output = new URLSearchParams(location.search);
@@ -385,7 +387,249 @@
     });
   }
 
+  async function showRedeem(token) {
+    renderLoading("正在讀取折抵授權...");
+    const uid = await loadLiff({ login: true });
+    if (!uid) return renderError("請從 LINE LIFF 開啟此頁，系統才能確認會員身分。");
+    const loadRedeem = async () => {
+      const response = await fetch(`${api}/api/redeem/${encodeURIComponent(token)}?lineUserId=${encodeURIComponent(uid)}`, { cache: "no-store" });
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok || !result.success) return renderError(result.message || "折抵碼無效");
+      const row = result.data || {};
+      const expired = row.status === "expired";
+      const used = row.status === "used";
+      renderShell(`<section class="nf-card"><div class="nf-body">
+        <h1 class="nf-title">確認點數折抵</h1>
+        <div class="${row.status === "pending" ? "nf-ok" : "nf-alert"}">${esc(used ? "此折抵碼已使用" : expired ? "此折抵碼已過期" : "請確認是否同意扣點")}</div>
+        <table class="nf-table"><tbody>
+          <tr><th>合作店家</th><td>${esc(row.vendorName || "")}</td></tr>
+          <tr><th>消費金額</th><td>${esc(row.amount || 0)}</td></tr>
+          <tr><th>折抵點數</th><td>${esc(row.points || 0)} 點</td></tr>
+          <tr><th>目前點數</th><td>${row.balance === undefined ? "查詢中" : `${esc(row.balance)} 點`}</td></tr>
+          <tr><th>有效期限</th><td>${esc(row.expiresAt ? new Date(row.expiresAt).toLocaleString("zh-TW", { hour12: false }) : "")}</td></tr>
+          ${row.note ? `<tr><th>備註</th><td>${esc(row.note)}</td></tr>` : ""}
+        </tbody></table>
+        <div class="nf-actions">${row.status === "pending" ? `<button class="nf-btn primary" data-confirm-redeem>確認折抵</button>` : ""}</div>
+      </div></section>`);
+      app.querySelector("[data-confirm-redeem]")?.addEventListener("click", async () => {
+        if (!confirm(`確認扣抵 ${row.points || 0} 點？`)) return;
+        const confirmResponse = await fetch(`${api}/api/redeem/${encodeURIComponent(token)}`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ lineUserId: uid })
+        });
+        const confirmResult = await confirmResponse.json().catch(() => ({}));
+        if (!confirmResponse.ok || !confirmResult.success) return alert(confirmResult.message || "折抵失敗");
+        const done = confirmResult.data || {};
+        renderShell(`<section class="nf-card"><div class="nf-body">
+          <h1 class="nf-title">折抵完成</h1>
+          <div class="nf-ok">已成功扣抵 ${esc(done.points || row.points || 0)} 點。</div>
+          <table class="nf-table"><tbody><tr><th>合作店家</th><td>${esc(done.vendorName || row.vendorName || "")}</td></tr><tr><th>剩餘點數</th><td>${esc(done.balance ?? "")}</td></tr></tbody></table>
+          <div class="nf-actions"><button class="nf-btn primary" data-close-window>完成</button></div>
+        </div></section>`);
+        app.querySelector("[data-close-window]")?.addEventListener("click", closeWindow);
+      });
+    };
+    await loadRedeem();
+  }
+
+  function extractLineUserId(value) {
+    const raw = trim(value);
+    if (!raw) return "";
+    if (/^U[a-f0-9]{32}$/i.test(raw)) return raw;
+    try {
+      const url = new URL(raw);
+      return trim(url.searchParams.get("lineUserId") || url.searchParams.get("uid") || url.searchParams.get("userId") || url.searchParams.get("line_user_id"));
+    } catch (_) {
+      const match = raw.match(/U[a-f0-9]{32}/i);
+      return match ? match[0] : raw;
+    }
+  }
+
+  async function openCodeScanner(onValue) {
+    if (window.liff?.scanCodeV2) {
+      try {
+        const result = await window.liff.scanCodeV2();
+        const value = result?.value || result?.text || result;
+        if (value) onValue(String(value));
+        return;
+      } catch (error) {
+        if (error?.code !== "USER_CANCEL") alert(error?.message || "LINE 掃描器開啟失敗，請改用手動輸入。");
+      }
+    }
+    if (!("BarcodeDetector" in window) || !navigator.mediaDevices?.getUserMedia) {
+      const manual = prompt("此裝置不支援網頁掃描器，請貼上會員 QR 內容或 LINE UID");
+      if (manual) onValue(manual);
+      return;
+    }
+    const overlay = document.createElement("div");
+    overlay.style.cssText = "position:fixed;inset:0;background:rgba(15,23,42,.92);z-index:9999;display:grid;place-items:center;padding:18px";
+    overlay.innerHTML = `<div style="width:min(480px,100%);display:grid;gap:12px"><video playsinline style="width:100%;border-radius:12px;background:#000"></video><button class="nf-btn" type="button">關閉掃描器</button></div>`;
+    document.body.appendChild(overlay);
+    const video = overlay.querySelector("video");
+    let stream = null;
+    let stopped = false;
+    const close = () => {
+      stopped = true;
+      stream?.getTracks?.().forEach((track) => track.stop());
+      overlay.remove();
+    };
+    overlay.querySelector("button")?.addEventListener("click", close);
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } });
+      video.srcObject = stream;
+      await video.play();
+      const detector = new window.BarcodeDetector({ formats: ["qr_code"] });
+      const tick = async () => {
+        if (stopped) return;
+        try {
+          const codes = await detector.detect(video);
+          if (codes?.length) {
+            const value = codes[0].rawValue || codes[0].rawValueText || "";
+            close();
+            if (value) onValue(value);
+            return;
+          }
+        } catch (_) {}
+        requestAnimationFrame(tick);
+      };
+      tick();
+    } catch (error) {
+      close();
+      const manual = prompt("相機無法開啟，請貼上會員 QR 內容或 LINE UID");
+      if (manual) onValue(manual);
+    }
+  }
+
+  async function showVendorRedeem(token) {
+    renderLoading("載入店家扣點工作台...");
+    let session = null;
+    let selectedMember = "";
+
+    async function loadSession(lineUserId = "") {
+      const query = lineUserId ? `?lineUserId=${encodeURIComponent(lineUserId)}` : "";
+      const response = await fetch(`${api}/api/redeem/${encodeURIComponent(token)}${query}`, { cache: "no-store" });
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok || !result.success) throw new Error(result.message || "店家授權不存在或已失效");
+      return result.data || {};
+    }
+
+    function statusText(status) {
+      if (status === "active" || status === "pending") return "授權有效";
+      if (status === "expired") return "授權已過期";
+      if (status === "closed") return "授權已關閉";
+      return status || "-";
+    }
+    function modeText(mode) {
+      if (mode === "manual") return "店家現場輸入點數";
+      if (mode === "rate") return "依消費金額換算點數";
+      return "固定點數";
+    }
+    function computedPoints() {
+      if (!session) return 0;
+      if (session.mode === "manual") return Number(app.querySelector("[data-redeem-points]")?.value || 0);
+      if (session.mode === "rate") {
+        const amount = Number(app.querySelector("[data-redeem-amount]")?.value || 0);
+        return Math.floor(amount * Number(session.pointRate || 0));
+      }
+      return Number(session.points || 0);
+    }
+
+    function render() {
+      const active = session?.status === "active" || session?.status === "pending";
+      const tx = Array.isArray(session?.transactions) ? session.transactions : [];
+      const pointInput = selectedMember && session?.mode === "manual" ? `<div class="nf-field"><label>本次扣抵點數</label><input data-redeem-points type="number" min="0" step="1" placeholder="請輸入本次扣點"></div>` : "";
+      const amountInput = selectedMember && session?.mode === "rate" ? `<div class="nf-field"><label>本次消費金額</label><input data-redeem-amount type="number" min="0" step="1" placeholder="輸入金額後自動換算點數"></div>` : "";
+      const noteInput = selectedMember ? `<div class="nf-field"><label>本次備註</label><input data-redeem-note placeholder="選填，例如桌號、單號、品項"></div>` : "";
+      renderShell(`<section class="nf-card"><div class="nf-body">
+        <h1 class="nf-title">店家扣點工作台</h1>
+        <div class="${active ? "nf-ok" : "nf-alert"}">${esc(statusText(session?.status))}</div>
+        <table class="nf-table"><tbody>
+          <tr><th>合作店家</th><td>${esc(session?.vendorName || "")}</td></tr>
+          <tr><th>扣點模式</th><td>${esc(modeText(session?.mode))}</td></tr>
+          <tr><th>固定點數 / 上限</th><td>${esc(session?.points || 0)} / ${esc(session?.maxPoints || 0)} 點</td></tr>
+          <tr><th>授權期間</th><td>${esc(session?.startsAt ? new Date(session.startsAt).toLocaleString("zh-TW", { hour12: false }) : "")}<br>${esc(session?.expiresAt ? new Date(session.expiresAt).toLocaleString("zh-TW", { hour12: false }) : "")}</td></tr>
+          ${session?.note ? `<tr><th>備註</th><td>${esc(session.note)}</td></tr>` : ""}
+        </tbody></table>
+        ${active ? `<div class="nf-actions"><button class="nf-btn primary" data-scan-member>掃描會員 QR</button><button class="nf-btn" data-manual-member>手動輸入 UID</button></div>` : ""}
+        <div class="nf-field"><label>會員 LINE UID</label><input data-member-uid value="${esc(selectedMember)}" placeholder="掃描會員 QR 後會自動填入"></div>
+        ${selectedMember ? `<div class="nf-ok">目前會員點數：${session?.balance === undefined ? "查詢中" : `${esc(session.balance)} 點`}</div>${amountInput}${pointInput}${noteInput}<div class="nf-actions"><button class="nf-btn primary" data-confirm-redeem ${active ? "" : "disabled"}>確認扣點</button></div>` : ""}
+        <div class="nf-detail"><strong>扣點紀錄</strong><br>${tx.length ? tx.map((row) => `${new Date(row.createdAt).toLocaleString("zh-TW", { hour12: false })}｜${row.lineUserId}｜${row.amount ? `${row.amount} 元｜` : ""}${row.points} 點｜餘額 ${row.balanceAfter ?? ""}`).map(esc).join("<br>") : "尚無扣點紀錄"}</div>
+      </div></section>`);
+      app.querySelector("[data-member-uid]")?.addEventListener("change", async (event) => {
+        selectedMember = extractLineUserId(event.currentTarget.value);
+        await refreshMember();
+      });
+      app.querySelector("[data-scan-member]")?.addEventListener("click", () => openCodeScanner(async (value) => {
+        selectedMember = extractLineUserId(value);
+        await refreshMember();
+      }));
+      app.querySelector("[data-manual-member]")?.addEventListener("click", async () => {
+        const value = prompt("請輸入會員 LINE UID 或貼上會員 QR 內容", selectedMember);
+        if (!value) return;
+        selectedMember = extractLineUserId(value);
+        await refreshMember();
+      });
+      app.querySelector("[data-confirm-redeem]")?.addEventListener("click", confirmRedeem);
+    }
+
+    async function refreshMember() {
+      try {
+        session = await loadSession(selectedMember);
+        render();
+      } catch (error) {
+        renderError(error.message);
+      }
+    }
+
+    async function confirmRedeem() {
+      const uid = extractLineUserId(app.querySelector("[data-member-uid]")?.value || selectedMember);
+      if (!uid) return alert("請先掃描會員 QR 或輸入會員 LINE UID");
+      const amount = Number(app.querySelector("[data-redeem-amount]")?.value || 0);
+      const points = computedPoints();
+      const note = trim(app.querySelector("[data-redeem-note]")?.value || "");
+      if (!points) return alert("請輸入有效的扣抵點數或消費金額");
+      if (session?.maxPoints && points > Number(session.maxPoints)) return alert(`本授權單次最多可扣 ${session.maxPoints} 點`);
+      if (!confirm(`確認扣除 ${points} 點？`)) return;
+      const response = await fetch(`${api}/api/redeem/${encodeURIComponent(token)}`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ lineUserId: uid, amount, points, note })
+      });
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok || !result.success) return alert(result.message || "扣點失敗");
+      selectedMember = "";
+      session = result.data || await loadSession();
+      render();
+      alert("扣點完成");
+    }
+
+    try {
+      session = await loadSession();
+      render();
+    } catch (error) {
+      renderError(error.message);
+    }
+  }
+
+  async function showMemberQr() {
+    renderLoading("正在開啟會員 QR...");
+    const uid = await loadLiff({ login: true });
+    if (!uid) return renderError("請從 LINE LIFF 開啟此頁，系統才能取得會員身分。");
+    const qr = `https://api.qrserver.com/v1/create-qr-code/?size=260x260&data=${encodeURIComponent(uid)}`;
+    renderShell(`<section class="nf-card"><div class="nf-body">
+      <h1 class="nf-title">TDEA 會員 QR</h1>
+      <div class="nf-ok">請把這個 QR 給合作店家掃描，店家端確認後才會扣點。</div>
+      <img class="nf-qr" src="${qr}" alt="會員 QR" style="width:260px;height:260px">
+      <table class="nf-table"><tbody><tr><th>LINE UID</th><td>${esc(uid)}</td></tr></tbody></table>
+      <div class="nf-actions"><button class="nf-btn primary" data-close-window>完成</button></div>
+    </div></section>`);
+    app.querySelector("[data-close-window]")?.addEventListener("click", closeWindow);
+  }
+
   if (formId) showRegister(formId);
   else if (checkinToken) showCheckin(checkinToken);
+  else if (redeemToken) showVendorRedeem(redeemToken);
+  else if (memberQrMode) showMemberQr();
   else showMyRegistrations();
 })();

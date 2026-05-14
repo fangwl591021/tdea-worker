@@ -8,6 +8,7 @@
     vendor: ["廠商名冊", "維護廠商會員、統編、窗口與備註，可匯入 CSV。"],
     creator: ["創建活動", "建立活動草稿，之後可直接改接 D1。"],
     keywords: ["關鍵字", "整理 LINE OA 觸發關鍵字、用途與回覆行為。"],
+    redeem: ["點數折抵", "建立限時店家掃碼工作台，店家掃會員 QR 後執行扣點。"],
     preview: ["用戶預覽", "模擬一般使用者看到的活動報名頁。"]
   };
   const state = { view: "dashboard", drawer: "", data: load(), registrationLists: {} };
@@ -160,7 +161,7 @@
       <div class="shell">
         <aside class="sidebar">
           <div class="brand">TDEA 管理中心</div>
-          <nav class="nav">${nav("dashboard", "活動總覽")}${nav("association", "協會名冊")}${nav("vendor", "廠商名冊")}${nav("creator", "創建活動")}${nav("keywords", "關鍵字")}${nav("preview", "用戶預覽")}</nav>
+          <nav class="nav">${nav("dashboard", "活動總覽")}${nav("association", "協會名冊")}${nav("vendor", "廠商名冊")}${nav("creator", "創建活動")}${nav("redeem", "點數折抵")}${nav("preview", "用戶預覽")}</nav>
         </aside>
         <main class="main">
           <div class="topbar"><div><h1>${title}</h1><div class="subtitle">${sub}</div></div><div class="actions">${actions()}</div></div>
@@ -171,6 +172,9 @@
       <div class="toast" id="toast"></div>`;
     bind();
     if (autoSyncEnabled()) syncRegistrations();
+    if (state.view === "redeem" && !state.redeemRecords) loadRedeemRecords();
+    if (state.view === "redeem" && !state.pointLedger) loadPointLedger();
+    window.TDEALineNav?.refresh?.();
   }
 
   function nav(id, text) { return `<button class="${state.view === id ? "active" : ""}" data-nav="${id}">${text}</button>`; }
@@ -178,6 +182,7 @@
     if (state.view === "association") return `<button class="btn" data-import="association">匯入 CSV</button><button class="btn primary" data-drawer="association:new">新增協會會員</button>`;
     if (state.view === "vendor") return `<button class="btn" data-import="vendor">匯入 CSV</button><button class="btn primary" data-drawer="vendor:new">新增廠商會員</button>`;
     if (state.view === "creator") return `<button class="btn" data-reset>清空表單</button>`;
+    if (state.view === "redeem") return `<button class="btn" data-load-redeem>刷新紀錄</button>`;
     if (state.view === "keywords") return `<button class="btn" data-refresh-keywords>刷新列表</button>`;
     if (state.view === "preview") return `<button class="btn" data-copy>複製預覽網址</button>`;
     return `<label class="sync-toggle"><input type="checkbox" data-auto-sync ${autoSyncEnabled() ? "checked" : ""}> 自動同步</label><button class="btn" data-sync-registrations>同步報名</button><button class="btn" data-worker>檢查 Worker</button><button class="btn danger" data-clear-test>清空測試資料</button><button class="btn primary" data-nav="creator">新增活動</button>`;
@@ -186,6 +191,7 @@
     if (state.view === "association") return members("association");
     if (state.view === "vendor") return members("vendor");
     if (state.view === "creator") return creator();
+    if (state.view === "redeem") return redeem();
     if (state.view === "keywords") return keywords();
     if (state.view === "preview") return preview();
     return dashboard();
@@ -221,6 +227,7 @@
     const builtIn = [
       { keyword: "TDEA每月活動", aliases: "無", purpose: "推送每月活動橫式多頁 FLEX", reply: "回覆每月活動 carousel，詳細說明走 LIFF，報名按鈕走自建報名表", owner: "每月活動", status: "啟用中" },
       { keyword: "TDEA活動查詢", aliases: "無", purpose: "讓會員查詢或取消自己的活動報名", reply: "開啟 LIFF「我的活動報名」，以 LINE Login 查詢", owner: "報名系統", status: "啟用中" },
+      { keyword: "TDEA會員QR", aliases: "無", purpose: "會員開啟自己的扣點 QR，給合作店家掃描", reply: "開啟 LIFF「會員 QR」頁面", owner: "點數折抵", status: "啟用中" },
       { keyword: "TDEA點數", aliases: "TDEA查點、TDEA點數查詢、TDEA紅利", purpose: "查詢發話者自己的母站點數", reply: "以 LINE userId 查母站點數 API，回覆餘額與最近紀錄", owner: "母站點數", status: "啟用中" },
       { keyword: "TDEA點數+UID", aliases: "例：TDEA點數+Ub68b9724664b889e790c789ece72f717", purpose: "管理測試或客服查指定 LINE UID 點數", reply: "以指定 UID 查母站點數 API", owner: "母站點數", status: "啟用中" },
       { keyword: "TDEA會員專區", aliases: "TDEA會員、TDEA會員中心、TDEA專區", purpose: "顯示會員入口選單", reply: "回覆會員專區 FLEX，含活動與點數入口", owner: "內建關鍵字", status: "啟用中" },
@@ -242,6 +249,18 @@
   function keywords() {
     const rows = keywordRows();
     return `<section class="panel"><div class="panel-head"><h2 class="panel-title">LINE 關鍵字清單</h2><span class="muted">${rows.length} 組規則</span></div><div class="table-wrap"><table><thead><tr><th>關鍵字</th><th>別名 / 比對</th><th>用途</th><th>回覆行為</th><th>設定位置</th><th>狀態</th></tr></thead><tbody>${rows.map((row) => `<tr><td><strong>${esc(row.keyword)}</strong></td><td>${esc(row.aliases)}</td><td>${esc(row.purpose)}</td><td>${esc(row.reply)}</td><td>${esc(row.owner)}</td><td><span class="badge ${row.status === "啟用中" ? "live" : "off"}">${esc(row.status)}</span></td></tr>`).join("")}</tbody></table></div></section><section class="panel" style="margin-top:18px"><div class="panel-head"><h2 class="panel-title">使用原則</h2></div><div style="padding:18px;line-height:1.8;color:#344054">所有新版關鍵字都建議以 <strong>TDEA</strong> 開頭，避免和原本 LINE OA 舊系統互相干擾。沒有命中新版關鍵字的訊息會交給舊 webhook 繼續處理。</div></section>`;
+  }
+
+  function redeem() {
+    const rows = state.redeemRecords || [];
+    const latestUrl = state.latestRedeem?.sessionUrl || state.latestRedeem?.redeemUrl || "";
+    const qr = latestUrl ? `https://api.qrserver.com/v1/create-qr-code/?size=220x220&data=${encodeURIComponent(latestUrl)}` : "";
+    const statusLabel = (status) => status === "active" || status === "pending" ? "有效" : status === "closed" ? "已關閉" : status === "expired" ? "已過期" : status === "used" ? "已使用" : status || "-";
+    const now = new Date();
+    const startValue = localDatetime(now);
+    const endValue = localDatetime(new Date(now.getTime() + 60 * 60 * 1000));
+    const ledger = state.pointLedger || [];
+    return `<div class="split"><section class="panel"><div class="panel-head"><h2 class="panel-title">建立店家限時掃碼網址</h2></div><form class="form-grid" id="redeem-form" style="padding:18px">${field("合作店家", "vendorName", "", "例如：合作店家 A", true)}<div class="grid two">${field("授權開始", "startsAt", startValue, "", true, "datetime-local")}${field("授權結束", "expiresAt", endValue, "", true, "datetime-local")}</div><div class="field"><label>扣點模式</label><select name="mode"><option value="fixed">固定點數</option><option value="manual">店家現場輸入點數</option><option value="rate">依消費金額換算點數</option></select></div><div class="grid two">${field("固定扣抵點數", "points", 0, "固定模式使用；其他模式可留 0", false, "number")}${field("單次扣點上限", "maxPoints", 0, "0 表示不限制", false, "number")}</div><div class="grid two">${field("金額換算比例", "pointRate", 0, "例如 0.1 表示 100 元扣 10 點", false, "number")}${field("參考金額備註", "amount", 0, "非必填，僅供紀錄", false, "number")}</div><div class="field"><label>授權備註</label><textarea name="note" placeholder="例如：展場合作店家、餐飲折抵、活動攤位"></textarea></div><button class="btn primary" type="submit">產生店家掃碼網址</button></form></section><section class="panel"><div class="panel-head"><h2 class="panel-title">最新店家工作台</h2></div><div style="padding:18px">${latestUrl ? `<div class="grid"><img src="${qr}" alt="店家工作台 QR" style="width:220px;height:220px;border:1px solid #e5e7eb;border-radius:8px"><div class="field"><label>店家掃碼工作台網址</label><input readonly value="${esc(latestUrl)}"></div><button class="btn" data-copy-redeem>複製網址</button><div class="muted">把這個網址或 QR 給店家。店家打開後會出現掃描器，用來掃會員個人 QR 並扣點。</div></div>` : empty("尚未產生店家掃碼網址")}</div></section></div><section class="panel" style="margin-top:18px"><div class="panel-head"><h2 class="panel-title">店家授權紀錄</h2><button class="btn" data-load-redeem>重新載入</button></div>${rows.length ? `<div class="table-wrap"><table><thead><tr><th>店家</th><th>模式</th><th>固定/上限</th><th>有效期間</th><th>狀態</th><th>已扣次數</th><th>工作台</th></tr></thead><tbody>${rows.map(row => { const url = row.sessionUrl || row.redeemUrl || ""; return `<tr><td>${esc(row.vendorName)}</td><td>${esc(modeLabel(row.mode))}</td><td>${n(row.points)} / ${n(row.maxPoints)}</td><td>${esc(formatTime(row.startsAt || row.createdAt))}<br>${esc(formatTime(row.expiresAt))}</td><td><span class="badge ${row.status === "active" || row.status === "pending" ? "live" : "off"}">${esc(statusLabel(row.status))}</span></td><td>${n(row.usageCount || row.transactions?.length || 0)}</td><td><button class="link" data-copy-redeem-url="${esc(url)}">複製</button></td></tr>`; }).join("")}</tbody></table></div>` : empty("尚未載入店家授權紀錄")}</section><section class="panel" style="margin-top:18px"><div class="panel-head"><h2 class="panel-title">母站點數補登 / 點數流水</h2><button class="btn" data-load-point-ledger>刷新流水</button></div><form class="form-grid" id="legacy-sync-form" style="padding:18px;border-bottom:1px solid #e5e7eb"><div class="field"><label>會員 LINE UID</label><input name="lineUserId" placeholder="貼上會員 UID 後可從母站補登一次餘額"></div><button class="btn" type="submit">補登母站點數</button></form>${ledger.length ? `<div class="table-wrap"><table><thead><tr><th>時間</th><th>UID</th><th>類型</th><th>異動</th><th>餘額</th><th>原因</th></tr></thead><tbody>${ledger.slice(0, 80).map(log => `<tr><td>${esc(formatTime(log.createdAt))}</td><td>${esc(log.lineUserId)}</td><td>${esc(log.type)}</td><td>${n(log.amount)}</td><td>${n(log.balanceAfter)}</td><td>${esc(log.reason)}</td></tr>`).join("")}</tbody></table></div>` : empty("目前沒有點數流水")}</section>`;
   }
 
   function drawer() {
@@ -269,6 +288,15 @@
       return Object.values(value).map(valueText).filter(Boolean).join("、");
     }
     return String(value ?? "");
+  }
+  function modeLabel(mode) {
+    if (mode === "manual") return "現場輸入";
+    if (mode === "rate") return "金額換算";
+    return "固定點數";
+  }
+  function localDatetime(date) {
+    const pad = (value) => String(value).padStart(2, "0");
+    return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
   }
   function formatTime(value) {
     const date = new Date(value || "");
@@ -363,6 +391,12 @@
     document.querySelectorAll("[data-refresh-registration-list]").forEach(b => b.onclick = () => loadRegistrationList(b.dataset.refreshRegistrationList, true));
     const autoSync = document.querySelector("[data-auto-sync]"); if (autoSync) autoSync.onchange = () => { setAutoSyncEnabled(autoSync.checked); toast(autoSync.checked ? "已開啟自動同步" : "已關閉自動同步"); };
     const refreshKeywords = document.querySelector("[data-refresh-keywords]"); if (refreshKeywords) refreshKeywords.onclick = () => { render(); toast("關鍵字列表已刷新"); };
+    const loadRedeem = document.querySelector("[data-load-redeem]"); if (loadRedeem) loadRedeem.onclick = () => loadRedeemRecords(true);
+    const loadPointLedgerButton = document.querySelector("[data-load-point-ledger]"); if (loadPointLedgerButton) loadPointLedgerButton.onclick = () => loadPointLedger(true);
+    document.querySelectorAll("[data-copy-redeem-url]").forEach(b => b.onclick = () => { navigator.clipboard.writeText(b.dataset.copyRedeemUrl || ""); toast("折抵連結已複製"); });
+    const copyRedeem = document.querySelector("[data-copy-redeem]"); if (copyRedeem) copyRedeem.onclick = () => { navigator.clipboard.writeText(state.latestRedeem?.sessionUrl || state.latestRedeem?.redeemUrl || ""); toast("店家掃碼網址已複製"); };
+    const redeemForm = document.querySelector("#redeem-form"); if (redeemForm) redeemForm.onsubmit = createRedeem;
+    const legacySyncForm = document.querySelector("#legacy-sync-form"); if (legacySyncForm) legacySyncForm.onsubmit = syncLegacyPoints;
     const syncButton = document.querySelector("[data-sync-registrations]"); if (syncButton) syncButton.onclick = () => syncRegistrations(true);
     const clearTest = document.querySelector("[data-clear-test]"); if (clearTest) clearTest.onclick = clearTestData;
     document.querySelectorAll("[data-register]").forEach(b => b.onclick = () => {
@@ -386,6 +420,87 @@
     render();
     loadRegistrationList(rowId);
   }
+
+  async function createRedeem(event) {
+    event.preventDefault();
+    const email = localStorage.getItem("tdea-admin-email") || sessionStorage.getItem("tdea-admin-email") || "";
+    if (!email) return toast("請先設定管理者 Email");
+    const form = event.currentTarget;
+    const data = Object.fromEntries(new FormData(form));
+    const response = await fetch(api + "/api/redeem/create", {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-admin-email": email },
+      body: JSON.stringify(data)
+    });
+    const result = await response.json().catch(() => ({}));
+    if (!response.ok || !result.success) return toast(result.message || "折抵碼建立失敗");
+    state.latestRedeem = result.data;
+    form.reset();
+    await loadRedeemRecords();
+    render();
+    toast("店家掃碼網址已產生");
+  }
+
+  async function loadRedeemRecords(showMessage = false) {
+    const email = localStorage.getItem("tdea-admin-email") || sessionStorage.getItem("tdea-admin-email") || "";
+    if (!email) {
+      if (showMessage) toast("請先設定管理者 Email");
+      return;
+    }
+    const response = await fetch(api + "/api/redeem/list", { headers: { "x-admin-email": email }, cache: "no-store" });
+    const result = await response.json().catch(() => ({}));
+    if (!response.ok || !result.success) {
+      if (showMessage) toast(result.message || "折抵紀錄載入失敗");
+      return;
+    }
+    state.redeemRecords = Array.isArray(result.data) ? result.data : [];
+    render();
+    if (showMessage) toast("折抵紀錄已更新");
+  }
+
+  async function syncLegacyPoints(event) {
+    event.preventDefault();
+    const email = localStorage.getItem("tdea-admin-email") || sessionStorage.getItem("tdea-admin-email") || "";
+    if (!email) return toast("請先設定管理者 Email");
+    const data = Object.fromEntries(new FormData(event.currentTarget));
+    const lineUserId = String(data.lineUserId || "").trim();
+    if (!lineUserId) return toast("請輸入會員 LINE UID");
+    const response = await fetch(api + "/api/points/sync-legacy", {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-admin-email": email },
+      body: JSON.stringify({ lineUserId, force: Boolean(data.force) })
+    });
+    const result = await response.json().catch(() => ({}));
+    if (!response.ok || !result.success) return toast(result.message || "母站點數補登失敗");
+    const payload = result.data || {};
+    await loadPointLedger();
+    event.currentTarget.reset();
+    if (payload.success) toast(`已從母站補登 ${n(payload.imported || 0)} 點`);
+    else if (payload.reason === "already_synced") toast("此 UID 已補登過母站點數");
+    else if (payload.reason === "no_legacy_points") toast("母站沒有可補登點數");
+    else toast(payload.message || "母站補登完成");
+  }
+
+  async function loadPointLedger(showMessage = false) {
+    const email = localStorage.getItem("tdea-admin-email") || sessionStorage.getItem("tdea-admin-email") || "";
+    if (!email) {
+      if (showMessage) toast("請先設定管理者 Email");
+      return;
+    }
+    const response = await fetch(api + "/api/points/ledger?limit=200", {
+      headers: { "x-admin-email": email },
+      cache: "no-store"
+    });
+    const result = await response.json().catch(() => ({}));
+    if (!response.ok || !result.success) {
+      if (showMessage) toast(result.message || "點數流水載入失敗");
+      return;
+    }
+    state.pointLedger = Array.isArray(result.data) ? result.data : [];
+    render();
+    if (showMessage) toast("點數流水已刷新");
+  }
+
   async function loadRegistrationList(rowId, showMessage = false) {
     const activity = state.data.activities.find(r => r.id === rowId);
     if (!activity) return;
@@ -424,6 +539,16 @@
     } catch (_) {}
   }
   function toast(text) { const el = document.querySelector("#toast"); if (!el) return; el.textContent = text; el.classList.add("show"); setTimeout(() => el.classList.remove("show"), 1800); }
+  window.TDEAApp = {
+    navigate(id) {
+      state.view = id;
+      state.drawer = "";
+      render();
+    },
+    isView(id) {
+      return state.view === id;
+    }
+  };
   render();
   loadRosterSeed();
 })();
