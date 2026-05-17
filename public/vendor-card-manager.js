@@ -110,7 +110,7 @@
     main.innerHTML = `
       <div class="topbar">
         <div><h1>廠商名片</h1><div class="subtitle">用表單維護 LINE Flex 廠商 logo 選單；點擊 logo 後會送出對應廠商名稱。</div></div>
-        <div class="actions"><button class="btn" data-vendor-card-copy>複製 FLEX JSON</button><button class="btn primary" data-vendor-card-publish>發布</button></div>
+        <div class="actions"><button class="btn" data-vendor-card-copy>複製 FLEX JSON</button><button class="btn primary" data-vendor-card-publish>發布並啟用</button></div>
       </div>
       <div class="vendor-card-workspace">
         <div class="grid">
@@ -288,21 +288,27 @@
     const email = adminEmail();
     if (!email) return toast("請先登入管理者");
     const config = readFromDom();
+    config.enabled = true;
+    draft = normalizeConfig(config);
+    saveLocal(draft);
     const response = await fetch(api + "/api/vendor-card-menu", {
       method: "PUT",
       headers: { "content-type": "application/json", "x-admin-email": email },
-      body: JSON.stringify(config)
+      body: JSON.stringify(draft)
     });
     const result = await response.json().catch(() => ({}));
     if (!response.ok || !result.success) return toast(result.message || "發布失敗");
     draft = normalizeConfig(result.data);
     saveLocal(draft);
     render();
-    toast("已發布，關鍵字 TDEA廠商列表 已啟用");
+    toast("已發布並啟用，關鍵字 TDEA廠商列表 已啟用");
   }
 
   function bind() {
-    document.querySelectorAll("[data-vendor-card-item], [data-vendor-card-field], [data-vendor-card-enabled]").forEach((input) => input.addEventListener("input", () => readFromDom()));
+    document.querySelectorAll("[data-vendor-card-item], [data-vendor-card-field], [data-vendor-card-enabled]").forEach((input) => {
+      input.addEventListener("input", () => readFromDom());
+      input.addEventListener("change", () => readFromDom());
+    });
     document.querySelector("[data-vendor-card-add]")?.addEventListener("click", () => addItem({ name: "新廠商", label: "新廠商", actionText: "新廠商" }));
     document.querySelector("[data-vendor-card-import-roster]")?.addEventListener("click", importFromRoster);
     document.querySelector("[data-vendor-card-import-json-button]")?.addEventListener("click", importJson);
