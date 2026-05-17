@@ -4,6 +4,8 @@ type Env = { ADMIN_EMAILS?: string; ASSETS_BUCKET?: R2Bucket; LINE_CHANNEL_SECRE
 type LineEvent = { type?: string; replyToken?: string; message?: { type?: string; text?: string }; postback?: { data?: string } };
 type MonthlyPage = { id?: string; activityNo?: string; imageUrl?: string; formImageUrl?: string; detailTitle?: string; detailText?: string; detailUrl?: string; formUrl?: string; shareUrl?: string; order?: number };
 type MonthlyConfig = { enabled?: boolean; keyword?: string; month?: string; altText?: string; detailBaseUrl?: string; pages?: MonthlyPage[]; updatedAt?: string };
+type VendorCardItem = { id?: string; enabled?: boolean; name?: string; label?: string; actionText?: string; imageUrl?: string; order?: number };
+type VendorCardConfig = { enabled?: boolean; keyword?: string; altText?: string; title?: string; items?: VendorCardItem[]; updatedAt?: string };
 type RegistrationRecord = { activityId?: string; activityNo?: string; activityName?: string; formId?: string; count: number; lastSubmittedAt?: string };
 type RegistrationSummary = { updatedAt?: string; activities: Record<string, RegistrationRecord> };
 type RegistrationEntry = { id: string; sourceId?: string; formId?: string; submittedAt?: string; activity?: Record<string, unknown>; answers?: Record<string, unknown>; status?: string; checkedInAt?: string; sessionId?: string; queryCode?: string; checkinToken?: string; cancelledAt?: string; lineUserId?: string; pointsSyncedAt?: string; pointResults?: unknown[] };
@@ -20,6 +22,7 @@ type PushTarget = { kind?: string; memberNoPrefix?: string; rosterType?: string;
 type PushLog = { id: string; createdAt: string; mode: string; target: PushTarget; count: number; messageType: string; title?: string; dryRun?: boolean; responses?: unknown[]; error?: string };
 
 const monthlyKey = "flex/monthly-activity.json";
+const vendorCardKey = "flex/vendor-card-menu.json";
 const registrationSummaryKey = "registrations/summary.json";
 const redeemListKey = "redeem/records.json";
 const pointLedgerKey = "points/ledger.json";
@@ -28,6 +31,7 @@ const aiweMembersKey = "aiwe/members.json";
 const defaultCalendarId = "7d66f2a96f192dda6cca2b04e60a6e549c7adf74f57721845d5b7e03f8b7ca89@group.calendar.google.com";
 const workerBaseUrl = "https://tdeawork.fangwl591021.workers.dev";
 const fixedKeyword = "TDEA每月活動";
+const vendorCardKeyword = "TDEA廠商列表";
 const queryKeyword = "TDEA活動查詢";
 const memberQrKeyword = "TDEA會員QR";
 const calendarKeyword = "TDEA行事曆";
@@ -60,6 +64,44 @@ async function writeMonthly(env: Env, config: MonthlyConfig) {
   const normalized = normalizeConfig(config);
   normalized.updatedAt = new Date().toISOString();
   await env.ASSETS_BUCKET.put(monthlyKey, JSON.stringify(normalized, null, 2), { httpMetadata: { contentType: "application/json; charset=utf-8", cacheControl: "no-store" } });
+  return true;
+}
+
+function normalizeVendorCardConfig(config: VendorCardConfig): VendorCardConfig {
+  const items = Array.isArray(config.items) ? config.items : [];
+  return {
+    enabled: Boolean(config.enabled),
+    keyword: vendorCardKeyword,
+    altText: clean(config.altText || "TDEA 廠商列表") || "TDEA 廠商列表",
+    title: clean(config.title || "TDEA 廠商列表") || "TDEA 廠商列表",
+    updatedAt: config.updatedAt,
+    items: items.slice(0, 40).map((item, index) => {
+      const name = clean(item.name || item.label || item.actionText);
+      return {
+        id: clean(item.id) || crypto.randomUUID(),
+        enabled: item.enabled !== false,
+        name,
+        label: clean(item.label || name),
+        actionText: clean(item.actionText || name),
+        imageUrl: clean(item.imageUrl),
+        order: Number(item.order ?? index)
+      };
+    }).filter((item) => item.name || item.label || item.actionText || item.imageUrl)
+  };
+}
+
+async function readVendorCardConfig(env: Env): Promise<VendorCardConfig> {
+  const object = env.ASSETS_BUCKET ? await env.ASSETS_BUCKET.get(vendorCardKey) : null;
+  if (!object) return { enabled: false, keyword: vendorCardKeyword, altText: "TDEA 廠商列表", title: "TDEA 廠商列表", items: [] };
+  const data = await object.json().catch(() => ({}));
+  return normalizeVendorCardConfig(data as VendorCardConfig);
+}
+
+async function writeVendorCardConfig(env: Env, config: VendorCardConfig) {
+  if (!env.ASSETS_BUCKET) return false;
+  const normalized = normalizeVendorCardConfig(config);
+  normalized.updatedAt = new Date().toISOString();
+  await env.ASSETS_BUCKET.put(vendorCardKey, JSON.stringify(normalized, null, 2), { httpMetadata: { contentType: "application/json; charset=utf-8", cacheControl: "no-store" } });
   return true;
 }
 
@@ -1396,6 +1438,58 @@ function buildMonthlyBubble(page: MonthlyPage, config: MonthlyConfig) {
   };
 }
 
+function vendorCardLabel(label: string) {
+  const text = clean(label);
+  return text.length > 10 ? text.slice(0, 10) : text;
+}
+
+function buildVendorCardFlex(config: VendorCardConfig) {
+  const normalized = normalizeVendorCardConfig(config);
+  const items = (normalized.items || [])
+    .filter((item) => item.enabled !== false && clean(item.imageUrl))
+    .sort((a, b) => Number(a.order ?? 0) - Number(b.order ?? 0));
+  const rows = [] as Array<Record<string, unknown>>;
+  for (let index = 0; index < items.length; index += 4) {
+    rows.push({
+      type: "box",
+      layout: "horizontal",
+      justifyContent: "space-around",
+      contents: items.slice(index, index + 4).map((item) => {
+        const label = vendorCardLabel(clean(item.label || item.name || item.actionText));
+        const text = clean(item.actionText || item.name || item.label);
+        return {
+          type: "box",
+          layout: "vertical",
+          alignItems: "center",
+          spacing: "sm",
+          action: { type: "message", text },
+          contents: [
+            { type: "image", url: clean(item.imageUrl), size: "60px", aspectMode: "cover", action: { type: "message", label: "action", text } },
+            { type: "text", text: label, size: "xxs", align: "center", wrap: true, action: { type: "message", label: "action", text } }
+          ]
+        };
+      })
+    });
+  }
+  return {
+    type: "flex",
+    altText: normalized.altText || "TDEA 廠商列表",
+    contents: {
+      type: "bubble",
+      size: "giga",
+      body: {
+        type: "box",
+        layout: "vertical",
+        spacing: "md",
+        contents: rows.length ? rows : [
+          { type: "text", text: normalized.title || "TDEA 廠商列表", weight: "bold", size: "lg", align: "center" },
+          { type: "text", text: "目前尚未設定廠商名片。", wrap: true, align: "center", color: "#666666" }
+        ]
+      }
+    }
+  };
+}
+
 function base64ToBytes(value: string) { const binary = atob(value); const bytes = new Uint8Array(binary.length); for (let index = 0; index < binary.length; index += 1) bytes[index] = binary.charCodeAt(index); return bytes; }
 function constantTimeEqual(a: string, b: string) { let left: Uint8Array; let right: Uint8Array; try { left = base64ToBytes(a); right = base64ToBytes(b); } catch (_) { return false; } if (left.length !== right.length) return false; let diff = 0; for (let index = 0; index < left.length; index += 1) diff |= left[index] ^ right[index]; return diff === 0; }
 async function verifyLineSignature(rawBody: string, signature: string | null, channelSecret?: string) { const cleanSignature = signature?.trim(); const cleanSecret = channelSecret?.trim(); if (!cleanSignature || !cleanSecret) return false; const encoder = new TextEncoder(); const key = await crypto.subtle.importKey("raw", encoder.encode(cleanSecret), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]); const digest = await crypto.subtle.sign("HMAC", key, encoder.encode(rawBody)); const expected = btoa(String.fromCharCode(...new Uint8Array(digest))); return constantTimeEqual(expected, cleanSignature); }
@@ -1638,8 +1732,9 @@ async function handleMonthlyWebhook(request: Request, env: Env, rawBody: string)
   const queryEvents = allEvents.filter((event) => normalizeKeyword(extractTriggerText(event)) === normalizeKeyword(queryKeyword));
   const memberQrEvents = allEvents.filter((event) => normalizeKeyword(extractTriggerText(event)) === normalizeKeyword(memberQrKeyword));
   const calendarEvents = allEvents.filter((event) => normalizeKeyword(extractTriggerText(event)) === normalizeKeyword(calendarKeyword));
+  const vendorCardEvents = allEvents.filter((event) => normalizeKeyword(extractTriggerText(event)) === normalizeKeyword(vendorCardKeyword));
   const events = allEvents.filter((event) => normalizeKeyword(extractTriggerText(event)) === normalizeKeyword(fixedKeyword));
-  if (!queryEvents.length && !memberQrEvents.length && !calendarEvents.length && !events.length) return null;
+  if (!queryEvents.length && !memberQrEvents.length && !calendarEvents.length && !vendorCardEvents.length && !events.length) return null;
   const signature = request.headers.get("x-line-signature");
   if (!await verifyLineSignature(rawBody, signature, env.LINE_CHANNEL_SECRET)) return new Response("Invalid Signature", { status: 403, headers });
   if (queryEvents.length) {
@@ -1685,6 +1780,15 @@ async function handleMonthlyWebhook(request: Request, env: Env, rawBody: string)
     const lineReplies = await Promise.all(calendarEvents.map((event) => event.replyToken ? replyToLine(event.replyToken, [calendarMessage], env) : Promise.resolve({ ok: false, status: 400, message: "Missing replyToken" })));
     return json({ success: true, mode: "calendar", matched: [calendarKeyword], forwarded: false, lineReplies });
   }
+  if (vendorCardEvents.length) {
+    const config = await readVendorCardConfig(env);
+    const items = config.items || [];
+    const message = config.enabled && items.some((item) => item.enabled !== false && clean(item.imageUrl))
+      ? buildVendorCardFlex(config) as Record<string, unknown>
+      : { type: "text", text: "TDEA廠商列表尚未發布，請稍後再試。" };
+    const lineReplies = await Promise.all(vendorCardEvents.map((event) => event.replyToken ? replyToLine(event.replyToken, [message], env) : Promise.resolve({ ok: false, status: 400, message: "Missing replyToken" })));
+    return json({ success: true, mode: "vendor-card-menu", matched: [vendorCardKeyword], forwarded: false, lineReplies });
+  }
   const config = await readMonthly(env);
   const pages = config.pages || [];
   const message = config.enabled && pages.length ? buildMonthlyFlex(config) as Record<string, unknown> : { type: "text", text: "TDEA每月活動尚未發布，請稍後再試。" };
@@ -1707,6 +1811,9 @@ export default {
 	    if (request.method === "GET" && url.pathname === "/api/monthly-activity") return json({ success: true, data: await readMonthly(env) });
 	    if ((request.method === "PUT" || request.method === "POST") && url.pathname === "/api/monthly-activity") { const guard = requireAdmin(request, env); if (guard) return guard; if (!env.ASSETS_BUCKET) return json({ success: false, message: "R2 bucket is not configured" }, 503); const config = await request.json().catch(() => ({})) as MonthlyConfig; await writeMonthly(env, config); return json({ success: true, data: await readMonthly(env), flex: buildMonthlyFlex(config) }); }
 	    if (request.method === "GET" && url.pathname === "/api/monthly-activity/flex") { const config = await readMonthly(env); return json({ success: true, flex: buildMonthlyFlex(config), data: config }); }
+	    if (request.method === "GET" && url.pathname === "/api/vendor-card-menu") return json({ success: true, data: await readVendorCardConfig(env) });
+	    if ((request.method === "PUT" || request.method === "POST") && url.pathname === "/api/vendor-card-menu") { const guard = requireAdmin(request, env); if (guard) return guard; if (!env.ASSETS_BUCKET) return json({ success: false, message: "R2 bucket is not configured" }, 503); const config = await request.json().catch(() => ({})) as VendorCardConfig; await writeVendorCardConfig(env, config); return json({ success: true, data: await readVendorCardConfig(env), flex: buildVendorCardFlex(config) }); }
+	    if (request.method === "GET" && url.pathname === "/api/vendor-card-menu/flex") { const config = await readVendorCardConfig(env); return json({ success: true, flex: buildVendorCardFlex(config), data: config }); }
 	    if (request.method === "POST" && url.pathname === "/api/native-forms/create") return createNativeForm(request, env);
 	    const nativeFormMatch = url.pathname.match(/^\/api\/native-forms\/([^/]+)$/);
 	    if (nativeFormMatch && request.method === "GET") return getNativeForm(request, env, decodeURIComponent(nativeFormMatch[1]));

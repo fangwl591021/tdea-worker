@@ -253,6 +253,7 @@
   function keywordRows() {
     const builtIn = [
       { keyword: "TDEA每月活動", aliases: "無", purpose: "推送每月活動橫式多頁 FLEX", reply: "回覆每月活動 carousel，詳細說明走 LIFF，報名按鈕走自建報名表", entry: `${liffBase}?monthlyDetail={活動編號}`, owner: "每月活動", status: "啟用中" },
+      { keyword: "TDEA廠商列表", aliases: "TDEA廠商名片、TDEA合作廠商", purpose: "推送可點擊的廠商名片 FLEX 選單", reply: "回覆廠商 logo 九宮格；點擊後送出對應廠商名稱", entry: "", owner: "廠商名片", status: "啟用中" },
       { keyword: "TDEA活動查詢", aliases: "無", purpose: "讓會員查詢或取消自己的活動報名", reply: "開啟 LIFF「我的活動報名」，以 LINE Login 查詢", entry: `${liffBase}?query=1`, owner: "報名系統", status: "啟用中" },
       { keyword: "TDEA會員QR", aliases: "無", purpose: "會員開啟自己的扣點 QR，給合作店家掃描", reply: "開啟 LIFF「會員 QR」頁面", entry: `${liffBase}?memberQr=1`, owner: "點數折抵", status: "啟用中" },
       { keyword: "TDEA行事曆", aliases: "TDEA日曆、TDEA年度活動", purpose: "開啟協會 Google 行事曆", reply: "開啟 LIFF 行事曆頁面，嵌入 TDEA Google Calendar", entry: `${liffBase}?calendar=1`, owner: "行事曆", status: "啟用中" },
