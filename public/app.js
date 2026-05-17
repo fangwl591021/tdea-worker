@@ -17,6 +17,17 @@
 
   function sidebarCollapsed() { return localStorage.getItem(sidebarCollapsedKey) === "Y"; }
   function setSidebarCollapsed(value) { localStorage.setItem(sidebarCollapsedKey, value ? "Y" : "N"); }
+  function applySidebarCollapsed(value = sidebarCollapsed()) {
+    const shell = document.querySelector(".shell");
+    if (shell) shell.classList.toggle("sidebar-collapsed", value);
+    const button = document.querySelector("[data-sidebar-toggle]");
+    if (button) {
+      const label = value ? "展開選單" : "收合選單";
+      button.textContent = value ? "›" : "‹";
+      button.title = label;
+      button.setAttribute("aria-label", label);
+    }
+  }
 
   function uid() { return "id-" + Math.random().toString(36).slice(2) + Date.now().toString(36); }
   function esc(v) { return String(v ?? "").replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;").replaceAll("'", "&#039;"); }
@@ -416,7 +427,11 @@
 
   function bind() {
     const sidebarToggle = document.querySelector("[data-sidebar-toggle]");
-    if (sidebarToggle) sidebarToggle.onclick = () => { setSidebarCollapsed(!sidebarCollapsed()); render(); };
+    if (sidebarToggle) sidebarToggle.onclick = () => {
+      const next = !sidebarCollapsed();
+      setSidebarCollapsed(next);
+      applySidebarCollapsed(next);
+    };
     document.querySelectorAll("[data-nav]").forEach(b => b.onclick = () => { state.view = b.dataset.nav; state.drawer = ""; render(); });
     document.querySelectorAll("[data-drawer]").forEach(b => b.onclick = () => { state.drawer = b.dataset.drawer; render(); });
     document.querySelectorAll("[data-import]").forEach(b => b.onclick = () => { state.drawer = "import-" + b.dataset.import + ":new"; render(); });
