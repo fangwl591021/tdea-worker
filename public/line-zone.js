@@ -93,6 +93,13 @@
     refresh();
   }
 
+  function refreshSoon() {
+    refresh();
+    setTimeout(refresh, 100);
+    setTimeout(refresh, 500);
+    setTimeout(refresh, 1200);
+  }
+
   function escapeHtml(value) {
     return String(value ?? "")
       .replaceAll("&", "&amp;")
@@ -131,5 +138,5 @@
     refresh();
   }).observe(document.body, { childList: true, subtree: true });
   registerKeywords();
-  refresh();
+  refreshSoon();
 })();
