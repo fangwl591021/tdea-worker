@@ -3,6 +3,7 @@
   const api = "https://tdeawork.fangwl591021.workers.dev";
   const liffBase = "https://liff.line.me/2005868456-2jmxqyFU";
   const autoSyncKey = "tdea-auto-sync-registrations";
+  const sidebarCollapsedKey = "tdea-sidebar-collapsed";
   const labels = {
     dashboard: ["活動總覽", "查看活動狀態、報名與簽到概況。"],
     association: ["協會名冊", "維護協會會員資料與會員資格，可匯入 CSV。"],
@@ -13,6 +14,9 @@
     preview: ["用戶預覽", "模擬一般使用者看到的活動報名頁。"]
   };
   const state = { view: "dashboard", drawer: "", data: load(), registrationLists: {} };
+
+  function sidebarCollapsed() { return localStorage.getItem(sidebarCollapsedKey) === "Y"; }
+  function setSidebarCollapsed(value) { localStorage.setItem(sidebarCollapsedKey, value ? "Y" : "N"); }
 
   function uid() { return "id-" + Math.random().toString(36).slice(2) + Date.now().toString(36); }
   function esc(v) { return String(v ?? "").replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;").replaceAll("'", "&#039;"); }
@@ -184,10 +188,11 @@
 
   function render() {
     const [title, sub] = labels[state.view];
+    const collapsed = sidebarCollapsed();
     document.querySelector("#app").innerHTML = `
-      <div class="shell">
+      <div class="shell ${collapsed ? "sidebar-collapsed" : ""}">
         <aside class="sidebar">
-          <div class="brand">TDEA 管理中心</div>
+          <div class="brand"><span>TDEA 管理中心</span><button class="sidebar-toggle" type="button" data-sidebar-toggle title="${collapsed ? "展開選單" : "收合選單"}" aria-label="${collapsed ? "展開選單" : "收合選單"}">${collapsed ? "›" : "‹"}</button></div>
           <nav class="nav">${nav("dashboard", "活動總覽")}${nav("association", "協會名冊")}${nav("vendor", "廠商名冊")}${nav("creator", "創建活動")}${nav("redeem", "點數折抵")}${nav("preview", "用戶預覽")}</nav>
         </aside>
         <main class="main">
@@ -204,7 +209,7 @@
     window.TDEALineNav?.refresh?.();
   }
 
-  function nav(id, text) { return `<button class="${state.view === id ? "active" : ""}" data-nav="${id}">${text}</button>`; }
+  function nav(id, text) { return `<button class="${state.view === id ? "active" : ""}" data-nav="${id}" title="${esc(text)}">${text}</button>`; }
   function actions() {
     if (state.view === "association") return `<button class="btn" data-import="association">匯入 CSV</button><button class="btn primary" data-drawer="association:new">新增協會會員</button>`;
     if (state.view === "vendor") return `<button class="btn" data-import="vendor">匯入 CSV</button><button class="btn primary" data-drawer="vendor:new">新增廠商會員</button>`;
@@ -410,6 +415,8 @@
   }
 
   function bind() {
+    const sidebarToggle = document.querySelector("[data-sidebar-toggle]");
+    if (sidebarToggle) sidebarToggle.onclick = () => { setSidebarCollapsed(!sidebarCollapsed()); render(); };
     document.querySelectorAll("[data-nav]").forEach(b => b.onclick = () => { state.view = b.dataset.nav; state.drawer = ""; render(); });
     document.querySelectorAll("[data-drawer]").forEach(b => b.onclick = () => { state.drawer = b.dataset.drawer; render(); });
     document.querySelectorAll("[data-import]").forEach(b => b.onclick = () => { state.drawer = "import-" + b.dataset.import + ":new"; render(); });
