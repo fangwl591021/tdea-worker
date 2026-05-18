@@ -89,10 +89,15 @@
       .vendor-card-table input{min-width:120px}.vendor-card-table input[type="checkbox"]{min-width:0}
       .vendor-card-preview{position:sticky;top:24px}
       .vendor-card-json{min-height:170px;font-family:ui-monospace,SFMono-Regular,Consolas,monospace}
-      .vendor-card-spec{display:grid;gap:10px;padding:14px 16px;border:1px solid #d1fadf;border-radius:10px;background:#f0fdf4;color:#14532d}
-      .vendor-card-spec h3{margin:0;font-size:17px;color:#064e3b}
-      .vendor-card-spec ul{margin:0;padding-left:20px;line-height:1.7}
-      .vendor-card-spec code{padding:2px 6px;border-radius:6px;background:#dcfce7;color:#064e3b;font-weight:800}
+      .vendor-card-help{width:34px;height:34px;border-radius:999px;border:1px solid #d1d5db;background:#fff;color:#064e3b;font-weight:900;font-size:18px;line-height:1;cursor:pointer}
+      .vendor-card-help:hover{background:#f0fdf4;border-color:#86efac}
+      .vendor-card-dialog-backdrop{position:fixed;inset:0;z-index:80;display:grid;place-items:center;padding:24px;background:rgba(15,23,42,.45)}
+      .vendor-card-dialog{width:min(680px,calc(100vw - 48px));max-height:calc(100vh - 48px);overflow:auto;border-radius:14px;background:#fff;box-shadow:0 24px 80px rgba(15,23,42,.28)}
+      .vendor-card-dialog-head{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:18px 22px;border-bottom:1px solid #e5e7eb}
+      .vendor-card-dialog-head h3{margin:0;font-size:22px;color:#0f172a}
+      .vendor-card-dialog-body{padding:20px 24px;color:#14532d}
+      .vendor-card-dialog-body ul{margin:0;padding-left:20px;line-height:1.8}
+      .vendor-card-dialog-body code{padding:2px 6px;border-radius:6px;background:#dcfce7;color:#064e3b;font-weight:800}
       @media(max-width:1100px){.vendor-card-workspace{grid-template-columns:1fr}.vendor-card-preview{position:static}}
     `;
     document.head.appendChild(style);
@@ -106,21 +111,39 @@
     render();
   }
 
-  function specGuide() {
+  function specList() {
     return `
-      <div class="vendor-card-spec">
-        <h3>廠商名片製作規格</h3>
-        <ul>
-          <li>LINE 觸發關鍵字固定為 <code>TDEA廠商列表</code>，發布後會員輸入這個關鍵字會收到廠商 Flex 選單。</li>
-          <li>每列顯示 4 個廠商，系統會依「排序」由小到大排列，超過 4 個會自動換下一列。</li>
-          <li>圖片建議使用正方形 logo，至少 300 x 300 px，PNG 或 JPG 皆可；背景透明或白底會最穩。</li>
-          <li>「顯示名稱」是 Flex 上看到的文字，建議 2 到 8 個中文字，太長會被壓縮或換行。</li>
-          <li>「點擊送出文字」是會員點 logo 後送回 LINE 的文字，通常填完整廠商名稱，用來接後續名片或介紹回覆。</li>
-          <li>取消單列「啟用」後，該廠商會保留在後台但不出現在 LINE Flex。</li>
-          <li>修改完成請按「發布並啟用」，再到 LINE 實測輸入 <code>TDEA廠商列表</code>。</li>
-        </ul>
-      </div>
+      <ul>
+        <li>LINE 觸發關鍵字固定為 <code>TDEA廠商列表</code>，發布後會員輸入這個關鍵字會收到廠商 Flex 選單。</li>
+        <li>每列顯示 4 個廠商，系統會依「排序」由小到大排列，超過 4 個會自動換下一列。</li>
+        <li>圖片建議使用正方形 logo，至少 300 x 300 px，PNG 或 JPG 皆可；背景透明或白底會最穩。</li>
+        <li>「顯示名稱」是 Flex 上看到的文字，建議 2 到 8 個中文字，太長會被壓縮或換行。</li>
+        <li>「點擊送出文字」是會員點 logo 後送回 LINE 的文字，通常填完整廠商名稱，用來接後續名片或介紹回覆。</li>
+        <li>取消單列「啟用」後，該廠商會保留在後台但不出現在 LINE Flex。</li>
+        <li>修改完成請按「發布並啟用」，再到 LINE 實測輸入 <code>TDEA廠商列表</code>。</li>
+      </ul>
     `;
+  }
+
+  function openSpecDialog() {
+    document.querySelector("[data-vendor-card-dialog]")?.remove();
+    const wrapper = document.createElement("div");
+    wrapper.className = "vendor-card-dialog-backdrop";
+    wrapper.dataset.vendorCardDialog = "1";
+    wrapper.innerHTML = `
+      <section class="vendor-card-dialog" role="dialog" aria-modal="true" aria-labelledby="vendor-card-spec-title">
+        <div class="vendor-card-dialog-head">
+          <h3 id="vendor-card-spec-title">廠商名片製作規格</h3>
+          <button class="icon-btn" type="button" title="關閉" data-vendor-card-dialog-close>×</button>
+        </div>
+        <div class="vendor-card-dialog-body">${specList()}</div>
+      </section>
+    `;
+    document.body.appendChild(wrapper);
+    wrapper.addEventListener("click", (event) => {
+      if (event.target === wrapper || event.target.closest("[data-vendor-card-dialog-close]")) wrapper.remove();
+    });
+    wrapper.querySelector("[data-vendor-card-dialog-close]")?.focus();
   }
 
   function render() {
@@ -136,9 +159,11 @@
       <div class="vendor-card-workspace">
         <div class="grid">
           <section class="panel">
-            <div class="panel-head"><h2 class="panel-title">基本設定</h2><button class="btn" data-vendor-card-import-roster>從廠商名冊帶入</button></div>
+            <div class="panel-head">
+              <div style="display:flex;align-items:center;gap:10px"><h2 class="panel-title">基本設定</h2><button class="vendor-card-help" type="button" title="廠商名片製作規格" data-vendor-card-help>?</button></div>
+              <button class="btn" data-vendor-card-import-roster>從廠商名冊帶入</button>
+            </div>
             <div class="vendor-card-form">
-              ${specGuide()}
               <div class="grid two">
                 <div class="field"><label>觸發關鍵字</label><input value="${fixedKeyword}" readonly></div>
                 <div class="field"><label>LINE 替代文字</label><input data-vendor-card-field="altText" value="${esc(config.altText || "")}"></div>
@@ -332,6 +357,7 @@
       input.addEventListener("change", () => readFromDom());
     });
     document.querySelector("[data-vendor-card-add]")?.addEventListener("click", () => addItem({ name: "新廠商", label: "新廠商", actionText: "新廠商" }));
+    document.querySelector("[data-vendor-card-help]")?.addEventListener("click", openSpecDialog);
     document.querySelector("[data-vendor-card-import-roster]")?.addEventListener("click", importFromRoster);
     document.querySelector("[data-vendor-card-import-json-button]")?.addEventListener("click", importJson);
     document.querySelector("[data-vendor-card-copy]")?.addEventListener("click", async () => { await navigator.clipboard.writeText(JSON.stringify(buildFlex(readFromDom()), null, 2)); toast("FLEX JSON 已複製"); });
