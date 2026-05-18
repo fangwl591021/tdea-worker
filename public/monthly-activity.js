@@ -313,6 +313,7 @@
 
   function formPayloadForActivity(activity) {
     const settings = formSettingsFor(activity);
+    settings.registrationMode = activity.registrationMode || settings.registrationMode || "form";
     const fields = Array.isArray(settings.fields) && settings.fields.length ? settings.fields : [
       { key: "name", label: "姓名", type: "text", required: true },
       { key: "phone", label: "手機", type: "text", required: true },
@@ -372,6 +373,7 @@
     const target = row || activity;
     const normalized = generatedProviderMeta(formUrl, meta);
     target.formMode = normalized.provider;
+    target.registrationMode = activity.registrationMode || target.registrationMode || data.formSettings[target.id]?.registrationMode || "form";
     target.formUrl = formUrl;
     target.formId = normalized.formId || target.formId || "";
     target.nativeFormUrl = normalized.nativeFormUrl || target.nativeFormUrl || "";
@@ -383,7 +385,7 @@
     target.opnformFormUrl = normalized.opnformFormUrl || target.opnformFormUrl || "";
     target.opnformFormId = normalized.opnformFormId || target.opnformFormId || "";
     data.formSettings[target.id] ||= {};
-    Object.assign(data.formSettings[target.id], formSettingsFor(activity), { formUrl, formMode: target.formMode, formId: target.formId, nativeFormUrl: target.nativeFormUrl, nativeFormId: target.nativeFormId, googleFormUrl: target.googleFormUrl, googleFormId: target.googleFormId, opnformFormUrl: target.opnformFormUrl, opnformFormId: target.opnformFormId, editUrl: target.googleFormEditUrl, sheetUrl: target.googleSheetUrl });
+    Object.assign(data.formSettings[target.id], formSettingsFor(activity), { registrationMode: target.registrationMode, formUrl, formMode: target.formMode, formId: target.formId, nativeFormUrl: target.nativeFormUrl, nativeFormId: target.nativeFormId, googleFormUrl: target.googleFormUrl, googleFormId: target.googleFormId, opnformFormUrl: target.opnformFormUrl, opnformFormId: target.opnformFormId, editUrl: target.googleFormEditUrl, sheetUrl: target.googleSheetUrl });
     if (target.activityNo) {
       data.formSettings[target.activityNo] ||= {};
       Object.assign(data.formSettings[target.activityNo], data.formSettings[target.id]);

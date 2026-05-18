@@ -13,6 +13,7 @@ type ManagedSubmission = { formId?: string; sourceId?: string; submittedAt?: str
 type NativeField = { key: string; label: string; type: string; required?: boolean; options?: string[] };
 type NativeSession = { id: string; name: string; startTime?: string; endTime?: string; capacity?: number; status?: string };
 type NativeForm = { id: string; provider: "native_form"; activity: Record<string, unknown>; settings: Record<string, unknown>; fields: NativeField[]; sessions: NativeSession[]; formUrl: string; createdAt: string; updatedAt: string };
+type LineLoginMember = { rosterType: "association" | "vendor"; memberNo: string; name: string; role: string; lineUserId: string; raw: Record<string, unknown> };
 type PointLog = { logId: string; lineUserId: string; type: "EARN" | "SPEND"; amount: number; points: number; reason: string; balanceAfter: number; createdAt: string; createdTs: number; source?: string; referenceId?: string; externalSync?: unknown };
 type PointAccount = { balance: number; logs: PointLog[]; updatedAt?: string };
 type RedeemMode = "fixed" | "manual" | "rate";
@@ -510,6 +511,41 @@ function normalizeNativeSessions(settings: Record<string, unknown>, activity: Re
   }];
 }
 
+function nativeRegistrationMode(settings: Record<string, unknown>) {
+  const mode = clean(settings.registrationMode || settings.lineLoginMode || "form").toLowerCase();
+  if (["member_login", "line_login", "login"].includes(mode)) return "member_login";
+  if (["mixed", "hybrid"].includes(mode)) return "mixed";
+  return "form";
+}
+
+function nativeLoginEnabled(form: NativeForm) {
+  const settings = form.settings || {};
+  const mode = nativeRegistrationMode(settings);
+  return mode === "member_login" || mode === "mixed" || clean(settings.memberField).toLowerCase() === "login" || settings.lineLoginRegistration === true;
+}
+
+async function resolveLineLoginMember(env: Env, lineUserId: string): Promise<LineLoginMember | null> {
+  const uid = clean(lineUserId);
+  if (!uid) return null;
+  const rows = await readAiweMembers(env);
+  const lowerUid = uid.toLowerCase();
+  const row = rows.find((item) => memberLineUid(item).toLowerCase() === lowerUid);
+  if (!row) return null;
+  const rosterType = clean(row.rosterType) === "vendor" ? "vendor" : "association";
+  const memberNo = firstClean(row.rosterMemberNo, row.memberNo, row.user_login);
+  const name = rosterType === "vendor"
+    ? firstClean(row.rosterName, row.companyName, row.name, row.display_name)
+    : firstClean(row.rosterName, row.name, row.display_name, row.user_nicename);
+  return {
+    rosterType,
+    memberNo,
+    name,
+    role: rosterType === "vendor" ? "廠商會員" : "協會會員",
+    lineUserId: uid,
+    raw: row
+  };
+}
+
 async function readNativeForm(env: Env, formId: string): Promise<NativeForm | null> {
   if (!env.ASSETS_BUCKET || !formId) return null;
   const object = await env.ASSETS_BUCKET.get(nativeFormKey(formId));
@@ -908,11 +944,12 @@ async function listPointLedgerApi(request: Request, env: Env) {
 }
 
 function publicNativeForm(form: NativeForm) {
+  const registrationMode = nativeRegistrationMode(form.settings || {});
   return {
     id: form.id,
     provider: form.provider,
     activity: form.activity,
-    settings: { sessionsEnabled: form.sessions.length > 1 },
+    settings: { sessionsEnabled: form.sessions.length > 1, registrationMode, lineLoginEnabled: nativeLoginEnabled(form) },
     fields: form.fields,
     sessions: form.sessions.filter((session) => clean(session.status || "open") !== "closed"),
     formUrl: form.formUrl
@@ -996,7 +1033,28 @@ async function submitNativeForm(request: Request, env: Env, formId: string) {
   const sessionId = clean(input.sessionId || "default");
   const errors = validateNativeAnswers(form, rawAnswers, sessionId);
   if (errors.length) return json({ success: false, message: errors[0], errors }, 400);
+  return createNativeRegistration(env, form, answers, lineUserId, sessionId, "form");
+}
+
+async function createNativeRegistration(env: Env, form: NativeForm, answers: Record<string, unknown>, lineUserId: string, sessionId: string, source: string, member?: LineLoginMember) {
   const active = activeRegistrations(await readRegistrationList(env, form.id));
+  if (lineUserId) {
+    const existing = active.find((item) => clean(item.lineUserId).toLowerCase() === clean(lineUserId).toLowerCase());
+    if (existing) {
+      return json({
+        success: true,
+        data: {
+          registrationId: existing.id,
+          queryCode: existing.queryCode,
+          checkinUrl: existing.checkinToken ? nativeCheckinUrl(existing.checkinToken) : "",
+          submittedAt: existing.submittedAt,
+          activity: existing.activity || form.activity,
+          session: form.sessions.find((item) => item.id === clean(existing.sessionId || sessionId)),
+          duplicate: true
+        }
+      });
+    }
+  }
   const session = form.sessions.find((item) => item.id === sessionId);
   const sessionCount = active.filter((item) => clean(item.sessionId || "default") === sessionId).length;
   const sessionCapacity = Number(session?.capacity || 0);
@@ -1014,7 +1072,7 @@ async function submitNativeForm(request: Request, env: Env, formId: string) {
     formId: form.id,
     submittedAt,
     activity: form.activity,
-    answers,
+    answers: { ...answers, registrationSource: source, ...(member ? { memberType: member.role, memberNo: member.memberNo, memberName: member.name } : {}) },
     status: "active",
     sessionId,
     queryCode,
@@ -1036,6 +1094,30 @@ async function submitNativeForm(request: Request, env: Env, formId: string) {
   await writeRegistrationSummary(env, summary);
   await writeNativeRegistration(env, entry);
   return json({ success: true, data: { registrationId, queryCode, checkinUrl: nativeCheckinUrl(checkinToken), submittedAt, activity: form.activity, session } }, 201);
+}
+
+async function submitNativeLoginRegistration(request: Request, env: Env, formId: string) {
+  if (!env.ASSETS_BUCKET) return json({ success: false, message: "R2 bucket is not configured" }, 503);
+  const form = await readNativeForm(env, formId);
+  if (!form) return json({ success: false, message: "找不到報名表" }, 404);
+  if (!nativeLoginEnabled(form)) return json({ success: false, message: "此活動尚未啟用 LINE Login 快速報名" }, 400);
+  const input = await request.json().catch(() => ({})) as Record<string, unknown>;
+  const lineUserId = firstClean(input.lineUserId, input.uid, input.LINE_user_id);
+  if (!lineUserId) return json({ success: false, message: "請先透過 LINE Login 取得會員身分" }, 400);
+  const member = await resolveLineLoginMember(env, lineUserId);
+  if (!member) return json({ success: false, code: "member_not_found", message: "這個 LINE 帳號尚未綁定協會會員或廠商會員，請改用一般報名或聯絡協會協助綁定。" }, 403);
+  const sessionId = clean(input.sessionId || "default");
+  const session = form.sessions.find((item) => item.id === sessionId);
+  if (!session) return json({ success: false, message: "請選擇有效梯次" }, 400);
+  const answers = normalizeAnswersRecord({
+    LINE_user_id: member.lineUserId,
+    name: member.name,
+    memberNo: member.memberNo,
+    company: member.rosterType === "vendor" ? member.name : "",
+    isMember: "是",
+    memberType: member.role
+  });
+  return createNativeRegistration(env, form, answers, member.lineUserId, sessionId, "line_login", member);
 }
 
 async function queryNativeRegistration(request: Request, env: Env) {
@@ -1815,6 +1897,8 @@ export default {
 	    if ((request.method === "PUT" || request.method === "POST") && url.pathname === "/api/vendor-card-menu") { const guard = requireAdmin(request, env); if (guard) return guard; if (!env.ASSETS_BUCKET) return json({ success: false, message: "R2 bucket is not configured" }, 503); const config = await request.json().catch(() => ({})) as VendorCardConfig; await writeVendorCardConfig(env, config); return json({ success: true, data: await readVendorCardConfig(env), flex: buildVendorCardFlex(config) }); }
 	    if (request.method === "GET" && url.pathname === "/api/vendor-card-menu/flex") { const config = await readVendorCardConfig(env); return json({ success: true, flex: buildVendorCardFlex(config), data: config }); }
 	    if (request.method === "POST" && url.pathname === "/api/native-forms/create") return createNativeForm(request, env);
+	    const nativeLoginMatch = url.pathname.match(/^\/api\/native-forms\/([^/]+)\/login-register$/);
+	    if (nativeLoginMatch && request.method === "POST") return submitNativeLoginRegistration(request, env, decodeURIComponent(nativeLoginMatch[1]));
 	    const nativeFormMatch = url.pathname.match(/^\/api\/native-forms\/([^/]+)$/);
 	    if (nativeFormMatch && request.method === "GET") return getNativeForm(request, env, decodeURIComponent(nativeFormMatch[1]));
 	    if (nativeFormMatch && request.method === "POST") return submitNativeForm(request, env, decodeURIComponent(nativeFormMatch[1]));

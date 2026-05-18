@@ -35,6 +35,7 @@
       formUrl: trim(form.formUrl?.value),
       posterUrl: trim(form.posterUrl?.value),
       youtubeUrl: trim(form.youtubeUrl?.value),
+      registrationMode: form.registrationMode?.value || "form",
       requireImageUpload: form.requireImageUpload?.value || "N",
       genderField: form.genderField?.value || "required",
       memberField: form.memberField?.value || "required",
@@ -131,6 +132,7 @@
     if (!formUrl) return null;
     if (form.formUrl) form.formUrl.value = formUrl;
     const normalized = providerMeta({ ...meta, formUrl });
+    const settings = currentSettings(form);
 
     const data = load();
     data.formSettings ||= {};
@@ -138,7 +140,7 @@
     if (!activity) return null;
 
     data.formSettings[activity.id] ||= {};
-    Object.assign(data.formSettings[activity.id], currentSettings(form), {
+    Object.assign(data.formSettings[activity.id], settings, {
       formUrl,
       formMode: normalized.provider,
       formId: normalized.formId,
@@ -156,6 +158,7 @@
       Object.assign(data.formSettings[activity.activityNo], data.formSettings[activity.id]);
     }
     activity.formMode = normalized.provider;
+    activity.registrationMode = settings.registrationMode || activity.registrationMode || "form";
     activity.formUrl = formUrl;
     activity.formId = normalized.formId || activity.formId || "";
     activity.nativeFormId = normalized.nativeFormId || activity.nativeFormId || "";

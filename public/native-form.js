@@ -148,6 +148,27 @@
     window.close();
   }
 
+  function registrationMode(form) {
+    const settings = form.settings || {};
+    if (settings.lineLoginEnabled && settings.registrationMode === "form") return "mixed";
+    return trim(settings.registrationMode || "form");
+  }
+
+  function sessionFieldHtml(sessions) {
+    return sessions.length > 1
+      ? `<div class="nf-field"><label>梯次 <span class="nf-required">*</span></label><select name="sessionId" required>${sessions.map((session) => `<option value="${esc(session.id)}">${esc(session.name)}${session.startTime ? `｜${esc(session.startTime)}` : ""}</option>`).join("")}</select></div>`
+      : `<input type="hidden" name="sessionId" value="${esc(sessions[0]?.id || "default")}">`;
+  }
+
+  function loginRegisterPanel(mode, sessions) {
+    if (mode !== "member_login" && mode !== "mixed") return "";
+    return `<div class="nf-form nf-login-box" data-login-register-box>
+      <div class="nf-ok">會員與廠商會員可使用 LINE Login 快速報名，系統會用 LINE UID 比對名冊後直接完成報名。</div>
+      ${sessionFieldHtml(sessions)}
+      <div class="nf-actions"><button class="nf-btn primary" type="button" data-login-register>LINE Login 快速報名</button></div>
+    </div>`;
+  }
+
   function loadLiff(options = {}) {
     if (liffReady) return liffReady;
     liffReady = new Promise((resolve) => {
@@ -197,19 +218,42 @@
     const sessions = Array.isArray(form.sessions) ? form.sessions : [];
     const fields = Array.isArray(form.fields) ? form.fields : [];
     const image = activity.posterUrl || activity.imageUrl || "";
+    const mode = registrationMode(form);
+    const showFullForm = mode !== "member_login";
     renderShell(`<section class="nf-card">
       ${image ? `<img class="nf-hero" src="${esc(image)}" alt="${esc(activity.name || "")}">` : ""}
       <div class="nf-body">
         <h1 class="nf-title">${esc(activity.name || "活動報名")}</h1>
         <div class="nf-meta">${activity.courseTime ? `<span class="nf-pill">${esc(activity.courseTime)}</span>` : ""}${activity.deadline ? `<span class="nf-pill">截止 ${esc(activity.deadline)}</span>` : ""}</div>
         ${activity.detailText ? `<div class="nf-detail">${esc(activity.detailText)}</div>` : ""}
-        <form class="nf-form" data-native-register>
-          ${sessions.length > 1 ? `<div class="nf-field"><label>梯次 <span class="nf-required">*</span></label><select name="sessionId" required>${sessions.map((session) => `<option value="${esc(session.id)}">${esc(session.name)}${session.startTime ? `｜${esc(session.startTime)}` : ""}</option>`).join("")}</select></div>` : `<input type="hidden" name="sessionId" value="${esc(sessions[0]?.id || "default")}">`}
+        ${loginRegisterPanel(mode, sessions)}
+        ${showFullForm ? `<form class="nf-form" data-native-register>
+          ${sessionFieldHtml(sessions)}
           ${fields.map(fieldHtml).join("")}
           <div class="nf-actions"><button class="nf-btn primary" type="submit">送出報名</button><a class="nf-btn" href="?query=1">報名查詢/取消</a></div>
-        </form>
+        </form>` : `<div class="nf-actions"><a class="nf-btn" href="?query=1">報名查詢/取消</a></div>`}
       </div>
     </section>`);
+    const loginButton = app.querySelector("[data-login-register]");
+    loginButton?.addEventListener("click", async () => {
+      loginButton.disabled = true;
+      loginButton.textContent = "LINE Login 確認中...";
+      const uid = await loadLiff({ login: true });
+      if (!uid) {
+        loginButton.disabled = false;
+        loginButton.textContent = "LINE Login 快速報名";
+        return alert("請從 LINE LIFF 開啟此頁，系統才能取得會員身分。");
+      }
+      const sessionId = app.querySelector("[data-login-register-box] [name='sessionId']")?.value || sessions[0]?.id || "default";
+      const submitResponse = await fetch(`${api}/api/native-forms/${encodeURIComponent(id)}/login-register`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ lineUserId: uid, sessionId }) });
+      const submitResult = await submitResponse.json().catch(() => ({}));
+      if (!submitResponse.ok || !submitResult.success) {
+        loginButton.disabled = false;
+        loginButton.textContent = "LINE Login 快速報名";
+        return alert(submitResult.message || "快速報名失敗");
+      }
+      renderReceipt(submitResult);
+    });
     const registerForm = app.querySelector("[data-native-register]");
     registerForm?.addEventListener("submit", async (event) => {
       event.preventDefault();

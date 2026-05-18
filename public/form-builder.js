@@ -69,6 +69,15 @@
         <input name="youtubeUrl" type="url" placeholder="可放活動介紹、回顧或直播連結">
       </div>
       <div class="field">
+        <label>報名方式</label>
+        <select name="registrationMode">
+          <option value="form">一般表單報名</option>
+          <option value="mixed">會員快速報名 + 一般表單</option>
+          <option value="member_login">只允許會員 / 廠商會員 LINE Login 快速報名</option>
+        </select>
+        <small class="form-builder-hint">LINE Login 會用 LINE UID 比對協會名冊與廠商名冊，符合者直接完成報名。</small>
+      </div>
+      <div class="field">
         <label>圖片上傳欄位</label>
         <select name="requireImageUpload">
           <option value="N">不需要</option>
@@ -321,6 +330,7 @@
       formUrl,
       googleFormUrl: formUrl,
       youtubeUrl: form.youtubeUrl?.value?.trim() || "",
+      registrationMode: form.registrationMode?.value || "form",
       requireImageUpload: form.requireImageUpload?.value || "N",
       genderField: form.genderField?.value || "required",
       memberField: form.memberField?.value || "required",
