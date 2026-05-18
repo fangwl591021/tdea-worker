@@ -12,8 +12,7 @@
     vendor: ["廠商名冊", "維護廠商會員、統編、窗口與備註，可匯入 CSV。"],
     creator: ["創建活動", "建立活動草稿，之後可直接改接 D1。"],
     keywords: ["關鍵字", "整理 LINE OA 觸發關鍵字、用途與回覆行為。"],
-    redeem: ["點數折抵", "建立限時店家掃碼工作台，店家掃會員 QR 後執行扣點。"],
-    preview: ["用戶預覽", "模擬一般使用者看到的活動報名頁。"]
+    redeem: ["點數折抵", "建立限時店家掃碼工作台，店家掃會員 QR 後執行扣點。"]
   };
   const state = { view: "dashboard", drawer: "", data: load(), registrationLists: {} };
 
@@ -233,7 +232,7 @@
       <div class="shell ${collapsed ? "sidebar-collapsed" : ""}">
         <aside class="sidebar">
           <div class="brand"><span>TDEA 管理中心</span><button class="sidebar-toggle" type="button" data-sidebar-toggle title="${collapsed ? "展開選單" : "收合選單"}" aria-label="${collapsed ? "展開選單" : "收合選單"}">${collapsed ? "›" : "‹"}</button></div>
-          <nav class="nav">${nav("dashboard", "活動總覽")}${nav("association", "協會名冊")}${nav("vendor", "廠商名冊")}${nav("creator", "創建活動")}${nav("redeem", "點數折抵")}${nav("preview", "用戶預覽")}</nav>
+          <nav class="nav">${nav("dashboard", "活動總覽")}${nav("association", "協會名冊")}${nav("vendor", "廠商名冊")}${nav("creator", "創建活動")}${nav("redeem", "點數折抵")}</nav>
         </aside>
         <main class="main">
           <div class="topbar"><div><h1>${title}</h1><div class="subtitle">${sub}</div></div><div class="actions">${actions()}</div></div>
@@ -256,7 +255,6 @@
     if (state.view === "creator") return `<button class="btn" data-reset>清空表單</button>`;
     if (state.view === "redeem") return `<button class="btn" data-load-redeem>刷新紀錄</button>`;
     if (state.view === "keywords") return `<button class="btn" data-refresh-keywords>刷新列表</button>`;
-    if (state.view === "preview") return `<button class="btn" data-copy>複製預覽網址</button>`;
     return `<label class="sync-toggle"><input type="checkbox" data-auto-sync ${autoSyncEnabled() ? "checked" : ""}> 自動同步</label><button class="btn" data-sync-registrations>同步報名</button><button class="btn" data-worker>檢查 Worker</button><button class="btn danger" data-clear-test>清空測試資料</button><button class="btn primary" data-nav="creator">新增活動</button>`;
   }
   function body() {
@@ -265,7 +263,6 @@
     if (state.view === "creator") return creator();
     if (state.view === "redeem") return redeem();
     if (state.view === "keywords") return keywords();
-    if (state.view === "preview") return preview();
     return dashboard();
   }
 
@@ -290,11 +287,6 @@
   function creator() {
     return `<form class="form-card form-grid creator-form-wide" id="activity-form">${field("活動名稱", "name", "", "例如：AI 教學工作坊", true)}${select("活動類型", "type", ["講座類", "教學類", "聯誼類"])}${field("課程時間", "courseTime", "", "YYYY/MM/DD HH:MM")}${field("報名截止", "deadline", "", "YYYY/MM/DD")}${field("人數限制", "capacity", 0, "", false, "number")}${field("簽到贈點", "checkinPoints", 0, "0 表示不贈點", false, "number")}${field("報名扣點/費用扣抵", "feePoints", 0, "0 表示不扣點", false, "number")}${select("狀態", "status", ["下架", "上架"])}<button class="btn primary" type="submit">建立活動</button></form>`;
   }
-  function preview() {
-    const rows = state.data.activities.filter(x => x.status === "上架");
-    return `<section class="panel"><div class="panel-head"><h2 class="panel-title">官方活動預約</h2><span class="muted">TDEA 台灣數位教育發展協會</span></div><div style="padding:18px">${rows.length ? `<div class="cards">${rows.map(x => `<article class="activity-card"><span class="badge live">${esc(activityTypeLabel(x))}</span><h3>${esc(x.name)}</h3><div class="info-row"><span>課程時間</span><strong>${esc(x.courseTime || "未定")}</strong></div><div class="info-row"><span>截止</span><strong>${esc(x.deadline || "未定")}</strong></div><div class="info-row"><span>名額</span><strong>${esc(x.capacity || "不限")}</strong></div><div class="info-row"><span>狀況</span><strong>${n(x.reg)} 人報名</strong></div><button class="btn primary" style="width:100%;margin-top:14px" data-register="${x.id}">立即報名</button></article>`).join("")}</div>` : empty("目前暫無開放中的活動")}</div></section>`;
-  }
-
   function keywordRows() {
     const builtIn = [
       { keyword: "TDEA每月活動", aliases: "無", purpose: "推送每月活動橫式多頁 FLEX", reply: "回覆每月活動 carousel，詳細說明走 LIFF，報名按鈕走自建報名表", entry: `${liffBase}?monthlyDetail={活動編號}`, owner: "每月活動", status: "啟用中" },
