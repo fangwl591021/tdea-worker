@@ -83,6 +83,19 @@
     };
   }
 
+  function sampleRegistrations() {
+    return Array.from({ length: 20 }, (_, index) => ({
+      key: "test-" + (index + 1),
+      memberNo: "TEST" + String(index + 1).padStart(3, "0"),
+      name: "測試報名者 " + (index + 1),
+      phone: "09" + String(10000000 + index).slice(0, 8),
+      email: "",
+      source: "測試名單",
+      submittedAt: new Date().toISOString(),
+      answers: {}
+    }));
+  }
+
   async function loadRegistrations(activity) {
     const keys = activityKeys(activity);
     if (!keys.length) return [];
@@ -164,7 +177,7 @@
 
   function tableWinners(rows) {
     if (!rows.length) return `<div class="empty">目前沒有中獎紀錄</div>`;
-    return `<div class="table-wrap"><table><thead><tr><th>狀態</th><th>獎品</th><th>批次</th><th>會員編號</th><th>姓名 / 公司</th><th>手機</th><th>抽獎時間</th><th>操作</th></tr></thead><tbody>${rows.map((row) => `<tr class="${row.status === "absent" ? "muted-row" : ""}"><td><span class="badge ${row.status === "absent" ? "off" : "live"}">${row.status === "absent" ? "不在場" : "中獎"}</span></td><td>${esc(row.prizeName)}</td><td>${esc(row.batch)}</td><td>${esc(row.memberNo)}</td><td><strong>${esc(row.name)}</strong></td><td>${esc(row.phone)}</td><td>${esc(new Date(row.time).toLocaleString("zh-TW"))}</td><td>${row.status === "absent" ? `<span class="muted">已重抽</span>` : `<button class="link danger-link" data-lottery-redraw="${esc(row.id)}">不在場重抽</button>`}</td></tr>`).join("")}</tbody></table></div>`;
+    return `<div class="table-wrap"><table><thead><tr><th>狀態</th><th>獎品</th><th>批次</th><th>會員編號</th><th>姓名 / 公司</th><th>手機</th><th>抽獎時間</th><th>操作</th></tr></thead><tbody>${rows.map((row) => `<tr class="${row.status === "absent" ? "muted-row" : ""}"><td><span class="badge ${row.status === "absent" ? "off" : "live"}">${row.status === "absent" ? "不在場" : "中獎"}</span></td><td>${esc(row.prizeName)}</td><td>${esc(row.batch)}</td><td>${esc(row.memberNo)}</td><td><strong>${esc(row.name)}</strong></td><td>${esc(row.phone)}</td><td>${esc(new Date(row.time).toLocaleString("zh-TW"))}</td><td>${row.status === "absent" ? `<span class="muted">已重抽</span><span class="muted"> / </span><button class="link danger-link" data-lottery-remove="${esc(row.id)}">清除紀錄</button>` : `<button class="link danger-link" data-lottery-redraw="${esc(row.id)}">不在場重抽</button><span class="muted"> / </span><button class="link danger-link" data-lottery-remove="${esc(row.id)}">清除中獎</button>`}</td></tr>`).join("")}</tbody></table></div>`;
   }
 
   function tablePrizes(prizes) {
@@ -218,10 +231,12 @@
           <div class="lottery-controls">
             <div class="field"><label>活動</label><select data-lottery-activity>${activities.map((item) => `<option value="${esc(item.id)}" ${item.id === activity.id ? "selected" : ""}>${esc(item.name)}</option>`).join("")}</select></div>
             <div class="field"><label>抽獎品項</label><select data-lottery-prize>${prizesWithCount.map((prize) => `<option value="${esc(prize.id)}" ${Number(prize.drawn || 0) >= Number(prize.quantity || 1) ? "disabled" : ""}>${esc(prize.name)}（${n(prize.drawn)}/${n(prize.quantity)}）</option>`).join("")}</select></div>
+            <button class="btn" data-lottery-test>測試抽獎</button>
             <button class="btn primary" data-lottery-start>抽出下一位</button>
             <button class="btn" data-lottery-print>列印/PDF</button>
           </div>
           <div class="lottery-message ${loadError ? "error" : ""}">${loadError ? esc(loadError) : `目前依「${esc(activity.name)}」報名名單抽獎，尚可抽 ${n(available.length)} 位。`}</div>
+          <div class="lottery-test-result" data-lottery-test-result hidden></div>
           <div class="lottery-split">
             <section class="subpanel">
               <div class="subpanel-head"><h3>獎品表</h3><div class="actions"><button class="btn" data-prize-add>新增獎品</button><button class="btn" data-prize-save>儲存獎品表</button></div></div>
@@ -248,11 +263,13 @@
     document.querySelector("[data-lottery-clear]")?.addEventListener("click", () => clearLottery(activityId));
     document.querySelector("[data-lottery-export]")?.addEventListener("click", () => exportCsv(activityId));
     document.querySelector("[data-lottery-start]")?.addEventListener("click", () => draw(activityId, registrations));
+    document.querySelector("[data-lottery-test]")?.addEventListener("click", () => testDraw(activityId, registrations));
     document.querySelector("[data-prize-add]")?.addEventListener("click", () => addPrize(activityId));
     document.querySelector("[data-prize-save]")?.addEventListener("click", () => savePrizeInputs(activityId, true));
     document.querySelector("[data-prize-file]")?.addEventListener("change", importPrizeFile.bind(null, activityId));
     document.querySelectorAll("[data-prize-delete]").forEach((button) => button.addEventListener("click", () => deletePrize(activityId, button.dataset.prizeDelete)));
     document.querySelectorAll("[data-lottery-redraw]").forEach((button) => button.addEventListener("click", () => redraw(activityId, registrations, button.dataset.lotteryRedraw)));
+    document.querySelectorAll("[data-lottery-remove]").forEach((button) => button.addEventListener("click", () => removeWinner(activityId, button.dataset.lotteryRemove)));
   }
 
   function savePrizeInputs(activityId, showMessage = false) {
@@ -321,6 +338,31 @@
     toast(`已抽出：${winner.name}，獎品：${prize.name}`);
   }
 
+  function testDraw(activityId, registrations) {
+    savePrizeInputs(activityId);
+    const data = normalize(load());
+    const record = lotteryState(data, activityId);
+    const selectedPrizeId = document.querySelector("[data-lottery-prize]")?.value || "";
+    const prize = record.prizes.find((item) => item.id === selectedPrizeId) || { name: "測試獎品" };
+    const excluded = new Set(record.winners.map((row) => row.key));
+    const source = registrations.length ? registrations : sampleRegistrations();
+    const pool = source.filter((row) => !excluded.has(row.key));
+    const target = document.querySelector("[data-lottery-test-result]");
+    if (!pool.length) {
+      if (target) {
+        target.hidden = false;
+        target.innerHTML = `<strong>測試結果</strong><span>目前沒有可抽名單。</span>`;
+      }
+      return toast("測試失敗：沒有可抽名單。");
+    }
+    const winner = shuffle(pool)[0];
+    if (target) {
+      target.hidden = false;
+      target.innerHTML = `<strong>測試結果</strong><span>若正式抽獎，會抽出：${esc(winner.name)}，獎品：${esc(prize.name)}。此結果沒有寫入中獎紀錄。</span>`;
+    }
+    toast(`測試抽獎：${winner.name}`);
+  }
+
   function redraw(activityId, registrations, winnerId) {
     const data = normalize(load());
     const record = lotteryState(data, activityId);
@@ -331,6 +373,18 @@
     winner.absentAt = new Date().toISOString();
     save(data);
     draw(activityId, registrations, winner.prizeId);
+  }
+
+  function removeWinner(activityId, winnerId) {
+    const data = normalize(load());
+    const record = lotteryState(data, activityId);
+    const winner = record.winners.find((row) => row.id === winnerId);
+    if (!winner) return;
+    if (!confirm(`確認清除「${winner.name}」的「${winner.prizeName}」紀錄？清除後獎項名額會回填。`)) return;
+    record.winners = record.winners.filter((row) => row.id !== winnerId);
+    save(data);
+    render(activityId);
+    toast("中獎紀錄已清除，獎項名額已回填");
   }
 
   function nextBatch(record) {
@@ -396,6 +450,8 @@
     .lottery-controls{display:grid;grid-template-columns:minmax(220px,1fr) minmax(220px,1fr) auto auto;align-items:end;gap:12px;margin-bottom:14px}
     .lottery-message{margin-bottom:14px;border:1px solid #bfdbfe;border-radius:8px;padding:12px 14px;background:#eff6ff;color:#1d4ed8;font-weight:700}
     .lottery-message.error{border-color:#fecaca;background:#fef2f2;color:#b91c1c}
+    .lottery-test-result{margin-bottom:14px;border:1px solid #bbf7d0;border-radius:8px;padding:12px 14px;background:#f0fdf4;color:#166534}
+    .lottery-test-result strong{display:block;margin-bottom:4px}
     .lottery-split{display:grid;grid-template-columns:minmax(320px,0.9fr) minmax(420px,1.1fr);gap:16px}
     .subpanel{border:1px solid #e5e7eb;border-radius:8px;background:#fff;overflow:hidden}
     .subpanel-head{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:14px 16px;border-bottom:1px solid #e5e7eb}
