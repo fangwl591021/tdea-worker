@@ -1,4 +1,6 @@
 (() => {
+  if (isPublicLiffMode()) return;
+
   const key = "tdea-manager-v3";
   const api = "https://tdeawork.fangwl591021.workers.dev";
   const liffBase = "https://liff.line.me/2005868456-2jmxqyFU";
@@ -78,6 +80,33 @@
   }
 
   let registrationSyncing = false;
+
+  function isPublicLiffMode() {
+    const publicKeys = [
+      "register",
+      "query",
+      "memberQr",
+      "calendar",
+      "checkin",
+      "redeem",
+      "redeemSession",
+      "monthlyDetail",
+      "close"
+    ];
+    const bags = [new URLSearchParams(location.search)];
+    const liffState = bags[0].get("liff.state");
+    if (liffState) {
+      let decoded = liffState;
+      try { decoded = decodeURIComponent(liffState); } catch (_) {}
+      const query = decoded.startsWith("?")
+        ? decoded.slice(1)
+        : decoded.includes("?")
+          ? decoded.split("?").slice(1).join("?")
+          : decoded;
+      bags.push(new URLSearchParams(query));
+    }
+    return bags.some((params) => publicKeys.some((name) => params.has(name)));
+  }
   function registrationCandidates(activity) {
     return [activity?.id, activity?.activityNo, activity?.formId, activity?.nativeFormId, activity?.googleFormId, activity?.opnformFormId, activity?.name]
       .map(value => String(value || "").trim())
