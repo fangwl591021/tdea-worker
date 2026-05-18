@@ -239,7 +239,7 @@
           <div class="lottery-test-result" data-lottery-test-result hidden></div>
           <div class="lottery-split">
             <section class="subpanel">
-              <div class="subpanel-head"><h3>獎品表</h3><div class="actions"><button class="btn" data-prize-add>新增獎品</button><button class="btn" data-prize-save>儲存獎品表</button></div></div>
+              <div class="subpanel-head"><h3>獎品表</h3><div class="actions"><button class="btn" data-prize-template>下載 Excel 範本</button><button class="btn" data-prize-add>新增獎品</button><button class="btn" data-prize-save>儲存獎品表</button></div></div>
               <div class="field"><label>上傳獎品 CSV</label><input type="file" accept=".csv,text/csv" data-prize-file><div class="hint">欄位格式：品名,數量。例如：頭獎禮盒,1</div></div>
               ${tablePrizes(prizesWithCount)}
             </section>
@@ -264,6 +264,7 @@
     document.querySelector("[data-lottery-export]")?.addEventListener("click", () => exportCsv(activityId));
     document.querySelector("[data-lottery-start]")?.addEventListener("click", () => draw(activityId, registrations));
     document.querySelector("[data-lottery-test]")?.addEventListener("click", () => testDraw(activityId, registrations));
+    document.querySelector("[data-prize-template]")?.addEventListener("click", downloadPrizeTemplate);
     document.querySelector("[data-prize-add]")?.addEventListener("click", () => addPrize(activityId));
     document.querySelector("[data-prize-save]")?.addEventListener("click", () => savePrizeInputs(activityId, true));
     document.querySelector("[data-prize-file]")?.addEventListener("change", importPrizeFile.bind(null, activityId));
@@ -283,6 +284,21 @@
     save(data);
     if (showMessage) toast("獎品表已儲存");
     return data;
+  }
+
+  function downloadPrizeTemplate() {
+    const rows = [
+      ["品名", "數量"],
+      ["頭獎禮盒", "1"],
+      ["參加獎", "10"]
+    ];
+    const html = `<!doctype html><html><head><meta charset="utf-8"></head><body><table>${rows.map((row) => `<tr>${row.map((cell) => `<td>${esc(cell)}</td>`).join("")}</tr>`).join("")}</table></body></html>`;
+    const blob = new Blob(["\ufeff" + html], { type: "application/vnd.ms-excel;charset=utf-8" });
+    const link = document.createElement("a");
+    link.href = URL.createObjectURL(blob);
+    link.download = "TDEA-獎品表範本.xls";
+    link.click();
+    URL.revokeObjectURL(link.href);
   }
 
   function addPrize(activityId) {
