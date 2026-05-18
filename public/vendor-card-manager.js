@@ -87,6 +87,9 @@
       .vendor-card-tile{display:grid;justify-items:center;gap:8px;text-align:center;font-size:12px;font-weight:800;color:#344054}
       .vendor-card-tile img{width:60px;height:60px;object-fit:cover;border-radius:10px;border:1px solid #e5e7eb;background:#fff}
       .vendor-card-table input{min-width:120px}.vendor-card-table input[type="checkbox"]{min-width:0}
+      .vendor-card-scroll-tools{display:flex;align-items:center;justify-content:center;gap:10px;padding:10px 14px;border-bottom:1px solid #eef2f7;background:#fbfcfe;color:#667085;font-size:13px;font-weight:800}
+      .vendor-card-scroll-btn{width:34px;height:34px;border-radius:999px;border:1px solid #d1d5db;background:#fff;color:#111827;font-size:22px;font-weight:900;line-height:1}
+      .vendor-card-scroll-btn:hover{border-color:#86efac;background:#f0fdf4;color:#064e3b}
       .vendor-card-preview{position:sticky;top:24px}
       .vendor-card-json{min-height:170px;font-family:ui-monospace,SFMono-Regular,Consolas,monospace}
       .vendor-card-help{width:34px;height:34px;border-radius:999px;border:1px solid #d1d5db;background:#fff;color:#064e3b;font-weight:900;font-size:18px;line-height:1;cursor:pointer}
@@ -190,7 +193,7 @@
 
   function itemTable(items) {
     if (!items.length) return `<div class="empty">尚未設定廠商。可從廠商名冊帶入，或貼上舊 FLEX JSON 匯入。</div>`;
-    return `<div class="table-wrap"><table class="vendor-card-table"><thead><tr><th>啟用</th><th>排序</th><th>顯示名稱</th><th>點擊送出文字</th><th>圖片 URL</th><th>上傳</th><th>操作</th></tr></thead><tbody>${items.map((item, index) => `
+    return `<div class="vendor-card-scroll-tools"><button class="vendor-card-scroll-btn" type="button" title="往左滑動" data-vendor-card-scroll-left>‹</button><span>左右滑動</span><button class="vendor-card-scroll-btn" type="button" title="往右滑動" data-vendor-card-scroll-right>›</button></div><div class="table-wrap" data-vendor-card-scroll><table class="vendor-card-table"><thead><tr><th>啟用</th><th>排序</th><th>顯示名稱</th><th>點擊送出文字</th><th>圖片 URL</th><th>上傳</th><th>操作</th></tr></thead><tbody>${items.map((item, index) => `
       <tr data-vendor-card-row="${index}">
         <td><input type="checkbox" data-vendor-card-item="enabled" ${item.enabled !== false ? "checked" : ""}></td>
         <td><input type="number" data-vendor-card-item="order" value="${Number(item.order ?? index)}" style="width:76px"></td>
@@ -200,6 +203,12 @@
         <td><input type="file" accept="image/*" data-vendor-card-upload="${index}"></td>
         <td><button class="link danger-link" data-vendor-card-delete="${index}">刪除</button></td>
       </tr>`).join("")}</tbody></table></div>`;
+  }
+
+  function scrollVendorTable(direction) {
+    const scroller = document.querySelector("[data-vendor-card-scroll]");
+    if (!scroller) return;
+    scroller.scrollBy({ left: direction * Math.max(320, Math.round(scroller.clientWidth * 0.75)), behavior: "smooth" });
   }
 
   function preview(config) {
@@ -358,6 +367,8 @@
     });
     document.querySelector("[data-vendor-card-add]")?.addEventListener("click", () => addItem({ name: "新廠商", label: "新廠商", actionText: "新廠商" }));
     document.querySelector("[data-vendor-card-help]")?.addEventListener("click", openSpecDialog);
+    document.querySelector("[data-vendor-card-scroll-left]")?.addEventListener("click", () => scrollVendorTable(-1));
+    document.querySelector("[data-vendor-card-scroll-right]")?.addEventListener("click", () => scrollVendorTable(1));
     document.querySelector("[data-vendor-card-import-roster]")?.addEventListener("click", importFromRoster);
     document.querySelector("[data-vendor-card-import-json-button]")?.addEventListener("click", importJson);
     document.querySelector("[data-vendor-card-copy]")?.addEventListener("click", async () => { await navigator.clipboard.writeText(JSON.stringify(buildFlex(readFromDom()), null, 2)); toast("FLEX JSON 已複製"); });
