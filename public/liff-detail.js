@@ -13,6 +13,18 @@
     return text.replace(/[,\s/\\|._\-，、。；;:：]+/g, "").length ? text : "";
   }
 
+  function pageImages(page) {
+    const seen = new Set();
+    return [page?.imageUrl, ...(Array.isArray(page?.galleryUrls) ? page.galleryUrls : String(page?.galleryUrls || "").split(/[\n,]+/))]
+      .map((value) => trim(value))
+      .filter((value) => /^https?:\/\//i.test(value))
+      .filter((value) => {
+        if (seen.has(value)) return false;
+        seen.add(value);
+        return true;
+      });
+  }
+
   function registerIdFromUrl(value) {
     try {
       const parsed = new URL(value);
@@ -67,6 +79,15 @@
       .liff-detail{max-width:760px;margin:0 auto;padding:20px}
       .liff-card{background:#fff;border-radius:14px;padding:20px;box-shadow:0 14px 36px rgba(15,23,42,.08)}
       .liff-card img{width:100%;border-radius:10px;margin-bottom:16px;display:block}
+      .liff-slider{position:relative;margin:-4px 0 16px;overflow:hidden;border-radius:12px;background:#eef2f7}
+      .liff-slider-track{display:flex;transition:transform .42s ease}
+      .liff-slide{flex:0 0 100%;aspect-ratio:4/5;background:#eef2f7}
+      .liff-slide img{width:100%;height:100%;object-fit:cover;border-radius:0;margin:0}
+      .liff-slider-nav{position:absolute;left:0;right:0;top:50%;display:flex;justify-content:space-between;transform:translateY(-50%);pointer-events:none}
+      .liff-slider-nav button{pointer-events:auto;border:0;border-radius:999px;background:rgba(17,24,39,.72);color:#fff;width:34px;height:34px;margin:0 10px;font-size:22px}
+      .liff-dots{position:absolute;left:0;right:0;bottom:10px;display:flex;justify-content:center;gap:6px}
+      .liff-dots button{width:7px;height:7px;border:0;border-radius:999px;background:rgba(255,255,255,.62);padding:0}
+      .liff-dots button.active{background:#06c755;width:18px}
       .liff-card h1{font-size:24px;line-height:1.35;margin:0 0 12px}
       .liff-meta{display:inline-flex;margin:0 0 12px;padding:5px 10px;border-radius:999px;background:#eafff1;color:#027a48;font-size:13px;font-weight:800}
       .liff-text{white-space:pre-wrap;line-height:1.7;color:#344054;font-size:16px}
@@ -107,6 +128,35 @@
     return String(page.id || "") === String(detailId) || String(page.activityNo || "") === String(detailId);
   }
 
+  function slider(images) {
+    if (!images.length) return "";
+    if (images.length === 1) return `<img src="${esc(images[0])}" alt="">`;
+    return `<div class="liff-slider" data-liff-slider><div class="liff-slider-track">${images.map((url) => `<div class="liff-slide"><img src="${esc(url)}" alt=""></div>`).join("")}</div><div class="liff-slider-nav"><button type="button" data-liff-prev aria-label="上一張">‹</button><button type="button" data-liff-next aria-label="下一張">›</button></div><div class="liff-dots">${images.map((_, index) => `<button type="button" data-liff-dot="${index}" class="${index === 0 ? "active" : ""}" aria-label="第 ${index + 1} 張"></button>`).join("")}</div></div>`;
+  }
+
+  function bindSlider() {
+    const root = document.querySelector("[data-liff-slider]");
+    if (!root) return;
+    const track = root.querySelector(".liff-slider-track");
+    const dots = Array.from(root.querySelectorAll("[data-liff-dot]"));
+    const total = dots.length;
+    let index = 0;
+    let timer = null;
+    const go = (next) => {
+      index = (next + total) % total;
+      track.style.transform = `translateX(-${index * 100}%)`;
+      dots.forEach((dot, dotIndex) => dot.classList.toggle("active", dotIndex === index));
+    };
+    const restart = () => {
+      if (timer) clearInterval(timer);
+      timer = setInterval(() => go(index + 1), 3000);
+    };
+    root.querySelector("[data-liff-prev]")?.addEventListener("click", () => { go(index - 1); restart(); });
+    root.querySelector("[data-liff-next]")?.addEventListener("click", () => { go(index + 1); restart(); });
+    dots.forEach((dot) => dot.addEventListener("click", () => { go(Number(dot.dataset.liffDot || 0)); restart(); }));
+    restart();
+  }
+
   async function load() {
     style();
     if (closeMode) {
@@ -125,6 +175,11 @@
         return;
       }
       const detailText = meaningfulText(page.detailText) || await fallbackDetailFromForm(page);
+      const renderGalleryDetail = () => {
+        shell(`<main class="liff-detail"><section class="liff-card">${slider(pageImages(page))}${page.activityNo ? `<div class="liff-meta">${esc(page.activityNo)}</div>` : ""}<h1>${esc(page.detailTitle || "詳細說明")}</h1><div class="liff-text">${esc(detailText || "尚未填寫詳細說明。")}</div>${page.formUrl ? `<a class="liff-btn" href="${esc(page.formUrl)}">點我報名</a>` : ""}</section></main>`);
+        bindSlider();
+      };
+      queueMicrotask(renderGalleryDetail);
       document.title = page.detailTitle || "詳細說明";
       shell(`<main class="liff-detail"><section class="liff-card">${page.imageUrl ? `<img src="${esc(page.imageUrl)}" alt="">` : ""}${page.activityNo ? `<div class="liff-meta">${esc(page.activityNo)}</div>` : ""}<h1>${esc(page.detailTitle || "詳細說明")}</h1><div class="liff-text">${esc(detailText || "尚未填寫詳細說明。")}</div>${page.formUrl ? `<a class="liff-btn" href="${esc(page.formUrl)}">點我報名</a>` : ""}</section></main>`);
     } catch (_) {

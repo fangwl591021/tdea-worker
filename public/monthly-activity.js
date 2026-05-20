@@ -64,6 +64,35 @@
     return "";
   }
 
+  function uniqueUrls(values) {
+    const seen = new Set();
+    return values
+      .flatMap((value) => Array.isArray(value) ? value : String(value || "").split(/[\n,]+/))
+      .map((value) => trim(value))
+      .filter((value) => /^https?:\/\//i.test(value))
+      .filter((value) => {
+        if (seen.has(value)) return false;
+        seen.add(value);
+        return true;
+      });
+  }
+
+  function galleryUrlsFor(activity) {
+    if (!activity) return [];
+    const settingsRows = allFormSettingsFor(activity);
+    return uniqueUrls([
+      activity.galleryUrls,
+      activity.galleryUrl,
+      activity.gallery,
+      settingsRows.map((settings) => [settings.galleryUrls, settings.galleryUrl, settings.gallery])
+    ]);
+  }
+
+  function pageGallery(page) {
+    const activity = findActivity(page.activityNo || page.activityId);
+    return uniqueUrls([page.imageUrl, page.galleryUrls, galleryUrlsFor(activity)]);
+  }
+
   function formUrlFor(activity) {
     if (!activity) return "";
     const settings = formSettingsFor(activity);
@@ -161,6 +190,7 @@
     page.detailText = detailTextFor(activity);
     page.formUrl = formUrlFor(activity);
     if (!page.imageUrl) page.imageUrl = posterUrlFor(activity);
+    if (!Array.isArray(page.galleryUrls) || !page.galleryUrls.length) page.galleryUrls = galleryUrlsFor(activity);
   }
 
   function hydratePage(page) {
@@ -170,6 +200,7 @@
     next.detailTitle = next.detailTitle || next.activityName || "詳細說明";
     next.detailText = next.detailText || "";
     next.formUrl = next.formUrl || "";
+    next.galleryUrls = pageGallery(next);
     return next;
   }
 
@@ -196,7 +227,8 @@
       detailText: firstText(page.detailText, detailTextFor(activity)),
       posterUrl: imageUrl,
       imageUrl,
-      coverUrl: imageUrl
+      coverUrl: imageUrl,
+      galleryUrls: pageGallery(page)
     };
   }
 
@@ -239,6 +271,7 @@
     const style = document.createElement("style");
     style.id = "monthly-activity-style";
     style.textContent = `.monthly-workspace{display:grid;grid-template-columns:minmax(0,1fr) minmax(380px,42%);gap:18px;align-items:start}.monthly-left{display:grid;gap:18px;min-width:0}.monthly-preview-panel{position:sticky;top:24px}.monthly-pages{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:10px;padding:14px}.monthly-page-btn{border:1px solid #d0d5dd;background:#fff;border-radius:8px;min-height:64px;padding:10px 12px;text-align:left;font-weight:800;display:grid;gap:4px}.monthly-page-btn span{color:#667085;font-size:13px}.monthly-page-btn strong{color:#111827;line-height:1.35;word-break:break-word}.monthly-page-btn.active{border-color:#06c755;background:#eafff1}.monthly-form{display:grid;gap:14px;padding:18px}.monthly-basic-grid{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:14px;align-items:end}.monthly-keyword-pill{border:1px solid #d0d5dd;border-radius:8px;background:#f8fafc;padding:10px 12px;display:grid;gap:4px}.monthly-keyword-pill span{color:#667085;font-size:12px}.monthly-keyword-pill strong{color:#111827}.monthly-enabled{display:inline-flex;align-items:center;gap:8px;font-weight:800}.monthly-phone{width:min(100%,430px);margin:0 auto;border-radius:28px;background:#111827;padding:14px;box-shadow:0 18px 42px rgba(15,23,42,.18)}.monthly-screen{min-height:650px;border-radius:20px;background:#8fb7df;padding:18px 14px;overflow:hidden}.monthly-carousel{display:flex;gap:12px;overflow-x:auto;padding-bottom:8px}.monthly-card{flex:0 0 260px;background:#fff;border-radius:16px;overflow:hidden;box-shadow:0 6px 18px rgba(15,23,42,.12)}.monthly-image{position:relative;background:#e5e7eb;aspect-ratio:2/3;display:grid;place-items:center;color:#667085;font-weight:800}.monthly-image img{width:100%;height:100%;object-fit:cover}.monthly-share{position:absolute;top:18px;left:18px;background:#ff334b;color:#fff;border-radius:20px;width:53px;height:25px;display:grid;place-items:center;font-size:12px}.monthly-footer{display:flex;gap:8px;padding:10px}.monthly-footer button{flex:1;border:0;border-radius:6px;background:#06c755;color:#fff;font-weight:800;min-height:34px}.monthly-detail-pop{white-space:pre-wrap;line-height:1.6;color:#344054;background:#f8fafc;border:1px solid #e5e7eb;border-radius:8px;padding:12px;margin-top:10px;max-height:290px;overflow:auto}.monthly-warning{color:#b42318;background:#fff3f0;border:1px solid #fecdca;border-radius:8px;padding:10px;font-weight:700}.monthly-link-note{font-size:13px;color:#667085;line-height:1.5}.monthly-linked-box{border:1px solid #d0d5dd;border-radius:8px;background:#f8fafc;padding:12px;display:grid;gap:8px}.monthly-linked-box strong{display:block;color:#111827}.monthly-linked-box span{color:#667085;font-size:13px;line-height:1.5}.monthly-empty-link{background:#fffdf5;border-color:#fedf89}.monthly-status-row{display:flex;flex-wrap:wrap;gap:8px}.monthly-status{border-radius:999px;padding:5px 10px;font-weight:800}.monthly-status.ok{background:#dcfae6!important;color:#067647!important}.monthly-status.bad{background:#fee4e2!important;color:#b42318!important}.monthly-detail-pop p{margin:10px 0 0;white-space:pre-wrap}.monthly-image-empty{padding:16px;text-align:center}@media(max-width:1100px){.monthly-workspace{grid-template-columns:1fr}.monthly-preview-panel{position:static}.monthly-phone{width:min(100%,460px)}}@media(max-width:720px){.monthly-basic-grid{grid-template-columns:1fr}}`;
+    style.textContent += `.monthly-slide-count{position:absolute;right:12px;bottom:12px;background:rgba(17,24,39,.78);color:#fff;border-radius:999px;padding:4px 9px;font-size:12px;font-weight:800}`;
     document.head.appendChild(style);
   }
 
@@ -291,6 +324,12 @@
     const linked = trim(hydrated.activityNo || hydrated.activityId);
     return `<div class="monthly-form"><div class="field"><label>連動活動</label>${activitySelect(page)}<div class="monthly-link-note">只要選活動即可。詳細說明走 LIFF，報名按鈕走該活動的報名表。</div></div>${linkedInfo(page)}<div class="field"><label>活動圖片</label><input type="file" accept="image/*" data-monthly-file><div class="muted">上傳後會自動更新預覽圖片。</div></div><div class="field"><label>圖片網址</label><input name="imageUrl" data-monthly-page value="${esc(page.imageUrl)}" placeholder="上傳後自動填入，也可貼既有海報網址"></div>${!linked ? `<div class="monthly-warning">這頁尚未選擇活動，發布前請先選擇活動。</div>` : ""}${linked && !trim(hydrated.formUrl) ? `<div class="monthly-warning">這個活動還沒有報名表；發布時系統會自動產生並寫回活動。</div>` : ""}${linked && !meaningfulText(hydrated.detailText) ? `<div class="monthly-warning">此活動沒有詳細說明，請回到活動編輯補上「詳細說明」。</div>` : ""}</div>`;
   }
+  function pageForm(page) {
+    const hydrated = hydratePage(page);
+    const linked = trim(hydrated.activityNo || hydrated.activityId);
+    return `<div class="monthly-form"><div class="field"><label>連動活動</label>${activitySelect(page)}<div class="monthly-link-note">只要選活動即可。LINE Flex 使用主圖；詳細說明 LIFF 會顯示多張活動圖片輪播。</div></div>${linkedInfo(page)}<div class="field"><label>主圖 / LINE Flex 圖片</label><input type="file" accept="image/*" data-monthly-file><div class="muted">主圖會用在 LINE Flex 卡片與第一張輪播圖。</div></div><div class="field"><label>主圖網址</label><input name="imageUrl" data-monthly-page value="${esc(page.imageUrl)}" placeholder="上傳後自動填入，也可貼既有海報網址"></div><div class="field"><label>活動圖集</label><input type="file" accept="image/*" multiple data-monthly-gallery-file><div class="muted">可一次選多張；LIFF 詳細頁會每 3 秒自動左移換圖。</div></div><div class="field"><label>圖集網址</label><textarea name="galleryUrls" data-monthly-gallery placeholder="每行一張圖片網址">${esc((page.galleryUrls || []).join("\n"))}</textarea></div>${!linked ? `<div class="monthly-warning">這頁尚未選擇活動，發布前請先選擇活動。</div>` : ""}${linked && !trim(hydrated.formUrl) ? `<div class="monthly-warning">這個活動還沒有報名表；發布時系統會自動產生並寫回活動。</div>` : ""}${linked && !meaningfulText(hydrated.detailText) ? `<div class="monthly-warning">此活動沒有詳細說明，請回到活動編輯補上「詳細說明」。</div>` : ""}</div>`;
+  }
+
   function preview() {
     return `<div class="monthly-phone"><div class="monthly-screen"><div class="monthly-carousel">${config.pages.map((rawPage, index) => {
       const page = hydratePage(rawPage);
@@ -300,6 +339,17 @@
       return `<div class="monthly-card"><div class="monthly-image"><img src="${esc(imageUrl)}" alt=""><div class="monthly-share">分享</div></div><div class="monthly-footer"><button>詳細說明</button><button>點我報名</button></div>${index === selected ? `<div class="monthly-detail-pop"><strong>${esc(title)}</strong><p>${esc(detail)}</p></div>` : ""}</div>`;
     }).join("")}</div></div></div>`;
   }
+  function preview() {
+    return `<div class="monthly-phone"><div class="monthly-screen"><div class="monthly-carousel">${config.pages.map((rawPage, index) => {
+      const page = hydratePage(rawPage);
+      const detail = page.detailText || (page.activityName ? `${page.activityName}\n\n請到活動編輯補上詳細說明。` : "請先選擇活動。");
+      const title = page.activityName || "未選活動";
+      const images = pageGallery(page);
+      const imageUrl = images[0] || defaultImageUrl;
+      return `<div class="monthly-card"><div class="monthly-image"><img src="${esc(imageUrl)}" alt=""><div class="monthly-share">分享</div>${images.length > 1 ? `<div class="monthly-slide-count">${images.length} 張</div>` : ""}</div><div class="monthly-footer"><button>詳細說明</button><button>點我報名</button></div>${index === selected ? `<div class="monthly-detail-pop"><strong>${esc(title)}</strong><p>${esc(detail)}</p></div>` : ""}</div>`;
+    }).join("")}</div></div></div>`;
+  }
+
   function updatePreview() {
     const wrap = document.querySelector("[data-monthly-preview-wrap]");
     if (wrap) wrap.innerHTML = preview();
@@ -517,7 +567,9 @@
     document.querySelector("[data-monthly-delete]")?.addEventListener("click", () => { if (config.pages.length <= 1) return toast("至少保留 1 頁"); config.pages.splice(selected, 1); selected = Math.max(0, selected - 1); render(); });
     document.querySelector("[data-monthly-activity]")?.addEventListener("change", (event) => { const page = config.pages[selected]; const activity = findActivity(event.target.value); page.activityNo = activity?.activityNo || event.target.value || ""; page.activityId = activity?.id || ""; if (activity) applyActivityToPage(page, activity); updatePreview(); updatePageLabels(); render(); });
     document.querySelectorAll("[data-monthly-page]").forEach((input) => input.addEventListener("input", () => { const page = config.pages[selected]; page[input.name] = input.value; updatePreview(); if (input.name === "imageUrl") updatePageLabels(); }));
+    document.querySelectorAll("[data-monthly-gallery]").forEach((input) => input.addEventListener("input", () => { const page = config.pages[selected]; page.galleryUrls = uniqueUrls([input.value]); updatePreview(); }));
     document.querySelector("[data-monthly-file]")?.addEventListener("change", uploadImage);
+    document.querySelector("[data-monthly-gallery-file]")?.addEventListener("change", uploadGalleryImages);
     document.querySelector("[data-monthly-json]")?.addEventListener("click", async () => { const email = adminEmail(); if (!email) return toast("尚未登入，暫不能產生 FLEX JSON。"); const formError = await ensureFormUrls(email); if (formError) return toast(formError); const validation = validateForPublish(); if (validation) return toast(validation); await navigator.clipboard.writeText(JSON.stringify(buildFlex(), null, 2)); toast("FLEX JSON 已複製"); });
     document.querySelector("[data-monthly-publish]")?.addEventListener("click", publish);
   }
@@ -538,6 +590,30 @@
     config.pages[selected].imageUrl = result.url.startsWith("http") ? result.url : api + result.url;
     render();
     toast("圖片已上傳");
+  }
+
+  async function uploadGalleryImages(event) {
+    const files = Array.from(event.target.files || []);
+    if (!files.length) return;
+    const email = adminEmail();
+    if (!email) return toast("請先登入管理者，才能上傳活動圖集");
+    const page = hydratePage(config.pages[selected]);
+    const uploadedUrls = [];
+    for (const file of files) {
+      const form = new FormData();
+      form.append("file", file);
+      form.append("purpose", "monthly-gallery");
+      form.append("activityId", page.activityNo || page.activityId || config.month || "draft");
+      const res = await fetch(`${api}/api/uploads`, { method: "POST", headers: { "x-admin-email": email }, body: form });
+      const result = await res.json().catch(() => ({}));
+      if (res.ok && result.url) uploadedUrls.push(result.url.startsWith("http") ? result.url : api + result.url);
+    }
+    if (!uploadedUrls.length) return toast("圖集上傳失敗");
+    const rawPage = config.pages[selected];
+    rawPage.galleryUrls = uniqueUrls([rawPage.galleryUrls, uploadedUrls]);
+    if (!rawPage.imageUrl) rawPage.imageUrl = rawPage.galleryUrls[0];
+    render();
+    toast(`已上傳 ${uploadedUrls.length} 張圖集圖片`);
   }
 
   async function publish() {

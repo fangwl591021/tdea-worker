@@ -2,7 +2,7 @@ import baseEntry from "./roster-sync-entry4";
 
 type Env = { ADMIN_EMAILS?: string; ASSETS_BUCKET?: R2Bucket; LINE_CHANNEL_SECRET?: string; LINE_CHANNEL_ACCESS_TOKEN?: string; GOOGLE_FORMS_SCRIPT_URL?: string; GOOGLE_FORMS_SHARED_SECRET?: string; OPNFORM_API_BASE?: string; OPNFORM_PUBLIC_BASE?: string; OPNFORM_API_TOKEN?: string; OPNFORM_WORKSPACE_ID?: string; OPNFORM_WEBHOOK_SECRET?: string; WETW_POINT_API_KEY?: string; WETW_SHOP_ID?: string; WETW_POINT_TYPE?: string; TDEA_POINT_EXTERNAL_SYNC?: string };
 type LineEvent = { type?: string; replyToken?: string; message?: { type?: string; text?: string }; postback?: { data?: string } };
-type MonthlyPage = { id?: string; activityNo?: string; imageUrl?: string; formImageUrl?: string; detailTitle?: string; detailText?: string; detailUrl?: string; formUrl?: string; shareUrl?: string; order?: number };
+type MonthlyPage = { id?: string; activityNo?: string; imageUrl?: string; galleryUrls?: string[]; formImageUrl?: string; detailTitle?: string; detailText?: string; detailUrl?: string; formUrl?: string; shareUrl?: string; order?: number };
 type MonthlyConfig = { enabled?: boolean; keyword?: string; month?: string; altText?: string; detailBaseUrl?: string; pages?: MonthlyPage[]; updatedAt?: string };
 type VendorCardItem = { id?: string; enabled?: boolean; name?: string; label?: string; actionText?: string; imageUrl?: string; order?: number };
 type VendorCardConfig = { enabled?: boolean; keyword?: string; altText?: string; title?: string; items?: VendorCardItem[]; updatedAt?: string };
@@ -1461,6 +1461,18 @@ async function syncOpnFormResponses(request: Request, env: Env) {
 
 function normalizeConfig(config: MonthlyConfig): MonthlyConfig {
   const pages = Array.isArray(config.pages) ? config.pages : [];
+  const cleanUrls = (value: unknown) => {
+    const seen = new Set<string>();
+    const values = Array.isArray(value) ? value : String(value || "").split(/[\n,]+/);
+    return values
+      .map((item) => String(item || "").trim())
+      .filter((item) => /^https?:\/\//i.test(item))
+      .filter((item) => {
+        if (seen.has(item)) return false;
+        seen.add(item);
+        return true;
+      });
+  };
   return {
     enabled: Boolean(config.enabled),
     keyword: fixedKeyword,
@@ -1472,6 +1484,7 @@ function normalizeConfig(config: MonthlyConfig): MonthlyConfig {
       id: String(page.id || crypto.randomUUID()),
       activityNo: String(page.activityNo || "").trim(),
       imageUrl: String(page.imageUrl || "").trim(),
+      galleryUrls: cleanUrls(page.galleryUrls),
       formImageUrl: String(page.formImageUrl || "").trim(),
       detailTitle: String(page.detailTitle || "詳細說明").trim() || "詳細說明",
       detailText: String(page.detailText || "").trim(),
@@ -1523,6 +1536,25 @@ function buildMonthlyBubble(page: MonthlyPage, config: MonthlyConfig) {
 function vendorCardLabel(label: string) {
   const text = clean(label);
   return text.length > 10 ? text.slice(0, 10) : text;
+}
+
+function monthlyPageImages(page: MonthlyPage) {
+  const seen = new Set<string>();
+  return [page.imageUrl, ...(Array.isArray(page.galleryUrls) ? page.galleryUrls : [])]
+    .map((value) => String(value || "").trim())
+    .filter((value) => /^https?:\/\//i.test(value))
+    .filter((value) => {
+      if (seen.has(value)) return false;
+      seen.add(value);
+      return true;
+    });
+}
+
+function monthlySliderHtml(page: MonthlyPage) {
+  const images = monthlyPageImages(page);
+  if (!images.length) return "";
+  if (images.length === 1) return `<img src="${esc(images[0])}" alt="">`;
+  return `<div class="slider" data-slider><div class="track">${images.map((url) => `<div class="slide"><img src="${esc(url)}" alt=""></div>`).join("")}</div><div class="slider-nav"><button type="button" data-prev>‹</button><button type="button" data-next>›</button></div><div class="dots">${images.map((_, index) => `<button type="button" data-dot="${index}" class="${index === 0 ? "active" : ""}"></button>`).join("")}</div></div><script>(()=>{const root=document.querySelector("[data-slider]");if(!root)return;const track=root.querySelector(".track");const dots=[...root.querySelectorAll("[data-dot]")];let i=0,t=null;const go=n=>{i=(n+dots.length)%dots.length;track.style.transform="translateX(-"+(i*100)+"%)";dots.forEach((d,di)=>d.classList.toggle("active",di===i));};const restart=()=>{if(t)clearInterval(t);t=setInterval(()=>go(i+1),3000);};root.querySelector("[data-prev]").onclick=()=>{go(i-1);restart();};root.querySelector("[data-next]").onclick=()=>{go(i+1);restart();};dots.forEach(d=>d.onclick=()=>{go(Number(d.dataset.dot||0));restart();});restart();})();</script>`;
 }
 
 function buildVendorCardFlex(config: VendorCardConfig) {
