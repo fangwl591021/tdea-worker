@@ -32,22 +32,26 @@
     return trim(value).replace(/\s+/g, "");
   }
 
+  function isLiveActivity(activity) {
+    const status = normalizeStatus(activity?.status);
+    return status.includes("上架") && !status.includes("下架");
+  }
+
   function activityMonth(activity) {
-    const text = [activity?.courseTime, activity?.deadline, activity?.activityDate, activity?.date].map((value) => trim(value)).join(" ");
-    const match = text.match(/(20\d{2})[\/.-](\d{1,2})/);
+    const text = [activity?.courseTime, activity?.deadline, activity?.activityDate, activity?.date, activity?.activityNo, activity?.name, activity?.id].map((value) => trim(value)).join(" ");
+    const match = text.match(/(20\d{2})[\/.\-年](\d{1,2})/) || text.match(/\b(20\d{2})(\d{2})(\d{2})\b/);
     if (!match) return "";
     return `${match[1]}-${String(Number(match[2])).padStart(2, "0")}`;
   }
 
-  function monthlyActivityKey(activity) {
-    return trim(activity?.activityNo) || trim(activity?.id) || trim(activity?.name);
-  }
-
   function autoMonthlyActivities() {
     const month = trim(config?.month);
-    return activities()
-      .filter((activity) => normalizeStatus(activity.status) === "上架")
-      .filter((activity) => !month || activityMonth(activity) === month)
+    const liveRows = activities().filter(isLiveActivity);
+    const monthlyRows = liveRows.filter((activity) => {
+      const parsedMonth = activityMonth(activity);
+      return !month || !parsedMonth || parsedMonth === month;
+    });
+    return monthlyRows
       .sort((a, b) => {
         const aTime = trim(a.courseTime);
         const bTime = trim(b.courseTime);
@@ -377,7 +381,9 @@
     return trim(activity.formId) || trim(activity.nativeFormId) || trim(activity.opnformFormId) || trim(activity.googleFormId) || trim(settings.formId) || trim(settings.nativeFormId) || trim(settings.opnformFormId) || trim(settings.googleFormId);
   }
   function basicFields() {
-    return `<div class="monthly-basic-grid"><div class="field"><label>月份</label><input name="month" data-monthly-basic value="${esc(config.month || "")}" placeholder="2026-05"></div><div class="monthly-keyword-pill"><span>觸發關鍵字</span><strong>${fixedKeyword}</strong></div><label class="monthly-enabled"><input type="checkbox" name="enabled" data-monthly-enabled ${config.enabled ? "checked" : ""}> 啟用此關鍵字</label></div>`;
+    const liveCount = activities().filter(isLiveActivity).length;
+    const syncedCount = autoMonthlyActivities().length;
+    return `<div class="monthly-basic-grid"><div class="field"><label>月份</label><input name="month" data-monthly-basic value="${esc(config.month || "")}" placeholder="2026-05"></div><div class="monthly-keyword-pill"><span>觸發關鍵字</span><strong>${fixedKeyword}</strong></div><label class="monthly-enabled"><input type="checkbox" name="enabled" data-monthly-enabled ${config.enabled ? "checked" : ""}> 啟用此關鍵字</label></div><div class="monthly-link-note">目前可同步 ${syncedCount} 個活動；全部上架活動 ${liveCount} 個。若活動有日期，會依月份篩選；沒有可判讀日期時仍會納入。</div>`;
   }
   function activitySelect(page) {
     const current = page.activityNo || page.activityId || "";
@@ -636,7 +642,7 @@
   }
 
   function bind() {
-    document.querySelectorAll("[data-monthly-basic]").forEach((input) => input.addEventListener("input", () => { config[input.name] = input.value; updatePreview(); }));
+    document.querySelectorAll("[data-monthly-basic]").forEach((input) => input.addEventListener("input", () => { config[input.name] = input.value; if (input.name === "month") render(); else updatePreview(); }));
     document.querySelector("[data-monthly-enabled]")?.addEventListener("change", (event) => { config.enabled = event.target.checked; });
     bindPageButtons();
     document.querySelector("[data-monthly-add]")?.addEventListener("click", () => { if (config.pages.length >= 12) return toast("LINE carousel 最多 12 頁"); config.pages.push(blankPage()); selected = config.pages.length - 1; render(); });
