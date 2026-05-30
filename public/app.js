@@ -230,7 +230,7 @@
   async function importLineActivityDrafts(showMessage = true) {
     const email = localStorage.getItem("tdea-admin-email") || sessionStorage.getItem("tdea-admin-email") || "";
     if (!email) {
-      toast("請先設定管理者 Email，才能匯入 LINE 活動草稿");
+      if (showMessage) toast("請先設定管理者 Email，才能匯入 LINE 活動草稿");
       return;
     }
     const response = await fetch(api + "/api/line-activity-drafts", {
@@ -239,7 +239,7 @@
     });
     const result = await response.json().catch(() => ({}));
     if (!response.ok || !result.success) {
-      toast(result.message || "LINE 活動草稿匯入失敗");
+      if (showMessage) toast(result.message || "LINE 活動草稿匯入失敗");
       return;
     }
     const rows = Array.isArray(result.data) ? result.data : [];
