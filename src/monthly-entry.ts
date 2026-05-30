@@ -1879,12 +1879,54 @@ function shouldUseLineActivityAi(text: string, draft: LineActivityDraft) {
 
 function manualLineActivityAnswerValue(step: string, text: string) {
   const key = lineActivityStepKey(step);
+  if (key === "deadline" && ["自訂日期", "自訂"].includes(text)) return undefined;
+  if (key === "courseTime" && ["自訂時間", "自訂"].includes(text)) return undefined;
   if (key === "capacity" && ["不限", "不限名額", "不限人數"].includes(text)) return 0;
+  if (key === "deadline") return text;
   if (["capacity", "checkinPoints", "feePoints"].includes(key)) {
     const numeric = Number(text.replace(/[^\d.-]/g, ""));
     return Number.isFinite(numeric) ? numeric : undefined;
   }
   return text;
+}
+
+function extractLineActivityDate(value: unknown) {
+  const text = clean(value);
+  const match = text.match(/(\d{4})[/-](\d{1,2})[/-](\d{1,2})/);
+  if (!match) return null;
+  const date = new Date(Number(match[1]), Number(match[2]) - 1, Number(match[3]));
+  return Number.isFinite(date.getTime()) ? date : null;
+}
+
+function formatLineActivityDate(date: Date) {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}/${month}/${day}`;
+}
+
+function resolveLineActivityRelativeAnswer(step: string, text: string, draft: LineActivityDraft) {
+  if (step !== "deadline") return manualLineActivityAnswerValue(step, text);
+  const eventDate = extractLineActivityDate(draft.answers.courseTime);
+  const days = text.includes("前一週") ? 7 : text.includes("前三天") ? 3 : text.includes("前一天") ? 1 : 0;
+  if (days && eventDate) {
+    const deadline = new Date(eventDate.getTime());
+    deadline.setDate(deadline.getDate() - days);
+    return formatLineActivityDate(deadline);
+  }
+  return manualLineActivityAnswerValue(step, text);
+}
+
+function displayLineActivityDeadline(draft: LineActivityDraft) {
+  const value = firstClean(draft.answers.deadline);
+  const resolved = resolveLineActivityRelativeAnswer("deadline", value, draft);
+  return resolved === undefined ? value : String(resolved);
+}
+
+function lineActivityFreeTextQuestion(step: string): Record<string, unknown> {
+  if (step === "courseTime") return { type: "text", text: "請輸入活動時間，例如：2026/06/04 14:00-16:00" };
+  if (step === "deadline") return { type: "text", text: "請輸入報名截止日，例如：2026/06/03" };
+  return lineActivityQuestion(step);
 }
 
 function openAiOutputText(payload: unknown) {
@@ -1997,7 +2039,7 @@ function buildLineActivityFromDraft(draft: LineActivityDraft) {
     type: firstClean(answers.type, "講座類"),
     typeLabel: firstClean(answers.type, "講座類"),
     courseTime: firstClean(answers.courseTime),
-    deadline: firstClean(answers.deadline),
+    deadline: displayLineActivityDeadline(draft),
     capacity: Number(answers.capacity || 0),
     checkinPoints: Number(answers.checkinPoints || 0),
     feePoints: Number(answers.feePoints || 0),
@@ -2025,7 +2067,7 @@ function lineActivityConfirmMessage(draft: LineActivityDraft): Record<string, un
       `活動名稱：${firstClean(answers.name)}`,
       `活動類型：${firstClean(answers.type)}`,
       `活動時間：${firstClean(answers.courseTime)}`,
-      `報名截止：${firstClean(answers.deadline)}`,
+      `報名截止：${displayLineActivityDeadline(draft)}`,
       `名額：${firstClean(answers.capacity)}`,
       `簽到贈點：${firstClean(answers.checkinPoints)}`,
       `報名扣點：${firstClean(answers.feePoints)}`,
@@ -2111,8 +2153,8 @@ async function handleLineActivityMakerEvent(event: LineEvent, env: Env, ctx?: Ex
     }
   if (!changed.length) {
     const key = lineActivityStepKey(draft.step);
-    const manualValue = manualLineActivityAnswerValue(draft.step, text);
-    if (manualValue === undefined) return lineActivityQuestion(draft.step);
+    const manualValue = resolveLineActivityRelativeAnswer(draft.step, text, draft);
+    if (manualValue === undefined) return lineActivityFreeTextQuestion(draft.step);
     draft.answers[key] = manualValue;
     draft.step = nextLineActivityStep(draft.step);
   } else {
@@ -2142,13 +2184,15 @@ async function handleLineActivityMaker(request: Request, env: Env, rawBody: stri
   const signature = request.headers.get("x-line-signature");
   if (!await verifyLineSignature(rawBody, signature, env.LINE_CHANNEL_SECRET)) return new Response("Invalid Signature", { status: 403, headers });
   const messages = [] as Array<{ event: LineEvent; message: Record<string, unknown> }>;
+  let handled = 0;
   for (const event of relevant) {
     const text = clean(extractTriggerText(event));
     const lineUserId = lineUserIdFromEvent(event);
     const starts = isLineActivityStart(text);
     const draft = !starts ? await readLineActivityDraft(env, lineUserId) || await readLatestLineActivityDraft(env) : null;
-    if (!starts && draft && clean(env.OPENAI_API_KEY) && shouldUseLineActivityAi(text, draft) && event.replyToken && event.source?.userId) {
-      messages.push({ event, message: { type: "text", text: "整理中，稍後回覆整理結果..." } });
+    if (!starts && draft && event.source?.userId) {
+      handled += 1;
+      if (clean(env.OPENAI_API_KEY) && shouldUseLineActivityAi(text, draft) && event.replyToken) messages.push({ event, message: { type: "text", text: "整理中，稍後回覆整理結果..." } });
       const task = (async () => {
         const finalMessage = await handleLineActivityMakerEvent(event, env, ctx);
         if (!finalMessage) return;
@@ -2157,11 +2201,16 @@ async function handleLineActivityMaker(request: Request, env: Env, rawBody: stri
       })().catch((error) => writeLineActivityDebug(env, { stage: "line_push_failed", text, lineUserId, draftId: draft.id, message: error instanceof Error ? error.message : String(error) }).catch(() => undefined));
       if (ctx) ctx.waitUntil(task);
       else await task;
+      if (!messages.some((item) => item.event === event)) queueLineActivityDebug(ctx, env, { stage: "line_push_only", text, lineUserId, draftId: draft.id });
       continue;
     }
     const message = await handleLineActivityMakerEvent(event, env, ctx);
-    if (message) messages.push({ event, message });
+    if (message) {
+      handled += 1;
+      messages.push({ event, message });
+    }
   }
+  if (!messages.length && handled) return json({ success: true, mode: "line-activity-maker", matched: [lineActivityCreateKeyword], forwarded: false, lineReplies: [] });
   if (!messages.length) return null;
   const lineReplies = await Promise.all(messages.map(({ event, message }) => event.replyToken ? replyToLine(event.replyToken, [message], env) : Promise.resolve({ ok: false, status: 400, message: "Missing replyToken" })));
   queueLineActivityDebug(ctx, env, { stage: "line_reply_results", count: lineReplies.length, results: lineReplies });
