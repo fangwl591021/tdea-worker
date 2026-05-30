@@ -2109,6 +2109,21 @@ async function getLineActivityDebug(request: Request, env: Env) {
   return json({ success: true, openaiConfigured: Boolean(clean(env.OPENAI_API_KEY)), openaiModel: clean(env.OPENAI_MODEL) || "gpt-4o-mini", data: Array.isArray(rows) ? rows : [] });
 }
 
+async function testLineActivityAi(request: Request, env: Env) {
+  const guard = requireAdmin(request, env);
+  if (guard) return guard;
+  const url = new URL(request.url);
+  const input = request.method === "POST" ? await request.json().catch(() => ({})) as Record<string, unknown> : {};
+  const text = firstClean(input.text, url.searchParams.get("text"), "端午團聚，2026/06/10 14:00-17:00，報名到 2026/06/05，名額30，聯誼類，上架，簽到贈點100，不扣點，LINE會員快報");
+  const draft: LineActivityDraft = { id: "ai-check", lineUserId: "ai-check", step: "name", answers: {}, status: "active", createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() };
+  try {
+    const result = await extractLineActivityWithOpenAI(text, draft, env);
+    return json({ success: true, openaiConfigured: Boolean(clean(env.OPENAI_API_KEY)), openaiModel: clean(env.OPENAI_MODEL) || "gpt-4o-mini", input: text, data: result });
+  } catch (error) {
+    return json({ success: false, openaiConfigured: Boolean(clean(env.OPENAI_API_KEY)), message: error instanceof Error ? error.message : String(error) }, 500);
+  }
+}
+
 async function readAiweMembers(env: Env): Promise<Array<Record<string, unknown>>> {
   if (!env.ASSETS_BUCKET) return [];
   const object = await env.ASSETS_BUCKET.get(aiweMembersKey);
@@ -2423,6 +2438,7 @@ export default {
     if (request.method === "OPTIONS") return new Response(null, { status: 204, headers });
 	    if (request.method === "GET" && url.pathname === "/api/line-activity-drafts") return listLineActivityDrafts(request, env);
 	    if (request.method === "GET" && url.pathname === "/api/line-activity-debug") return getLineActivityDebug(request, env);
+	    if ((request.method === "GET" || request.method === "POST") && url.pathname === "/api/line-activity-ai-check") return testLineActivityAi(request, env);
 	    if (request.method === "GET" && url.pathname === "/api/monthly-activity") return json({ success: true, data: await readMonthly(env) });
 	    if ((request.method === "PUT" || request.method === "POST") && url.pathname === "/api/monthly-activity") { const guard = requireAdmin(request, env); if (guard) return guard; if (!env.ASSETS_BUCKET) return json({ success: false, message: "R2 bucket is not configured" }, 503); const config = await request.json().catch(() => ({})) as MonthlyConfig; await writeMonthly(env, config); return json({ success: true, data: await readMonthly(env), flex: buildMonthlyFlex(config) }); }
 	    if (request.method === "GET" && url.pathname === "/api/monthly-activity/flex") { const config = await readMonthly(env); return json({ success: true, flex: buildMonthlyFlex(config), data: config }); }
