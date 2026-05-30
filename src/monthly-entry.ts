@@ -1780,11 +1780,11 @@ function lineActivityQuestion(step: string): Record<string, unknown> {
   });
   if (step === "name") return { type: "text", text: "開始建立活動。\n可以直接貼上活動文案，也可以一次輸入活動名稱、類型、時間、截止日、名額、點數與報名方式。", quickReply: quick(["取消"]) };
   if (step === "type") return { type: "text", text: "請選擇活動類型。", quickReply: quick(["講座類", "教學類", "聯誼類", "企業參訪", "年度會議"]) };
-  if (step === "courseTime") return { type: "text", text: "請輸入活動時間。\n格式建議：2026/05/24 09:30-16:30" };
-  if (step === "deadline") return { type: "text", text: "請輸入報名截止日。\n格式建議：2026/05/23" };
-  if (step === "capacity") return { type: "text", text: "請輸入名額上限。\n例如：20" };
-  if (step === "checkinPoints") return { type: "text", text: "請輸入簽到贈點。\n沒有贈點請輸入 0。" };
-  if (step === "feePoints") return { type: "text", text: "請輸入報名扣點或費用扣抵點數。\n沒有扣點請輸入 0。" };
+  if (step === "courseTime") return { type: "text", text: "請提供活動時間。", quickReply: quick(["今天下午", "明天下午", "下週", "自訂時間"]) };
+  if (step === "deadline") return { type: "text", text: "請選擇報名截止。", quickReply: quick(["活動前一天", "活動前三天", "活動前一週", "自訂日期"]) };
+  if (step === "capacity") return { type: "text", text: "請選擇名額上限。", quickReply: quick(["不限", "20", "30", "50", "100"]) };
+  if (step === "checkinPoints") return { type: "text", text: "請選擇簽到贈點。", quickReply: quick(["0", "50", "100", "200", "500"]) };
+  if (step === "feePoints") return { type: "text", text: "請選擇報名扣點。", quickReply: quick(["0", "50", "100", "200", "500"]) };
   if (step === "registrationMode") return { type: "text", text: "請選擇報名方式。", quickReply: quick(["LINE會員快報", "一般表單", "混合模式"]) };
   if (step === "status") return { type: "text", text: "請選擇活動狀態。", quickReply: quick(["下架", "上架"]) };
   if (step === "confirm") return { type: "text", text: "請確認是否建立草稿。", quickReply: quick(["確認建立", "重新開始", "取消"]) };
@@ -1870,6 +1870,21 @@ function applyLineActivityTextHeuristics(draft: LineActivityDraft, text: string)
     changed.push("capacity");
   }
   return changed;
+}
+
+function shouldUseLineActivityAi(text: string, draft: LineActivityDraft) {
+  if (draft.step !== "name") return false;
+  return text.includes("\n") || text.length >= 30 || /\d{4}[/-]\d{1,2}/.test(text);
+}
+
+function manualLineActivityAnswerValue(step: string, text: string) {
+  const key = lineActivityStepKey(step);
+  if (key === "capacity" && ["不限", "不限名額", "不限人數"].includes(text)) return 0;
+  if (["capacity", "checkinPoints", "feePoints"].includes(key)) {
+    const numeric = Number(text.replace(/[^\d.-]/g, ""));
+    return Number.isFinite(numeric) ? numeric : undefined;
+  }
+  return text;
 }
 
 function openAiOutputText(payload: unknown) {
@@ -2078,7 +2093,7 @@ async function handleLineActivityMakerEvent(event: LineEvent, env: Env, ctx?: Ex
       return { type: "text", text: lineActivitySummary(activity) };
     }
     let changed: string[] = [];
-    if (clean(env.OPENAI_API_KEY)) {
+    if (clean(env.OPENAI_API_KEY) && shouldUseLineActivityAi(text, draft)) {
       try {
         const ai = await extractLineActivityWithOpenAI(text, draft, env);
         if (ai?.intent === "cancel") {
@@ -2094,11 +2109,13 @@ async function handleLineActivityMakerEvent(event: LineEvent, env: Env, ctx?: Ex
         await writeLineActivityDebug(env, { stage: "ai_error", text, lineUserId, draftId: draft.id, message: error instanceof Error ? error.message : String(error) });
       }
     }
-    if (!changed.length) {
-      const key = lineActivityStepKey(draft.step);
-      draft.answers[key] = text;
-      draft.step = nextLineActivityStep(draft.step);
-    } else {
+  if (!changed.length) {
+    const key = lineActivityStepKey(draft.step);
+    const manualValue = manualLineActivityAnswerValue(draft.step, text);
+    if (manualValue === undefined) return lineActivityQuestion(draft.step);
+    draft.answers[key] = manualValue;
+    draft.step = nextLineActivityStep(draft.step);
+  } else {
       draft.step = lineActivityMissingStep(draft);
     }
     await writeLineActivityDraft(env, draft);
@@ -2130,7 +2147,7 @@ async function handleLineActivityMaker(request: Request, env: Env, rawBody: stri
     const lineUserId = lineUserIdFromEvent(event);
     const starts = isLineActivityStart(text);
     const draft = !starts ? await readLineActivityDraft(env, lineUserId) || await readLatestLineActivityDraft(env) : null;
-    if (!starts && draft && clean(env.OPENAI_API_KEY) && event.replyToken && event.source?.userId) {
+    if (!starts && draft && clean(env.OPENAI_API_KEY) && shouldUseLineActivityAi(text, draft) && event.replyToken && event.source?.userId) {
       messages.push({ event, message: { type: "text", text: "整理中，稍後回覆整理結果..." } });
       const task = (async () => {
         const finalMessage = await handleLineActivityMakerEvent(event, env, ctx);
