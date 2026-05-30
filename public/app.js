@@ -225,6 +225,56 @@
     if (showMessage) toast(attempted ? `同步完成，讀取 ${imported} 筆報名。` : "目前沒有可同步的報名表。");
   }
 
+  async function importLineActivityDrafts(showMessage = true) {
+    const email = localStorage.getItem("tdea-admin-email") || sessionStorage.getItem("tdea-admin-email") || "";
+    if (!email) {
+      toast("請先設定管理者 Email，才能匯入 LINE 活動草稿");
+      return;
+    }
+    const response = await fetch(api + "/api/line-activity-drafts", {
+      headers: { "x-admin-email": email },
+      cache: "no-store"
+    });
+    const result = await response.json().catch(() => ({}));
+    if (!response.ok || !result.success) {
+      toast(result.message || "LINE 活動草稿匯入失敗");
+      return;
+    }
+    const rows = Array.isArray(result.data) ? result.data : [];
+    let added = 0;
+    rows.forEach(row => {
+      const activity = row.activity || {};
+      const key = activity.lineDraftId || row.id || activity.id;
+      if (!key || state.data.activities.some(item => item.lineDraftId === key || item.id === activity.id)) return;
+      state.data.activities.unshift({
+        id: activity.id || uid(),
+        activityNo: activity.activityNo || "",
+        name: activity.name || "LINE 建立活動",
+        type: activity.type || "講座類",
+        typeLabel: activity.typeLabel || activity.type || "講座類",
+        courseTime: activity.courseTime || "",
+        deadline: activity.deadline || "",
+        capacity: Number(activity.capacity || 0),
+        checkinPoints: Number(activity.checkinPoints || 0),
+        feePoints: Number(activity.feePoints || 0),
+        registrationMode: activity.registrationMode || "form",
+        reg: Number(activity.reg || 0),
+        check: Number(activity.check || 0),
+        status: activity.status || "下架",
+        formUrl: activity.formUrl || "",
+        lineDraftId: key,
+        lineCreatedBy: activity.lineCreatedBy || row.lineUserId || ""
+      });
+      added += 1;
+    });
+    if (added) {
+      save();
+      state.view = "dashboard";
+      render();
+    }
+    if (showMessage) toast(added ? `已匯入 ${added} 筆 LINE 活動草稿` : "沒有新的 LINE 活動草稿可匯入");
+  }
+
   function render() {
     const [title, sub] = labels[state.view];
     const collapsed = sidebarCollapsed();
@@ -252,7 +302,7 @@
   function actions() {
     if (state.view === "association") return `<button class="btn" data-import="association">匯入 CSV</button><button class="btn primary" data-drawer="association:new">新增協會會員</button>`;
     if (state.view === "vendor") return `<button class="btn" data-import="vendor">匯入 CSV</button><button class="btn primary" data-drawer="vendor:new">新增廠商會員</button>`;
-    if (state.view === "creator") return `<button class="btn" data-reset>清空表單</button>`;
+    if (state.view === "creator") return `<button class="btn" data-import-line-drafts>匯入 LINE 草稿</button><button class="btn" data-reset>清空表單</button>`;
     if (state.view === "redeem") return `<button class="btn" data-load-redeem>刷新紀錄</button>`;
     if (state.view === "keywords") return `<button class="btn" data-refresh-keywords>刷新列表</button>`;
     return `<label class="sync-toggle"><input type="checkbox" data-auto-sync ${autoSyncEnabled() ? "checked" : ""}> 自動同步</label><button class="btn" data-sync-registrations>同步報名</button><button class="btn" data-worker>檢查 Worker</button><button class="btn danger" data-clear-test>清空測試資料</button><button class="btn primary" data-nav="creator">新增活動</button>`;
@@ -289,6 +339,7 @@
   }
   function keywordRows() {
     const builtIn = [
+      { keyword: "TDEA建立活動", aliases: "TDEA新增活動、TDEA活動上稿、TDEA製作活動", purpose: "在 LINE 對話中建立活動草稿", reply: "逐步詢問活動名稱、類型、時間、截止、名額、點數、報名方式與狀態；完成後可在後台匯入 LINE 草稿", entry: "", owner: "LINE 對話上稿", status: "啟用中" },
       { keyword: "TDEA每月活動", aliases: "無", purpose: "推送每月活動橫式多頁 FLEX", reply: "回覆每月活動 carousel，詳細說明走 LIFF，報名按鈕走自建報名表", entry: `${liffBase}?monthlyDetail={活動編號}`, owner: "每月活動", status: "啟用中" },
       { keyword: "TDEA廠商列表", aliases: "TDEA廠商名片、TDEA合作廠商", purpose: "推送可點擊的廠商名片 FLEX 選單", reply: "回覆廠商 logo 九宮格；點擊後送出對應廠商名稱", entry: "", owner: "廠商名片", status: "啟用中" },
       { keyword: "TDEA活動查詢", aliases: "無", purpose: "讓會員查詢或取消自己的活動報名", reply: "開啟 LIFF「我的活動報名」，以 LINE Login 查詢", entry: `${liffBase}?query=1`, owner: "報名系統", status: "啟用中" },
@@ -472,6 +523,7 @@
     const legacySyncForm = document.querySelector("#legacy-sync-form"); if (legacySyncForm) legacySyncForm.onsubmit = syncLegacyPoints;
     const syncButton = document.querySelector("[data-sync-registrations]"); if (syncButton) syncButton.onclick = () => syncRegistrations(true);
     const clearTest = document.querySelector("[data-clear-test]"); if (clearTest) clearTest.onclick = clearTestData;
+    const importLineDrafts = document.querySelector("[data-import-line-drafts]"); if (importLineDrafts) importLineDrafts.onclick = () => importLineActivityDrafts(true);
     document.querySelectorAll("[data-register]").forEach(b => b.onclick = () => {
       const x = state.data.activities.find(r => r.id === b.dataset.register);
       const url = x?.formUrl || x?.nativeFormUrl || x?.googleFormUrl || x?.opnformFormUrl || "";

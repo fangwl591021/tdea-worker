@@ -1,7 +1,7 @@
 import baseEntry from "./roster-sync-entry4";
 
-type Env = { ADMIN_EMAILS?: string; ASSETS_BUCKET?: R2Bucket; LINE_CHANNEL_SECRET?: string; LINE_CHANNEL_ACCESS_TOKEN?: string; GOOGLE_FORMS_SCRIPT_URL?: string; GOOGLE_FORMS_SHARED_SECRET?: string; OPNFORM_API_BASE?: string; OPNFORM_PUBLIC_BASE?: string; OPNFORM_API_TOKEN?: string; OPNFORM_WORKSPACE_ID?: string; OPNFORM_WEBHOOK_SECRET?: string; WETW_POINT_API_KEY?: string; WETW_SHOP_ID?: string; WETW_POINT_TYPE?: string; TDEA_POINT_EXTERNAL_SYNC?: string };
-type LineEvent = { type?: string; replyToken?: string; message?: { type?: string; text?: string }; postback?: { data?: string } };
+type Env = { ADMIN_EMAILS?: string; ASSETS_BUCKET?: R2Bucket; LINE_CHANNEL_SECRET?: string; LINE_CHANNEL_ACCESS_TOKEN?: string; GOOGLE_FORMS_SCRIPT_URL?: string; GOOGLE_FORMS_SHARED_SECRET?: string; OPNFORM_API_BASE?: string; OPNFORM_PUBLIC_BASE?: string; OPNFORM_API_TOKEN?: string; OPNFORM_WORKSPACE_ID?: string; OPNFORM_WEBHOOK_SECRET?: string; WETW_POINT_API_KEY?: string; WETW_SHOP_ID?: string; WETW_POINT_TYPE?: string; TDEA_POINT_EXTERNAL_SYNC?: string; TDEA_ADMIN_LINE_USER_IDS?: string };
+type LineEvent = { type?: string; replyToken?: string; message?: { type?: string; text?: string }; postback?: { data?: string }; source?: { type?: string; userId?: string; groupId?: string; roomId?: string } };
 type MonthlyPage = { id?: string; activityNo?: string; imageUrl?: string; galleryUrls?: string[]; formImageUrl?: string; detailTitle?: string; detailText?: string; detailUrl?: string; formUrl?: string; shareUrl?: string; order?: number };
 type MonthlyConfig = { enabled?: boolean; keyword?: string; month?: string; altText?: string; detailBaseUrl?: string; pages?: MonthlyPage[]; updatedAt?: string };
 type VendorCardItem = { id?: string; enabled?: boolean; name?: string; label?: string; actionText?: string; imageUrl?: string; order?: number };
@@ -21,6 +21,7 @@ type RedeemTransaction = { id: string; lineUserId: string; amount?: number; poin
 type RedeemRequest = { id: string; token: string; vendorId?: string; vendorName: string; amount?: number; points: number; maxPoints?: number; pointRate?: number; mode?: RedeemMode; note?: string; status: "active" | "pending" | "used" | "expired" | "closed"; createdAt: string; startsAt?: string; expiresAt: string; usedAt?: string; lineUserId?: string; pointBalance?: number; pointResult?: unknown; transactions?: RedeemTransaction[] };
 type PushTarget = { kind?: string; memberNoPrefix?: string; rosterType?: string; qualification?: string; manualUids?: string };
 type PushLog = { id: string; createdAt: string; mode: string; target: PushTarget; count: number; messageType: string; title?: string; dryRun?: boolean; responses?: unknown[]; error?: string };
+type LineActivityDraft = { id: string; lineUserId: string; step: string; answers: Record<string, unknown>; status: "active" | "completed" | "cancelled"; activity?: Record<string, unknown>; createdAt: string; updatedAt: string; completedAt?: string };
 
 const monthlyKey = "flex/monthly-activity.json";
 const vendorCardKey = "flex/vendor-card-menu.json";
@@ -29,6 +30,7 @@ const redeemListKey = "redeem/records.json";
 const pointLedgerKey = "points/ledger.json";
 const pushLogKey = "push/logs.json";
 const aiweMembersKey = "aiwe/members.json";
+const lineActivityDraftListKey = "line-activity/drafts.json";
 const defaultCalendarId = "7d66f2a96f192dda6cca2b04e60a6e549c7adf74f57721845d5b7e03f8b7ca89@group.calendar.google.com";
 const workerBaseUrl = "https://tdeawork.fangwl591021.workers.dev";
 const fixedKeyword = "TDEA每月活動";
@@ -36,6 +38,8 @@ const vendorCardKeyword = "TDEA廠商列表";
 const queryKeyword = "TDEA活動查詢";
 const memberQrKeyword = "TDEA會員QR";
 const calendarKeyword = "TDEA行事曆";
+const lineActivityCreateKeyword = "TDEA建立活動";
+const lineActivityCreateAliases = ["TDEA新增活動", "TDEA活動上稿", "TDEA製作活動"];
 const defaultLiffBase = "https://liff.line.me/2005868456-2jmxqyFU?monthlyDetail={id}";
 const defaultLiffCloseUrl = "https://liff.line.me/2005868456-2jmxqyFU?close=1";
 const publicAppUrl = "https://fangwl591021.github.io/tdea-worker/";
@@ -1677,6 +1681,204 @@ function extractTriggerText(event: LineEvent) { if (event.message?.type === "tex
 async function replyToLine(replyToken: string, messages: Array<Record<string, unknown>>, env: Env) { const token = env.LINE_CHANNEL_ACCESS_TOKEN?.trim(); if (!token) return { ok: false, status: 503, message: "LINE token is not configured" }; const response = await fetch("https://api.line.me/v2/bot/message/reply", { method: "POST", headers: { authorization: `Bearer ${token}`, "content-type": "application/json" }, body: JSON.stringify({ replyToken, messages }) }); return { ok: response.ok, status: response.status, body: await response.text().catch(() => "") }; }
 function rebuildRequest(request: Request, rawBody: string) { return new Request(request.url, { method: request.method, headers: request.headers, body: rawBody }); }
 
+function lineActivityDraftKey(lineUserId: string) {
+  return `line-activity/draft-${encodeURIComponent(lineUserId)}.json`;
+}
+
+function lineUserIdFromEvent(event: LineEvent) {
+  return clean(event.source?.userId);
+}
+
+function isLineActivityStart(text: string) {
+  const normalized = normalizeKeyword(text);
+  return [lineActivityCreateKeyword, ...lineActivityCreateAliases].some((keyword) => normalized === normalizeKeyword(keyword));
+}
+
+function isLineActivityCancel(text: string) {
+  return ["取消", "取消上稿", "TDEA取消建立"].some((keyword) => normalizeKeyword(text) === normalizeKeyword(keyword));
+}
+
+function canUseLineActivityMaker(lineUserId: string, env: Env) {
+  const allowed = clean(env.TDEA_ADMIN_LINE_USER_IDS)
+    .split(",")
+    .map((item) => item.trim())
+    .filter(Boolean);
+  return !allowed.length || allowed.includes(lineUserId);
+}
+
+async function readLineActivityDraft(env: Env, lineUserId: string): Promise<LineActivityDraft | null> {
+  if (!env.ASSETS_BUCKET || !lineUserId) return null;
+  const object = await env.ASSETS_BUCKET.get(lineActivityDraftKey(lineUserId));
+  if (!object) return null;
+  const data = await object.json().catch(() => null) as LineActivityDraft | null;
+  return data && data.status === "active" ? data : null;
+}
+
+async function writeLineActivityDraft(env: Env, draft: LineActivityDraft) {
+  if (!env.ASSETS_BUCKET) return;
+  draft.updatedAt = new Date().toISOString();
+  await env.ASSETS_BUCKET.put(lineActivityDraftKey(draft.lineUserId), JSON.stringify(draft, null, 2), { httpMetadata: { contentType: "application/json; charset=utf-8", cacheControl: "no-store" } });
+}
+
+async function appendCompletedLineActivityDraft(env: Env, draft: LineActivityDraft) {
+  if (!env.ASSETS_BUCKET) return;
+  const object = await env.ASSETS_BUCKET.get(lineActivityDraftListKey);
+  const rows = object ? await object.json().catch(() => []) : [];
+  const list = Array.isArray(rows) ? rows as LineActivityDraft[] : [];
+  await env.ASSETS_BUCKET.put(lineActivityDraftListKey, JSON.stringify([draft, ...list].slice(0, 200), null, 2), { httpMetadata: { contentType: "application/json; charset=utf-8", cacheControl: "no-store" } });
+}
+
+function lineActivityQuestion(step: string): Record<string, unknown> {
+  const quick = (items: string[]) => ({
+    items: items.slice(0, 13).map((label) => ({ type: "action", action: { type: "message", label, text: label } }))
+  });
+  if (step === "name") return { type: "text", text: "開始建立活動。\n請輸入活動名稱。\n\n輸入「取消」可中止。" };
+  if (step === "type") return { type: "text", text: "請選擇活動類型。", quickReply: quick(["講座類", "教學類", "聯誼類", "企業參訪", "年度會議"]) };
+  if (step === "courseTime") return { type: "text", text: "請輸入活動時間。\n格式建議：2026/05/24 09:30-16:30" };
+  if (step === "deadline") return { type: "text", text: "請輸入報名截止日。\n格式建議：2026/05/23" };
+  if (step === "capacity") return { type: "text", text: "請輸入名額上限。\n例如：20" };
+  if (step === "checkinPoints") return { type: "text", text: "請輸入簽到贈點。\n沒有贈點請輸入 0。" };
+  if (step === "feePoints") return { type: "text", text: "請輸入報名扣點或費用扣抵點數。\n沒有扣點請輸入 0。" };
+  if (step === "registrationMode") return { type: "text", text: "請選擇報名方式。", quickReply: quick(["LINE會員快報", "一般表單", "混合模式"]) };
+  if (step === "status") return { type: "text", text: "請選擇活動狀態。", quickReply: quick(["下架", "上架"]) };
+  if (step === "confirm") return { type: "text", text: "請確認是否建立草稿。", quickReply: quick(["確認建立", "重新開始", "取消"]) };
+  return { type: "text", text: "請繼續輸入活動資料。" };
+}
+
+function nextLineActivityStep(step: string) {
+  const steps = ["name", "type", "courseTime", "deadline", "capacity", "checkinPoints", "feePoints", "registrationMode", "status", "confirm"];
+  const index = steps.indexOf(step);
+  return index >= 0 ? steps[Math.min(index + 1, steps.length - 1)] : "name";
+}
+
+function lineActivityStepKey(step: string) {
+  return step === "courseTime" ? "courseTime"
+    : step === "registrationMode" ? "registrationMode"
+      : step;
+}
+
+function lineActivityRegistrationMode(value: string) {
+  if (value.includes("快報")) return "member_login";
+  if (value.includes("混合")) return "mixed";
+  return "form";
+}
+
+function buildLineActivityFromDraft(draft: LineActivityDraft) {
+  const answers = draft.answers || {};
+  const now = new Date();
+  const id = `LINE-${now.getTime()}-${codeToken(4)}`;
+  const name = firstClean(answers.name, "LINE 建立活動");
+  return {
+    id,
+    activityNo: `ACT-${now.toISOString().slice(0, 10).replace(/-/g, "")}-${codeToken(3)}`,
+    name,
+    type: firstClean(answers.type, "講座類"),
+    typeLabel: firstClean(answers.type, "講座類"),
+    courseTime: firstClean(answers.courseTime),
+    deadline: firstClean(answers.deadline),
+    capacity: Number(answers.capacity || 0),
+    checkinPoints: Number(answers.checkinPoints || 0),
+    feePoints: Number(answers.feePoints || 0),
+    registrationMode: lineActivityRegistrationMode(firstClean(answers.registrationMode, "一般表單")),
+    reg: 0,
+    check: 0,
+    status: firstClean(answers.status, "下架"),
+    formUrl: "",
+    lineDraftId: draft.id,
+    lineCreatedBy: draft.lineUserId,
+    createdAt: now.toISOString()
+  };
+}
+
+function lineActivitySummary(activity: Record<string, unknown>) {
+  return [
+    "活動草稿已建立，可回後台匯入。",
+    "",
+    `活動名稱：${activity.name || ""}`,
+    `活動類型：${activity.typeLabel || activity.type || ""}`,
+    `活動時間：${activity.courseTime || ""}`,
+    `報名截止：${activity.deadline || ""}`,
+    `名額：${activity.capacity || 0}`,
+    `報名方式：${activity.registrationMode || "form"}`,
+    `狀態：${activity.status || "下架"}`,
+    "",
+    `後台：${publicAppUrl}`
+  ].join("\n");
+}
+
+async function handleLineActivityMakerEvent(event: LineEvent, env: Env): Promise<Record<string, unknown> | null> {
+  const text = clean(extractTriggerText(event));
+  const lineUserId = lineUserIdFromEvent(event);
+  if (!text || !lineUserId) return null;
+  const starts = isLineActivityStart(text);
+  let draft = starts ? null : await readLineActivityDraft(env, lineUserId);
+  if (!starts && !draft) return null;
+  if (!canUseLineActivityMaker(lineUserId, env)) {
+    return { type: "text", text: "此 LINE 帳號尚未開通活動上稿權限。" };
+  }
+  if (!env.ASSETS_BUCKET) return { type: "text", text: "活動上稿暫不可用：R2 尚未設定。" };
+  if (starts || (draft && normalizeKeyword(text) === normalizeKeyword("重新開始"))) {
+    draft = { id: crypto.randomUUID(), lineUserId, step: "name", answers: {}, status: "active", createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() };
+    await writeLineActivityDraft(env, draft);
+    return lineActivityQuestion("name");
+  }
+  if (!draft) return null;
+  if (isLineActivityCancel(text)) {
+    draft.status = "cancelled";
+    await writeLineActivityDraft(env, draft);
+    return { type: "text", text: "已取消本次活動上稿。" };
+  }
+  if (draft.step === "confirm") {
+    if (normalizeKeyword(text) !== normalizeKeyword("確認建立")) return lineActivityQuestion("confirm");
+    const activity = buildLineActivityFromDraft(draft);
+    draft.status = "completed";
+    draft.activity = activity;
+    draft.completedAt = new Date().toISOString();
+    await writeLineActivityDraft(env, draft);
+    await appendCompletedLineActivityDraft(env, draft);
+    return { type: "text", text: lineActivitySummary(activity) };
+  }
+  const key = lineActivityStepKey(draft.step);
+  draft.answers[key] = text;
+  draft.step = nextLineActivityStep(draft.step);
+  await writeLineActivityDraft(env, draft);
+  return lineActivityQuestion(draft.step);
+}
+
+async function handleLineActivityMaker(request: Request, env: Env, rawBody: string, allEvents: LineEvent[]) {
+  const candidates = allEvents.filter((event) => {
+    const text = clean(extractTriggerText(event));
+    return text && lineUserIdFromEvent(event);
+  });
+  if (!candidates.length) return null;
+  const relevant = [] as LineEvent[];
+  for (const event of candidates) {
+    const text = clean(extractTriggerText(event));
+    if (isLineActivityStart(text) || await readLineActivityDraft(env, lineUserIdFromEvent(event))) relevant.push(event);
+  }
+  if (!relevant.length) return null;
+  const signature = request.headers.get("x-line-signature");
+  if (!await verifyLineSignature(rawBody, signature, env.LINE_CHANNEL_SECRET)) return new Response("Invalid Signature", { status: 403, headers });
+  const messages = [] as Array<{ event: LineEvent; message: Record<string, unknown> }>;
+  for (const event of relevant) {
+    const message = await handleLineActivityMakerEvent(event, env);
+    if (message) messages.push({ event, message });
+  }
+  if (!messages.length) return null;
+  const lineReplies = await Promise.all(messages.map(({ event, message }) => event.replyToken ? replyToLine(event.replyToken, [message], env) : Promise.resolve({ ok: false, status: 400, message: "Missing replyToken" })));
+  return json({ success: true, mode: "line-activity-maker", matched: [lineActivityCreateKeyword], forwarded: false, lineReplies });
+}
+
+async function listLineActivityDrafts(request: Request, env: Env) {
+  const guard = requireAdmin(request, env);
+  if (guard) return guard;
+  if (!env.ASSETS_BUCKET) return json({ success: false, message: "R2 bucket is not configured" }, 503);
+  const object = await env.ASSETS_BUCKET.get(lineActivityDraftListKey);
+  const rows = object ? await object.json().catch(() => []) : [];
+  const list = Array.isArray(rows) ? rows as LineActivityDraft[] : [];
+  return json({ success: true, data: list.map((item) => ({ ...item, activity: item.activity || buildLineActivityFromDraft(item) })) });
+}
+
 async function readAiweMembers(env: Env): Promise<Array<Record<string, unknown>>> {
   if (!env.ASSETS_BUCKET) return [];
   const object = await env.ASSETS_BUCKET.get(aiweMembersKey);
@@ -1908,6 +2110,8 @@ async function handleMonthlyWebhook(request: Request, env: Env, rawBody: string)
   let payload: unknown;
   try { payload = JSON.parse(rawBody); } catch (_) { return null; }
   const allEvents = extractLineEvents(payload);
+  const lineActivityMaker = await handleLineActivityMaker(request, env, rawBody, allEvents);
+  if (lineActivityMaker) return lineActivityMaker;
   const queryEvents = allEvents.filter((event) => normalizeKeyword(extractTriggerText(event)) === normalizeKeyword(queryKeyword));
   const memberQrEvents = allEvents.filter((event) => normalizeKeyword(extractTriggerText(event)) === normalizeKeyword(memberQrKeyword));
   const calendarEvents = allEvents.filter((event) => normalizeKeyword(extractTriggerText(event)) === normalizeKeyword(calendarKeyword));
@@ -1987,6 +2191,7 @@ export default {
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
     const url = new URL(request.url);
     if (request.method === "OPTIONS") return new Response(null, { status: 204, headers });
+	    if (request.method === "GET" && url.pathname === "/api/line-activity-drafts") return listLineActivityDrafts(request, env);
 	    if (request.method === "GET" && url.pathname === "/api/monthly-activity") return json({ success: true, data: await readMonthly(env) });
 	    if ((request.method === "PUT" || request.method === "POST") && url.pathname === "/api/monthly-activity") { const guard = requireAdmin(request, env); if (guard) return guard; if (!env.ASSETS_BUCKET) return json({ success: false, message: "R2 bucket is not configured" }, 503); const config = await request.json().catch(() => ({})) as MonthlyConfig; await writeMonthly(env, config); return json({ success: true, data: await readMonthly(env), flex: buildMonthlyFlex(config) }); }
 	    if (request.method === "GET" && url.pathname === "/api/monthly-activity/flex") { const config = await readMonthly(env); return json({ success: true, flex: buildMonthlyFlex(config), data: config }); }
