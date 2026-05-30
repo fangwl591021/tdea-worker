@@ -15,6 +15,8 @@
     redeem: ["點數折抵", "建立限時店家掃碼工作台，店家掃會員 QR 後執行扣點。"]
   };
   const state = { view: "dashboard", drawer: "", data: load(), registrationLists: {} };
+  let lineDraftAutoImporting = false;
+  let lineDraftLastAutoImport = 0;
 
   function sidebarCollapsed() { return localStorage.getItem(sidebarCollapsedKey) === "Y"; }
   function setSidebarCollapsed(value) { localStorage.setItem(sidebarCollapsedKey, value ? "Y" : "N"); }
@@ -243,6 +245,7 @@
     const rows = Array.isArray(result.data) ? result.data : [];
     let added = 0;
     rows.forEach(row => {
+      if (row.status !== "completed") return;
       const activity = row.activity || {};
       const key = activity.lineDraftId || row.id || activity.id;
       if (!key || state.data.activities.some(item => item.lineDraftId === key || item.id === activity.id)) return;
@@ -275,6 +278,19 @@
     if (showMessage) toast(added ? `已匯入 ${added} 筆 LINE 活動草稿` : "沒有新的 LINE 活動草稿可匯入");
   }
 
+  function maybeAutoImportLineActivityDrafts() {
+    if (state.view !== "dashboard" || lineDraftAutoImporting) return;
+    const now = Date.now();
+    if (now - lineDraftLastAutoImport < 15000) return;
+    lineDraftLastAutoImport = now;
+    lineDraftAutoImporting = true;
+    setTimeout(() => {
+      importLineActivityDrafts(false).catch(() => undefined).finally(() => {
+        lineDraftAutoImporting = false;
+      });
+    }, 0);
+  }
+
   function render() {
     const [title, sub] = labels[state.view];
     const collapsed = sidebarCollapsed();
@@ -292,6 +308,7 @@
       ${drawer()}
       <div class="toast" id="toast"></div>`;
     bind();
+    maybeAutoImportLineActivityDrafts();
     if (autoSyncEnabled()) syncRegistrations();
     if (state.view === "redeem" && !state.redeemRecords) loadRedeemRecords();
     if (state.view === "redeem" && !state.pointLedger) loadPointLedger();
