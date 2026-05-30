@@ -45,13 +45,8 @@
   }
 
   function autoMonthlyActivities() {
-    const month = trim(config?.month);
     const liveRows = activities().filter(isLiveActivity);
-    const monthlyRows = liveRows.filter((activity) => {
-      const parsedMonth = activityMonth(activity);
-      return !month || !parsedMonth || parsedMonth === month;
-    });
-    return monthlyRows
+    return liveRows
       .sort((a, b) => {
         const aTime = trim(a.courseTime);
         const bTime = trim(b.courseTime);
@@ -383,7 +378,7 @@
   function basicFields() {
     const liveCount = activities().filter(isLiveActivity).length;
     const syncedCount = autoMonthlyActivities().length;
-    return `<div class="monthly-basic-grid"><div class="field"><label>月份</label><input name="month" data-monthly-basic value="${esc(config.month || "")}" placeholder="2026-05"></div><div class="monthly-keyword-pill"><span>觸發關鍵字</span><strong>${fixedKeyword}</strong></div><label class="monthly-enabled"><input type="checkbox" name="enabled" data-monthly-enabled ${config.enabled ? "checked" : ""}> 啟用此關鍵字</label></div><div class="monthly-link-note">目前可同步 ${syncedCount} 個活動；全部上架活動 ${liveCount} 個。若活動有日期，會依月份篩選；沒有可判讀日期時仍會納入。</div>`;
+    return `<div class="monthly-basic-grid"><div class="field"><label>月份</label><input name="month" data-monthly-basic value="${esc(config.month || "")}" placeholder="2026-05"></div><div class="monthly-keyword-pill"><span>觸發關鍵字</span><strong>${fixedKeyword}</strong></div><label class="monthly-enabled"><input type="checkbox" name="enabled" data-monthly-enabled ${config.enabled ? "checked" : ""}> 啟用此關鍵字</label></div><div class="monthly-link-note">目前可同步 ${syncedCount} 個活動；全部上架活動 ${liveCount} 個。規則：活動總覽狀態為「上架」就會自動加入每月活動。</div>`;
   }
   function activitySelect(page) {
     const current = page.activityNo || page.activityId || "";
