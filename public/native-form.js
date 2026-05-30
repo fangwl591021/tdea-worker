@@ -15,6 +15,7 @@
   const esc = (value) => String(value ?? "").replace(/[&<>"']/g, (ch) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#039;" }[ch]));
   const trim = (value) => String(value ?? "").trim();
   const fieldTypes = new Set(["text", "email", "paragraph", "radio", "checkbox", "dropdown"]);
+  const autoMemberKeys = new Set(["line_user_id", "lineuserid", "uid", "name", "phone", "mobile", "email", "company", "memberno", "gender", "ismember", "membertype"]);
 
   if (!app || (!formId && !checkinToken && !redeemToken && !queryMode && !memberQrMode && !calendarMode)) return;
 
@@ -61,6 +62,9 @@
       .nf-btn.danger{border-color:#fecdca;color:#b42318}
       .nf-alert{border-radius:8px;padding:12px 14px;background:#fff3f0;border:1px solid #fecdca;color:#b42318;font-weight:800}
       .nf-ok{border-radius:8px;padding:12px 14px;background:#ecfdf3;border:1px solid #abefc6;color:#067647;font-weight:800}
+      .nf-member-card{border:1px solid #abefc6;background:#f6fef9;border-radius:10px;padding:12px 14px;display:grid;gap:8px}
+      .nf-member-card strong{font-size:18px;color:#064e3b}
+      .nf-member-grid{display:grid;grid-template-columns:120px 1fr;gap:6px 12px;color:#344054}
       .nf-table{width:100%;border-collapse:collapse}.nf-table th,.nf-table td{border-bottom:1px solid #eaecf0;padding:10px;text-align:left;vertical-align:top}
       .nf-qr{width:220px;height:220px;border:1px solid #e4e7ec;border-radius:8px;background:#fff}
       @media(max-width:640px){.nf-title{font-size:24px}.nf-body{padding:18px}.nf-actions{display:grid}.nf-btn{width:100%}}
@@ -112,6 +116,22 @@
     return answers;
   }
 
+  function loginFields(fields) {
+    return fields.filter((field) => !autoMemberKeys.has(trim(field.key).toLowerCase()));
+  }
+
+  function memberSummary(member) {
+    if (!member) return "";
+    return `<div class="nf-member-card" data-login-member-preview>
+      <strong>${esc(member.name || "已辨識會員")}</strong>
+      <div class="nf-member-grid">
+        <span>身分</span><b>${esc(member.role || "")}</b>
+        <span>會員編號</span><b>${esc(member.memberNo || "-")}</b>
+        <span>公司/單位</span><b>${esc(member.company || "-")}</b>
+      </div>
+    </div>`;
+  }
+
   function validateCheckboxes(form) {
     for (const block of form.querySelectorAll("[data-checkbox-field][data-required='1']")) {
       const key = block.dataset.checkboxField;
@@ -160,13 +180,16 @@
       : `<input type="hidden" name="sessionId" value="${esc(sessions[0]?.id || "default")}">`;
   }
 
-  function loginRegisterPanel(mode, sessions) {
+  function loginRegisterPanel(mode, sessions, fields) {
     if (mode !== "member_login" && mode !== "mixed") return "";
-    return `<div class="nf-form nf-login-box" data-login-register-box>
-      <div class="nf-ok">會員與廠商會員可使用 LINE Login 快速報名，系統會用 LINE UID 比對名冊後直接完成報名。</div>
+    const extraFields = loginFields(fields);
+    return `<form class="nf-form nf-login-box" data-login-register-box>
+      <div class="nf-ok">會員與廠商會員可使用 LINE Login 快速報名。按下後系統會取得 LINE UID，比對名冊並自動帶入基本資料。</div>
+      <div data-login-member-area></div>
       ${sessionFieldHtml(sessions)}
+      ${extraFields.map(fieldHtml).join("")}
       <div class="nf-actions"><button class="nf-btn primary" type="button" data-login-register>LINE Login 快速報名</button></div>
-    </div>`;
+    </form>`;
   }
 
   function loadLiff(options = {}) {
@@ -226,7 +249,7 @@
         <h1 class="nf-title">${esc(activity.name || "活動報名")}</h1>
         <div class="nf-meta">${activity.courseTime ? `<span class="nf-pill">${esc(activity.courseTime)}</span>` : ""}${activity.deadline ? `<span class="nf-pill">截止 ${esc(activity.deadline)}</span>` : ""}</div>
         ${activity.detailText ? `<div class="nf-detail">${esc(activity.detailText)}</div>` : ""}
-        ${loginRegisterPanel(mode, sessions)}
+        ${loginRegisterPanel(mode, sessions, fields)}
         ${showFullForm ? `<form class="nf-form" data-native-register>
           ${sessionFieldHtml(sessions)}
           ${fields.map(fieldHtml).join("")}
@@ -236,6 +259,10 @@
     </section>`);
     const loginButton = app.querySelector("[data-login-register]");
     loginButton?.addEventListener("click", async () => {
+      const loginBox = app.querySelector("[data-login-register-box]");
+      if (loginBox?.reportValidity && !loginBox.reportValidity()) return;
+      const checkboxError = loginBox ? validateCheckboxes(loginBox) : "";
+      if (checkboxError) return alert(checkboxError);
       loginButton.disabled = true;
       loginButton.textContent = "LINE Login 確認中...";
       const uid = await loadLiff({ login: true });
@@ -244,8 +271,26 @@
         loginButton.textContent = "LINE Login 快速報名";
         return alert("請從 LINE LIFF 開啟此頁，系統才能取得會員身分。");
       }
-      const sessionId = app.querySelector("[data-login-register-box] [name='sessionId']")?.value || sessions[0]?.id || "default";
-      const submitResponse = await fetch(`${api}/api/native-forms/${encodeURIComponent(id)}/login-register`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ lineUserId: uid, sessionId }) });
+      const memberResponse = await fetch(`${api}/api/native-forms/${encodeURIComponent(id)}/login-member?lineUserId=${encodeURIComponent(uid)}`, { cache: "no-store" });
+      const memberResult = await memberResponse.json().catch(() => ({}));
+      if (!memberResponse.ok || !memberResult.success) {
+        loginButton.disabled = false;
+        loginButton.textContent = "LINE Login 快速報名";
+        return alert(memberResult.message || "此 LINE 帳號尚未綁定名冊，無法快速報名。");
+      }
+      const member = memberResult.data || {};
+      const memberArea = app.querySelector("[data-login-member-area]");
+      if (memberArea) memberArea.innerHTML = memberSummary(member);
+      const sessionId = loginBox?.querySelector("[name='sessionId']")?.value || sessions[0]?.id || "default";
+      const answers = loginBox ? collectAnswers(loginBox, loginFields(fields)) : {};
+      const confirmText = `系統辨識到：${member.name || ""}\n身分：${member.role || ""}\n會員編號：${member.memberNo || "-"}\n\n確認送出報名？`;
+      if (!confirm(confirmText)) {
+        loginButton.disabled = false;
+        loginButton.textContent = "確認快速報名";
+        return;
+      }
+      loginButton.textContent = "送出中...";
+      const submitResponse = await fetch(`${api}/api/native-forms/${encodeURIComponent(id)}/login-register`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ lineUserId: uid, sessionId, answers }) });
       const submitResult = await submitResponse.json().catch(() => ({}));
       if (!submitResponse.ok || !submitResult.success) {
         loginButton.disabled = false;
