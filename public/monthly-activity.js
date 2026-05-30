@@ -28,6 +28,34 @@
     return Array.isArray(rows) ? rows.filter((item) => item && (item.name || item.activityNo || item.id)) : [];
   }
 
+  function normalizeStatus(value) {
+    return trim(value).replace(/\s+/g, "");
+  }
+
+  function activityMonth(activity) {
+    const text = [activity?.courseTime, activity?.deadline, activity?.activityDate, activity?.date].map((value) => trim(value)).join(" ");
+    const match = text.match(/(20\d{2})[\/.-](\d{1,2})/);
+    if (!match) return "";
+    return `${match[1]}-${String(Number(match[2])).padStart(2, "0")}`;
+  }
+
+  function monthlyActivityKey(activity) {
+    return trim(activity?.activityNo) || trim(activity?.id) || trim(activity?.name);
+  }
+
+  function autoMonthlyActivities() {
+    const month = trim(config?.month);
+    return activities()
+      .filter((activity) => normalizeStatus(activity.status) === "上架")
+      .filter((activity) => !month || activityMonth(activity) === month)
+      .sort((a, b) => {
+        const aTime = trim(a.courseTime);
+        const bTime = trim(b.courseTime);
+        return aTime.localeCompare(bTime, "zh-Hant");
+      })
+      .slice(0, 12);
+  }
+
   function findActivity(value) {
     const key = trim(value);
     if (!key) return null;
@@ -159,6 +187,53 @@
     return firstUrl(activity.posterUrl, activity.imageUrl, activity.coverUrl, settings.posterUrl, settings.imageUrl, settings.coverUrl);
   }
 
+  function fallbackDetailText(activity) {
+    return [
+      activity?.name || "TDEA 活動",
+      "",
+      activity?.courseTime ? `活動時間：${activity.courseTime}` : "",
+      activity?.deadline ? `報名截止：${activity.deadline}` : "",
+      Number(activity?.capacity || 0) ? `名額：${Number(activity.capacity || 0)}` : "",
+      "",
+      "請至活動編輯補上完整活動介紹、地點、費用與注意事項。"
+    ].filter((line) => line !== "").join("\n");
+  }
+
+  function pageFromActivity(activity, existing = {}) {
+    const imageUrl = firstUrl(existing.imageUrl, posterUrlFor(activity), defaultImageUrl);
+    return {
+      ...existing,
+      id: existing.id || id(),
+      activityNo: activity.activityNo || existing.activityNo || "",
+      activityId: activity.id || existing.activityId || "",
+      activityName: activity.name || existing.activityName || "",
+      detailTitle: activity.name || existing.detailTitle || "詳細說明",
+      detailText: detailTextFor(activity) || existing.detailText || fallbackDetailText(activity),
+      formUrl: formUrlFor(activity) || existing.formUrl || "",
+      imageUrl,
+      galleryUrls: uniqueUrls([existing.galleryUrls, galleryUrlsFor(activity)]),
+      shareUrl: existing.shareUrl || ""
+    };
+  }
+
+  function syncPagesFromPublishedActivities(options = {}) {
+    const rows = autoMonthlyActivities();
+    const existing = new Map();
+    (config.pages || []).forEach((page) => {
+      [page.activityNo, page.activityId, page.activityName].map((value) => trim(value)).filter(Boolean).forEach((key) => existing.set(key, page));
+    });
+    const nextPages = rows.map((activity) => {
+      const keys = [activity.activityNo, activity.id, activity.name].map((value) => trim(value)).filter(Boolean);
+      const matched = keys.map((key) => existing.get(key)).find(Boolean) || {};
+      return pageFromActivity(activity, matched);
+    });
+    if (nextPages.length || options.allowEmpty) {
+      config.pages = nextPages;
+      selected = Math.max(0, Math.min(selected, Math.max(config.pages.length - 1, 0)));
+    }
+    return nextPages.length;
+  }
+
   function blankConfig() {
     return { enabled: true, keyword: fixedKeyword, month: new Date().toISOString().slice(0, 7), altText: "TDEA 每月活動", detailBaseUrl: defaultLiffBase, pages: [blankPage()] };
   }
@@ -278,6 +353,7 @@
   function render() {
     ensureStyles();
     ensureConfigShape();
+    syncPagesFromPublishedActivities();
     const main = document.querySelector(".main");
     if (!main || !config) return;
     selected = Math.min(selected, config.pages.length - 1);
@@ -570,7 +646,7 @@
     document.querySelectorAll("[data-monthly-gallery]").forEach((input) => input.addEventListener("input", () => { const page = config.pages[selected]; page.galleryUrls = uniqueUrls([input.value]); updatePreview(); }));
     document.querySelector("[data-monthly-file]")?.addEventListener("change", uploadImage);
     document.querySelector("[data-monthly-gallery-file]")?.addEventListener("change", uploadGalleryImages);
-    document.querySelector("[data-monthly-json]")?.addEventListener("click", async () => { const email = adminEmail(); if (!email) return toast("尚未登入，暫不能產生 FLEX JSON。"); const formError = await ensureFormUrls(email); if (formError) return toast(formError); const validation = validateForPublish(); if (validation) return toast(validation); await navigator.clipboard.writeText(JSON.stringify(buildFlex(), null, 2)); toast("FLEX JSON 已複製"); });
+    document.querySelector("[data-monthly-json]")?.addEventListener("click", async () => { const email = adminEmail(); if (!email) return toast("尚未登入，暫不能產生 FLEX JSON。"); const autoCount = syncPagesFromPublishedActivities({ allowEmpty: true }); if (!autoCount) return toast("目前沒有符合月份且狀態為上架的活動。"); const formError = await ensureFormUrls(email); if (formError) return toast(formError); const validation = validateForPublish(); if (validation) return toast(validation); await navigator.clipboard.writeText(JSON.stringify(buildFlex(), null, 2)); toast("FLEX JSON 已複製"); });
     document.querySelector("[data-monthly-publish]")?.addEventListener("click", publish);
   }
 
@@ -619,6 +695,8 @@
   async function publish() {
     const email = adminEmail();
     if (!email) return toast("尚未登入，暫不能發布。後續接 LINE Login 後會自動授權。");
+    const autoCount = syncPagesFromPublishedActivities({ allowEmpty: true });
+    if (!autoCount) return toast("目前沒有符合月份且狀態為上架的活動，無法發布每月活動。");
     const formError = await ensureFormUrls(email);
     if (formError) return toast(formError);
     const validation = validateForPublish();
