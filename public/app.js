@@ -227,6 +227,79 @@
     if (showMessage) toast(attempted ? `同步完成，讀取 ${imported} 筆報名。` : "目前沒有可同步的報名表。");
   }
 
+  function defaultActivityDetail(activity) {
+    return [
+      activity.name || "TDEA 活動",
+      "",
+      activity.courseTime ? `活動時間：${activity.courseTime}` : "",
+      activity.deadline ? `報名截止：${activity.deadline}` : "",
+      Number(activity.capacity || 0) ? `名額：${Number(activity.capacity || 0)}` : "",
+      "",
+      "請補上活動介紹、地點、費用與注意事項。"
+    ].filter((line) => line !== "").join("\n");
+  }
+
+  function nativeFormSettingsFor(activity) {
+    const memberLogin = activity.registrationMode === "member_login";
+    return {
+      registrationMode: activity.registrationMode || "form",
+      memberField: memberLogin ? "login" : "required",
+      genderField: memberLogin ? "none" : "required",
+      mealField: "required",
+      requireImageUpload: "N",
+      fields: memberLogin
+        ? [
+            { key: "meal", label: "用餐選項", type: "radio", required: true, options: ["葷", "素"] },
+            { key: "note", label: "備註", type: "paragraph", required: false }
+          ]
+        : [
+            { key: "name", label: "姓名", type: "text", required: true },
+            { key: "phone", label: "手機", type: "text", required: true },
+            { key: "email", label: "Email", type: "email", required: true },
+            { key: "company", label: "公司/單位", type: "text", required: false },
+            { key: "memberNo", label: "會員編號", type: "text", required: false },
+            { key: "gender", label: "性別", type: "radio", required: true, options: ["男", "女"] },
+            { key: "isMember", label: "是否為會員", type: "radio", required: true, options: ["是", "否"] },
+            { key: "meal", label: "用餐選項", type: "radio", required: true, options: ["葷", "素"] },
+            { key: "note", label: "備註", type: "paragraph", required: false }
+          ]
+    };
+  }
+
+  async function ensureNativeFormForActivity(activity, email) {
+    if (!email || activity.formUrl || activity.nativeFormUrl) return false;
+    const settings = nativeFormSettingsFor(activity);
+    const response = await fetch(`${api}/api/native-forms/create`, {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-admin-email": email },
+      body: JSON.stringify({ activity, settings })
+    });
+    const result = await response.json().catch(() => ({}));
+    if (!response.ok || !result.success) return false;
+    const formUrl = result.formUrl || result.nativeFormUrl || result.data?.formUrl || result.data?.nativeFormUrl || "";
+    if (!formUrl) return false;
+    activity.formMode = "native_form";
+    activity.formId = result.formId || result.nativeFormId || activity.id;
+    activity.nativeFormId = result.nativeFormId || result.formId || activity.formId;
+    activity.formUrl = formUrl;
+    activity.nativeFormUrl = formUrl;
+    state.data.formSettings ||= {};
+    state.data.formSettings[activity.id] = { ...settings, formMode: "native_form", formId: activity.formId, nativeFormId: activity.nativeFormId, formUrl, nativeFormUrl: formUrl, detailText: activity.detailText || "", posterUrl: activity.posterUrl || activity.imageUrl || "" };
+    if (activity.activityNo) state.data.formSettings[activity.activityNo] = state.data.formSettings[activity.id];
+    return true;
+  }
+
+  async function uploadActivityPoster(file, activityId, email) {
+    if (!file || !file.size || !email) return null;
+    const form = new FormData();
+    form.append("file", file);
+    form.append("folder", `activities/${activityId || "poster"}`);
+    const response = await fetch(`${api}/api/uploads`, { method: "POST", headers: { "x-admin-email": email }, body: form });
+    const result = await response.json().catch(() => ({}));
+    if (!response.ok || !result.success) throw new Error(result.message || "圖片上傳失敗");
+    return { url: result.url?.startsWith("http") ? result.url : api + result.url, key: result.key || "" };
+  }
+
   async function importLineActivityDrafts(showMessage = true) {
     const email = localStorage.getItem("tdea-admin-email") || sessionStorage.getItem("tdea-admin-email") || "";
     if (!email) {
@@ -244,12 +317,23 @@
     }
     const rows = Array.isArray(result.data) ? result.data : [];
     let added = 0;
-    rows.forEach(row => {
-      if (row.status !== "completed") return;
+    let repaired = 0;
+    let formsCreated = 0;
+    for (const row of rows) {
+      if (row.status !== "completed") continue;
       const activity = row.activity || {};
       const key = activity.lineDraftId || row.id || activity.id;
-      if (!key || state.data.activities.some(item => item.lineDraftId === key || item.id === activity.id)) return;
-      state.data.activities.unshift({
+      if (!key) continue;
+      const existing = state.data.activities.find(item => item.lineDraftId === key || item.id === activity.id);
+      if (existing) {
+        if (!existing.detailText) existing.detailText = activity.detailText || defaultActivityDetail(existing);
+        if (!existing.posterUrl && activity.posterUrl) existing.posterUrl = activity.posterUrl;
+        if (!existing.imageUrl && (activity.imageUrl || existing.posterUrl)) existing.imageUrl = activity.imageUrl || existing.posterUrl;
+        if (!existing.formUrl && await ensureNativeFormForActivity(existing, email)) formsCreated += 1;
+        repaired += 1;
+        continue;
+      }
+      const item = {
         id: activity.id || uid(),
         activityNo: activity.activityNo || "",
         name: activity.name || "LINE 建立活動",
@@ -265,17 +349,22 @@
         check: Number(activity.check || 0),
         status: activity.status || "下架",
         formUrl: activity.formUrl || "",
+        detailText: activity.detailText || defaultActivityDetail(activity),
+        posterUrl: activity.posterUrl || activity.imageUrl || "",
+        imageUrl: activity.imageUrl || activity.posterUrl || "",
         lineDraftId: key,
         lineCreatedBy: activity.lineCreatedBy || row.lineUserId || ""
-      });
+      };
+      state.data.activities.unshift(item);
+      if (await ensureNativeFormForActivity(item, email)) formsCreated += 1;
       added += 1;
-    });
-    if (added) {
+    }
+    if (added || repaired) {
       save();
       state.view = "dashboard";
       render();
     }
-    if (showMessage) toast(added ? `已匯入 ${added} 筆 LINE 活動草稿` : "沒有新的 LINE 活動草稿可匯入");
+    if (showMessage) toast(added ? `已匯入 ${added} 筆 LINE 活動草稿，產生 ${formsCreated} 個報名頁` : "沒有新的 LINE 活動草稿可匯入");
   }
 
   function maybeAutoImportLineActivityDrafts() {
@@ -491,6 +580,23 @@
     toast("活動已刪除");
   }
 
+  function ensureActivityEditorFields() {
+    const form = document.querySelector("#drawer-activity");
+    if (!form || form.dataset.mediaFieldsReady) return;
+    form.dataset.mediaFieldsReady = "true";
+    const id = form.querySelector("input[name='id']")?.value || "";
+    const activity = state.data.activities.find((item) => item.id === id) || {};
+    const insertBefore = form.querySelector("input[name='formUrl']")?.closest(".field") || form.querySelector("button[type='submit']");
+    const wrap = document.createElement("div");
+    wrap.className = "activity-extra-fields";
+    wrap.innerHTML = `
+      <div class="field"><label>詳細說明</label><textarea name="detailText" placeholder="活動介紹、地點、費用、注意事項...">${esc(activity.detailText || "")}</textarea></div>
+      <div class="field"><label>活動主圖</label><input type="file" accept="image/*" data-activity-poster-file><div class="muted">上傳後會寫入報名頁與每月活動主圖。</div></div>
+      <div class="field"><label>圖片網址</label><input name="posterUrl" value="${esc(activity.posterUrl || activity.imageUrl || "")}" placeholder="上傳後自動填入，也可貼圖片網址"></div>
+      <div class="field"><label>報名頁網址</label><input name="nativeFormUrl" value="${esc(activity.nativeFormUrl || "")}" placeholder="系統會自動產生"></div>`;
+    insertBefore?.insertAdjacentElement("beforebegin", wrap);
+  }
+
   function deleteMember(token) {
     const [type, rowId] = String(token || "").split(":");
     const rows = state.data[type];
@@ -515,6 +621,69 @@
   }
 
   function bind() {
+    ensureActivityEditorFields();
+    const enhancedActivityForm = document.querySelector("#drawer-activity");
+    if (enhancedActivityForm && !enhancedActivityForm.dataset.enhancedSubmitReady) {
+      enhancedActivityForm.dataset.enhancedSubmitReady = "true";
+      enhancedActivityForm.addEventListener("submit", async (event) => {
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        const form = event.currentTarget;
+        const d = Object.fromEntries(new FormData(form));
+        const activity = state.data.activities.find((item) => item.id === d.id);
+        if (!activity) return;
+        Object.assign(activity, {
+          name: d.name,
+          type: d.type,
+          typeLabel: formTypeLabel(d),
+          courseTime: d.courseTime,
+          deadline: d.deadline,
+          capacity: Number(d.capacity || 0),
+          checkinPoints: Number(d.checkinPoints || 0),
+          feePoints: Number(d.feePoints || 0),
+          registrationMode: d.registrationMode || "form",
+          reg: Number(d.reg || 0),
+          check: Number(d.check || 0),
+          status: d.status,
+          formUrl: d.formUrl,
+          nativeFormUrl: d.nativeFormUrl || activity.nativeFormUrl || "",
+          detailText: d.detailText || activity.detailText || "",
+          posterUrl: d.posterUrl || activity.posterUrl || "",
+          imageUrl: d.posterUrl || activity.imageUrl || ""
+        });
+        const email = localStorage.getItem("tdea-admin-email") || sessionStorage.getItem("tdea-admin-email") || "";
+        const file = form.querySelector("[data-activity-poster-file]")?.files?.[0];
+        if (file) {
+          try {
+            const uploaded = await uploadActivityPoster(file, activity.id, email);
+            if (uploaded?.url) {
+              activity.posterUrl = uploaded.url;
+              activity.imageUrl = uploaded.url;
+            }
+          } catch (error) {
+            toast(error.message || "圖片上傳失敗");
+            return;
+          }
+        }
+        await ensureNativeFormForActivity(activity, email);
+        state.data.formSettings ||= {};
+        state.data.formSettings[activity.id] ||= {};
+        Object.assign(state.data.formSettings[activity.id], {
+          detailText: activity.detailText || "",
+          posterUrl: activity.posterUrl || activity.imageUrl || "",
+          imageUrl: activity.imageUrl || activity.posterUrl || "",
+          formUrl: activity.formUrl || "",
+          nativeFormUrl: activity.nativeFormUrl || "",
+          nativeFormId: activity.nativeFormId || "",
+          formMode: activity.formMode || ""
+        });
+        if (activity.activityNo) state.data.formSettings[activity.activityNo] = state.data.formSettings[activity.id];
+        state.drawer = "";
+        save();
+        render();
+        toast("活動已儲存");
+      }, true);
+    }
     const sidebarToggle = document.querySelector("[data-sidebar-toggle]");
     if (sidebarToggle) sidebarToggle.onclick = () => {
       const next = !sidebarCollapsed();
