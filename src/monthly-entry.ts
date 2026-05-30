@@ -1832,6 +1832,23 @@ function mergeLineActivityAiFields(draft: LineActivityDraft, fields?: Record<str
   return changed;
 }
 
+function applyLineActivityTextHeuristics(draft: LineActivityDraft, text: string) {
+  const changed: string[] = [];
+  if (!lineActivityAnswerFilled(draft.answers, "feePoints") && /(不扣點|免扣點|無扣點|不用扣點|沒有扣點|不扣抵|免費)/.test(text)) {
+    draft.answers.feePoints = 0;
+    changed.push("feePoints");
+  }
+  if (!lineActivityAnswerFilled(draft.answers, "checkinPoints") && /(不贈點|免贈點|無贈點|沒有贈點|簽到不贈點)/.test(text)) {
+    draft.answers.checkinPoints = 0;
+    changed.push("checkinPoints");
+  }
+  if (!lineActivityAnswerFilled(draft.answers, "capacity") && /(不限名額|無名額限制|不限人數|不限制人數)/.test(text)) {
+    draft.answers.capacity = 0;
+    changed.push("capacity");
+  }
+  return changed;
+}
+
 function openAiOutputText(payload: unknown) {
   const data = payload as Record<string, unknown>;
   const direct = clean(data.output_text);
@@ -2047,6 +2064,7 @@ async function handleLineActivityMakerEvent(event: LineEvent, env: Env): Promise
         return { type: "text", text: "已取消本次活動上稿。" };
       }
       changed = mergeLineActivityAiFields(draft, ai?.fields);
+      changed.push(...applyLineActivityTextHeuristics(draft, text));
       await writeLineActivityDebug(env, { stage: "ai_extract", text, lineUserId, draftId: draft.id, changed, ai });
     } catch (error) {
       await writeLineActivityDebug(env, { stage: "ai_error", text, lineUserId, draftId: draft.id, message: error instanceof Error ? error.message : String(error) });
@@ -2118,7 +2136,10 @@ async function testLineActivityAi(request: Request, env: Env) {
   const draft: LineActivityDraft = { id: "ai-check", lineUserId: "ai-check", step: "name", answers: {}, status: "active", createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() };
   try {
     const result = await extractLineActivityWithOpenAI(text, draft, env);
-    return json({ success: true, openaiConfigured: Boolean(clean(env.OPENAI_API_KEY)), openaiModel: clean(env.OPENAI_MODEL) || "gpt-4o-mini", input: text, data: result });
+    const changed = mergeLineActivityAiFields(draft, result?.fields);
+    changed.push(...applyLineActivityTextHeuristics(draft, text));
+    draft.step = lineActivityMissingStep(draft);
+    return json({ success: true, openaiConfigured: Boolean(clean(env.OPENAI_API_KEY)), openaiModel: clean(env.OPENAI_MODEL) || "gpt-4o-mini", input: text, changed, nextStep: draft.step, normalized: draft.answers, data: result });
   } catch (error) {
     return json({ success: false, openaiConfigured: Boolean(clean(env.OPENAI_API_KEY)), message: error instanceof Error ? error.message : String(error) }, 500);
   }
