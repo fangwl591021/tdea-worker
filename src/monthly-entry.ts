@@ -13,7 +13,7 @@ type ManagedSubmission = { formId?: string; sourceId?: string; submittedAt?: str
 type NativeField = { key: string; label: string; type: string; required?: boolean; options?: string[] };
 type NativeSession = { id: string; name: string; startTime?: string; endTime?: string; capacity?: number; status?: string };
 type NativeForm = { id: string; provider: "native_form"; activity: Record<string, unknown>; settings: Record<string, unknown>; fields: NativeField[]; sessions: NativeSession[]; formUrl: string; createdAt: string; updatedAt: string };
-type LineLoginMember = { rosterType: "association" | "vendor"; memberNo: string; name: string; role: string; lineUserId: string; raw: Record<string, unknown> };
+type LineLoginMember = { rosterType: "association" | "vendor"; memberNo: string; name: string; role: string; lineUserId: string; company?: string; phone?: string; email?: string; gender?: string; raw: Record<string, unknown> };
 type PointLog = { logId: string; lineUserId: string; type: "EARN" | "SPEND"; amount: number; points: number; reason: string; balanceAfter: number; createdAt: string; createdTs: number; source?: string; referenceId?: string; externalSync?: unknown };
 type PointAccount = { balance: number; logs: PointLog[]; updatedAt?: string };
 type RedeemMode = "fixed" | "manual" | "rate";
@@ -524,6 +524,10 @@ function nativeLoginEnabled(form: NativeForm) {
   return mode === "member_login" || mode === "mixed" || clean(settings.memberField).toLowerCase() === "login" || settings.lineLoginRegistration === true;
 }
 
+function nativeMemberAutoFieldKeys() {
+  return new Set(["line_user_id", "lineuserid", "uid", "name", "phone", "mobile", "email", "company", "memberno", "gender", "ismember", "membertype"]);
+}
+
 async function resolveLineLoginMember(env: Env, lineUserId: string): Promise<LineLoginMember | null> {
   const uid = clean(lineUserId);
   if (!uid) return null;
@@ -536,14 +540,47 @@ async function resolveLineLoginMember(env: Env, lineUserId: string): Promise<Lin
   const name = rosterType === "vendor"
     ? firstClean(row.rosterName, row.companyName, row.name, row.display_name)
     : firstClean(row.rosterName, row.name, row.display_name, row.user_nicename);
+  const company = rosterType === "vendor" ? name : firstClean(row.companyName, row.company, row.organization, row.unit);
   return {
     rosterType,
     memberNo,
     name,
     role: rosterType === "vendor" ? "廠商會員" : "協會會員",
     lineUserId: uid,
+    company,
+    phone: firstClean(row.phone, row.mobile, row.tel, row.telephone),
+    email: firstClean(row.email, row.user_email),
+    gender: firstClean(row.gender, row.sex),
     raw: row
   };
+}
+
+function publicLineLoginMember(member: LineLoginMember) {
+  return {
+    rosterType: member.rosterType,
+    memberNo: member.memberNo,
+    name: member.name,
+    role: member.role,
+    lineUserId: member.lineUserId,
+    company: member.company || "",
+    phone: member.phone || "",
+    email: member.email || "",
+    gender: member.gender || ""
+  };
+}
+
+function memberAnswers(member: LineLoginMember) {
+  return normalizeAnswersRecord({
+    LINE_user_id: member.lineUserId,
+    name: member.name,
+    phone: member.phone || "",
+    email: member.email || "",
+    memberNo: member.memberNo,
+    company: member.company || (member.rosterType === "vendor" ? member.name : ""),
+    gender: member.gender || "",
+    isMember: "是",
+    memberType: member.role
+  });
 }
 
 async function readNativeForm(env: Env, formId: string): Promise<NativeForm | null> {
@@ -1004,11 +1041,43 @@ async function getNativeForm(request: Request, env: Env, formId: string) {
   return json({ success: true, data: { ...publicNativeForm(form), counts, total: list.length } });
 }
 
+async function getNativeLoginMember(request: Request, env: Env, formId: string) {
+  const form = await readNativeForm(env, formId);
+  if (!form) return json({ success: false, message: "找不到報名表" }, 404);
+  if (!nativeLoginEnabled(form)) return json({ success: false, message: "此活動尚未啟用 LINE Login 快速報名" }, 400);
+  const url = new URL(request.url);
+  const lineUserId = firstClean(url.searchParams.get("lineUserId"), url.searchParams.get("uid"), url.searchParams.get("LINE_user_id"));
+  if (!lineUserId) return json({ success: false, message: "缺少 LINE UID" }, 400);
+  const member = await resolveLineLoginMember(env, lineUserId);
+  if (!member) return json({ success: false, code: "member_not_found", message: "這個 LINE 帳號尚未綁定協會會員或廠商會員。" }, 404);
+  return json({ success: true, data: publicLineLoginMember(member) });
+}
+
 function validateNativeAnswers(form: NativeForm, answers: Record<string, unknown>, sessionId: string) {
   const errors: string[] = [];
   const session = form.sessions.find((item) => item.id === sessionId);
   if (!session) errors.push("請選擇有效梯次");
   for (const field of form.fields) {
+    const value = answers[field.key];
+    const hasValue = Array.isArray(value) ? value.length > 0 : clean(value) !== "";
+    if (field.required && !hasValue) errors.push(`${field.label} 為必填`);
+    if ((field.type === "radio" || field.type === "dropdown") && hasValue && field.options?.length && !field.options.includes(clean(value))) errors.push(`${field.label} 選項不正確`);
+    if (field.type === "checkbox" && hasValue && field.options?.length) {
+      const values = Array.isArray(value) ? value.map(clean) : [clean(value)];
+      if (values.some((item) => !field.options?.includes(item))) errors.push(`${field.label} 選項不正確`);
+    }
+  }
+  return errors;
+}
+
+function validateNativeLoginAnswers(form: NativeForm, answers: Record<string, unknown>, sessionId: string) {
+  const errors: string[] = [];
+  const session = form.sessions.find((item) => item.id === sessionId);
+  if (!session) errors.push("請選擇有效梯次");
+  const autoKeys = nativeMemberAutoFieldKeys();
+  for (const field of form.fields) {
+    const key = clean(field.key).toLowerCase();
+    if (autoKeys.has(key)) continue;
     const value = answers[field.key];
     const hasValue = Array.isArray(value) ? value.length > 0 : clean(value) !== "";
     if (field.required && !hasValue) errors.push(`${field.label} 為必填`);
@@ -1109,14 +1178,10 @@ async function submitNativeLoginRegistration(request: Request, env: Env, formId:
   const sessionId = clean(input.sessionId || "default");
   const session = form.sessions.find((item) => item.id === sessionId);
   if (!session) return json({ success: false, message: "請選擇有效梯次" }, 400);
-  const answers = normalizeAnswersRecord({
-    LINE_user_id: member.lineUserId,
-    name: member.name,
-    memberNo: member.memberNo,
-    company: member.rosterType === "vendor" ? member.name : "",
-    isMember: "是",
-    memberType: member.role
-  });
+  const userAnswers = normalizeAnswersRecord(asRecord(input.answers));
+  const answers = normalizeAnswersRecord({ ...userAnswers, ...memberAnswers(member) });
+  const errors = validateNativeLoginAnswers(form, answers, sessionId);
+  if (errors.length) return json({ success: false, message: errors[0], errors }, 400);
   return createNativeRegistration(env, form, answers, member.lineUserId, sessionId, "line_login", member);
 }
 
@@ -1931,6 +1996,8 @@ export default {
 	    if (request.method === "POST" && url.pathname === "/api/native-forms/create") return createNativeForm(request, env);
 	    const nativeLoginMatch = url.pathname.match(/^\/api\/native-forms\/([^/]+)\/login-register$/);
 	    if (nativeLoginMatch && request.method === "POST") return submitNativeLoginRegistration(request, env, decodeURIComponent(nativeLoginMatch[1]));
+	    const nativeLoginMemberMatch = url.pathname.match(/^\/api\/native-forms\/([^/]+)\/login-member$/);
+	    if (nativeLoginMemberMatch && request.method === "GET") return getNativeLoginMember(request, env, decodeURIComponent(nativeLoginMemberMatch[1]));
 	    const nativeFormMatch = url.pathname.match(/^\/api\/native-forms\/([^/]+)$/);
 	    if (nativeFormMatch && request.method === "GET") return getNativeForm(request, env, decodeURIComponent(nativeFormMatch[1]));
 	    if (nativeFormMatch && request.method === "POST") return submitNativeForm(request, env, decodeURIComponent(nativeFormMatch[1]));
