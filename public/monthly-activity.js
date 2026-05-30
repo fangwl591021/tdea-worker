@@ -8,6 +8,9 @@
   let active = false;
   let config = null;
   let selected = 0;
+  let autoPublishTimer = 0;
+  let autoPublishBusy = false;
+  let lastAutoPublishSignature = "";
 
   const esc = (value) => String(value ?? "").replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;").replaceAll("'", "&#039;");
   const id = () => "monthly-" + Math.random().toString(36).slice(2) + Date.now().toString(36);
@@ -215,8 +218,24 @@
     };
   }
 
+  function pagesSignature(pages = config?.pages || []) {
+    return JSON.stringify(pages.map((page) => {
+      const hydrated = hydratePage(page);
+      return {
+        activityNo: trim(hydrated.activityNo),
+        activityId: trim(hydrated.activityId),
+        activityName: trim(hydrated.activityName),
+        detailText: trim(hydrated.detailText),
+        formUrl: trim(hydrated.formUrl),
+        imageUrl: trim(hydrated.imageUrl),
+        galleryUrls: uniqueUrls([hydrated.galleryUrls])
+      };
+    }));
+  }
+
   function syncPagesFromPublishedActivities(options = {}) {
     const rows = autoMonthlyActivities();
+    const before = pagesSignature();
     const existing = new Map();
     (config.pages || []).forEach((page) => {
       [page.activityNo, page.activityId, page.activityName].map((value) => trim(value)).filter(Boolean).forEach((key) => existing.set(key, page));
@@ -230,6 +249,8 @@
       config.pages = nextPages;
       selected = Math.max(0, Math.min(selected, Math.max(config.pages.length - 1, 0)));
     }
+    const changed = before !== pagesSignature();
+    if (changed && options.autoPublish !== false) scheduleAutoPublish();
     return nextPages.length;
   }
 
@@ -632,6 +653,47 @@
     return "";
   }
 
+  function canAutoPublish() {
+    if (!config || !Array.isArray(config.pages) || !config.pages.length) return false;
+    if (validateForPublish()) return false;
+    return config.pages.every((page) => trim(hydratePage(page).formUrl));
+  }
+
+  function prepareMonthlyPayload() {
+    config.keyword = fixedKeyword;
+    config.enabled = Boolean(config.enabled);
+    config.pages = config.pages.map((page, order) => ({ ...hydratePage(page), detailUrl: detailUrlForPage(page), order })).slice(0, 12);
+    return config;
+  }
+
+  function scheduleAutoPublish() {
+    const email = adminEmail();
+    if (!email || !canAutoPublish()) return;
+    clearTimeout(autoPublishTimer);
+    autoPublishTimer = setTimeout(autoPublish, 800);
+  }
+
+  async function autoPublish() {
+    const email = adminEmail();
+    if (!email || autoPublishBusy || !canAutoPublish()) return;
+    const signature = pagesSignature();
+    if (signature === lastAutoPublishSignature) return;
+    autoPublishBusy = true;
+    try {
+      const payload = prepareMonthlyPayload();
+      const res = await fetch(`${api}/api/monthly-activity`, { method: "PUT", headers: { "content-type": "application/json", "x-admin-email": email }, body: JSON.stringify(payload) });
+      const result = await res.json().catch(() => ({}));
+      if (res.ok && result.success) {
+        config = result.data;
+        ensureConfigShape();
+        lastAutoPublishSignature = pagesSignature();
+        toast("每月活動已自動同步到 LINE 觸發內容");
+      }
+    } finally {
+      autoPublishBusy = false;
+    }
+  }
+
   function bindPageButtons() {
     document.querySelectorAll("[data-monthly-select]").forEach((button) => button.addEventListener("click", () => { selected = Number(button.dataset.monthlySelect || 0); render(); }));
   }
@@ -647,7 +709,7 @@
     document.querySelectorAll("[data-monthly-gallery]").forEach((input) => input.addEventListener("input", () => { const page = config.pages[selected]; page.galleryUrls = uniqueUrls([input.value]); updatePreview(); }));
     document.querySelector("[data-monthly-file]")?.addEventListener("change", uploadImage);
     document.querySelector("[data-monthly-gallery-file]")?.addEventListener("change", uploadGalleryImages);
-    document.querySelector("[data-monthly-json]")?.addEventListener("click", async () => { const email = adminEmail(); if (!email) return toast("尚未登入，暫不能產生 FLEX JSON。"); const autoCount = syncPagesFromPublishedActivities({ allowEmpty: true }); if (!autoCount) return toast("目前沒有符合月份且狀態為上架的活動。"); const formError = await ensureFormUrls(email); if (formError) return toast(formError); const validation = validateForPublish(); if (validation) return toast(validation); await navigator.clipboard.writeText(JSON.stringify(buildFlex(), null, 2)); toast("FLEX JSON 已複製"); });
+    document.querySelector("[data-monthly-json]")?.addEventListener("click", async () => { const email = adminEmail(); if (!email) return toast("尚未登入，暫不能產生 FLEX JSON。"); const autoCount = syncPagesFromPublishedActivities({ allowEmpty: true, autoPublish: false }); if (!autoCount) return toast("目前沒有狀態為上架的活動。"); const formError = await ensureFormUrls(email); if (formError) return toast(formError); const validation = validateForPublish(); if (validation) return toast(validation); await navigator.clipboard.writeText(JSON.stringify(buildFlex(), null, 2)); toast("FLEX JSON 已複製"); });
     document.querySelector("[data-monthly-publish]")?.addEventListener("click", publish);
   }
 
@@ -696,20 +758,18 @@
   async function publish() {
     const email = adminEmail();
     if (!email) return toast("尚未登入，暫不能發布。後續接 LINE Login 後會自動授權。");
-    const autoCount = syncPagesFromPublishedActivities({ allowEmpty: true });
-    if (!autoCount) return toast("目前沒有符合月份且狀態為上架的活動，無法發布每月活動。");
+    const autoCount = syncPagesFromPublishedActivities({ allowEmpty: true, autoPublish: false });
+    if (!autoCount) return toast("目前沒有狀態為上架的活動，無法發布每月活動。");
     const formError = await ensureFormUrls(email);
     if (formError) return toast(formError);
     const validation = validateForPublish();
     if (validation) return toast(validation);
-    config.keyword = fixedKeyword;
-    config.enabled = Boolean(config.enabled);
-    config.pages = config.pages.map((page, order) => ({ ...hydratePage(page), detailUrl: detailUrlForPage(page), order })).slice(0, 12);
-    const res = await fetch(`${api}/api/monthly-activity`, { method: "PUT", headers: { "content-type": "application/json", "x-admin-email": email }, body: JSON.stringify(config) });
+    const res = await fetch(`${api}/api/monthly-activity`, { method: "PUT", headers: { "content-type": "application/json", "x-admin-email": email }, body: JSON.stringify(prepareMonthlyPayload()) });
     const result = await res.json().catch(() => ({}));
     if (!res.ok || !result.success) return toast(result.message || "發布失敗");
     config = result.data;
     ensureConfigShape();
+    lastAutoPublishSignature = pagesSignature();
     render();
     toast("已發布，關鍵字 TDEA每月活動 已啟用");
   }
