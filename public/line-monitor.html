@@ -1,0 +1,84 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>TDEA LINE AI 後台監控</title>
+  <style>
+    *{box-sizing:border-box}body{margin:0;background:#eef2f6;color:#07152d;font-family:system-ui,"Noto Sans TC",sans-serif}.shell{display:grid;grid-template-columns:360px minmax(0,1fr) 360px;height:100vh;overflow:hidden}.side,.insight{background:#fff;border-right:1px solid #d9e1ec;overflow:auto}.insight{border-right:0;border-left:1px solid #d9e1ec}.head{padding:22px;border-bottom:1px solid #d9e1ec}.head h1{margin:0;font-size:26px}.head p{margin:8px 0 0;color:#667085}.toolbar{padding:14px;border-bottom:1px solid #d9e1ec;display:grid;gap:10px}.toolbar input{width:100%;border:1px solid #cbd5e1;border-radius:12px;padding:12px;font-size:15px}.btn{border:1px solid #cbd5e1;background:#fff;border-radius:12px;padding:11px 14px;font-weight:800;cursor:pointer}.btn.primary{background:#06c755;color:white;border-color:#06c755}.filters{display:flex;gap:8px}.filters button.active{background:#0f172a;color:#fff}.thread-list{padding:12px;display:grid;gap:10px}.thread{border:1px solid #e2e8f0;border-radius:14px;padding:12px;background:#fff;cursor:pointer}.thread.active{border-color:#06c755;background:#ecfdf3}.thread-top{display:flex;justify-content:space-between;gap:10px}.thread strong{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.muted{color:#667085}.badge{display:inline-flex;border-radius:999px;padding:3px 8px;font-size:12px;font-weight:800;background:#e2e8f0}.badge.risk{background:#fee2e2;color:#b42318}.chat{display:flex;flex-direction:column;min-width:0;background:#f8fafc}.chat-head{background:#fff;border-bottom:1px solid #d9e1ec;padding:18px 22px}.chat-head h2{margin:0;font-size:28px}.messages{flex:1;overflow:auto;padding:22px;display:flex;flex-direction:column;gap:12px}.msg{max-width:760px;border-radius:16px;padding:13px 15px;line-height:1.65;background:#fff;border:1px solid #e2e8f0}.msg.user{align-self:flex-start}.msg.admin{align-self:flex-end;background:#dcfce7}.msg .time{font-size:12px;color:#667085;margin-top:6px}.note{border-top:1px solid #d9e1ec;background:#fff;padding:14px}.note textarea,.note input{width:100%;border:1px solid #cbd5e1;border-radius:12px;padding:12px;margin-bottom:8px}.cards{padding:16px;display:grid;gap:12px}.card{border:1px solid #e2e8f0;border-radius:16px;padding:15px;background:#fff}.stats{display:grid;grid-template-columns:1fr 1fr;gap:10px}.stat{background:#f8fafc;border-radius:14px;padding:14px}.stat b{font-size:28px}.tag{display:inline-flex;margin:3px;border-radius:999px;background:#e0f2fe;color:#075985;padding:5px 9px;font-weight:800;font-size:12px}.empty{height:100%;display:grid;place-items:center;color:#667085;font-weight:800}.link{color:#06c755;text-decoration:none;font-weight:900}.debug-row{border-bottom:1px solid #e2e8f0;padding:10px 0;font-size:13px;line-height:1.6}@media(max-width:1100px){.shell{grid-template-columns:1fr;height:auto;overflow:auto}.side,.insight{border:0}.chat{min-height:60vh}}
+  </style>
+</head>
+<body>
+  <div class="shell">
+    <aside class="side">
+      <div class="head">
+        <h1>TDEA LINE AI 後台監控</h1>
+        <p>參考台南旅宿監控：聊天室列表、風險標記、內部備註、受眾分析。TDEA 版不自動代回覆。</p>
+      </div>
+      <div class="toolbar">
+        <input id="adminEmail" placeholder="管理者 Email">
+        <input id="search" placeholder="搜尋姓名、UID、訊息、標籤">
+        <div class="filters">
+          <button class="btn active" data-filter="all">全部</button>
+          <button class="btn" data-filter="open">待回覆</button>
+          <button class="btn" data-filter="risk">高風險</button>
+        </div>
+        <button class="btn primary" id="refresh">同步監控</button>
+        <a class="link" href="../">返回 TDEA 後台</a>
+      </div>
+      <div id="threadList" class="thread-list"></div>
+    </aside>
+    <main class="chat">
+      <div id="empty" class="empty">尚未選擇聊天室</div>
+      <section id="chatBox" hidden>
+        <header class="chat-head">
+          <h2 id="chatName">-</h2>
+          <div id="chatMeta" class="muted"></div>
+          <div id="chatTags"></div>
+        </header>
+        <div id="messages" class="messages"></div>
+        <footer class="note">
+          <textarea id="note" rows="3" placeholder="內部備註，不會傳給 LINE 使用者"></textarea>
+          <input id="tag" placeholder="新增標籤">
+          <button class="btn" data-status="open">待回覆</button>
+          <button class="btn" data-status="pending">處理中</button>
+          <button class="btn" data-status="closed">完成</button>
+          <button class="btn primary" id="saveNote">儲存備註/標籤</button>
+        </footer>
+      </section>
+    </main>
+    <aside class="insight">
+      <div class="head"><h1>受眾分析</h1><p id="modeHint">讀取中</p></div>
+      <div class="cards">
+        <div class="stats">
+          <div class="stat"><span class="muted">30天活躍</span><br><b id="active30">0</b></div>
+          <div class="stat"><span class="muted">高風險</span><br><b id="riskCount">0</b></div>
+          <div class="stat"><span class="muted">7天訊息</span><br><b id="messages7">0</b></div>
+          <div class="stat"><span class="muted">未讀/待回覆</span><br><b id="openCount">0</b></div>
+        </div>
+        <div class="card"><h3>熱門標籤</h3><div id="tags"></div></div>
+        <div class="card"><h3>AI 上稿紀錄</h3><div id="debugList" class="muted">尚未載入</div></div>
+      </div>
+    </aside>
+  </div>
+<script>
+const API='https://tdeawork.fangwl591021.workers.dev';
+const $=id=>document.getElementById(id);
+let threads=[],active='',filter='all',debugRows=[];
+function esc(v){return String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
+function email(){return $('adminEmail').value.trim()||localStorage.getItem('tdea-admin-email')||sessionStorage.getItem('tdea-admin-email')||''}
+function saveEmail(){if($('adminEmail').value.trim())localStorage.setItem('tdea-admin-email',$('adminEmail').value.trim())}
+function fmt(v){if(!v)return'';const d=new Date(v);return isNaN(d)?v:d.toLocaleString('zh-TW',{hour12:false,month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit'})}
+async function api(path,opt={}){const headers={...(opt.headers||{}),'x-admin-email':email()};if(opt.body&&!headers['content-type'])headers['content-type']='application/json';const r=await fetch(API+path,{...opt,headers,cache:'no-store'});const j=await r.json().catch(()=>({success:false,message:'非 JSON 回應'}));if(!r.ok||j.success===false)throw new Error(j.message||('HTTP '+r.status));return j}
+async function load(){saveEmail();try{const [t,a]=await Promise.all([api('/api/line-monitor/threads').catch(e=>({fallback:true,error:e.message,data:[]})),api('/api/line-monitor/audience').catch(e=>({fallback:true,error:e.message,data:null}))]);if(t.fallback){$('modeHint').textContent='監控 API 尚未接上，暫以 AI 上稿紀錄顯示。';threads=[];await loadDebug();}else{$('modeHint').textContent='LINE 監控資料源：TDEA Worker';threads=t.data||[];}renderThreads();renderAudience(a.data||{});}catch(e){$('modeHint').textContent=e.message;await loadDebug();renderThreads();}}
+async function loadDebug(){try{const d=await api('/api/line-activity-debug');debugRows=d.data||[];threads=debugRows.slice(0,50).map((r,i)=>({id:'debug-'+i,name:r.lineUserId||r.stage||'AI 上稿紀錄',lastMessage:r.text||r.stage||'',lastAt:r.at||r.createdAt||'',status:'open',risk:r.stage==='fatal'||r.stage==='ai_error'?'high':'low',tags:[r.stage].filter(Boolean),debug:r}));renderDebug();}catch(e){$('debugList').textContent='無法讀取：'+e.message;}}
+function renderThreads(){const q=$('search').value.trim().toLowerCase();const rows=threads.filter(t=>(filter==='all'||(filter==='open'&&t.status!=='closed')||(filter==='risk'&&t.risk==='high'))&&(!q||JSON.stringify(t).toLowerCase().includes(q)));$('threadList').innerHTML=rows.length?rows.map(t=>`<div class="thread ${active===t.id?'active':''}" data-id="${esc(t.id)}"><div class="thread-top"><strong>${esc(t.name||t.lineUserId||t.id)}</strong><span class="badge ${t.risk==='high'?'risk':''}">${esc(t.status||'open')}</span></div><div class="muted">${esc(t.lastMessage||'')}</div><small class="muted">${fmt(t.lastAt||t.updatedAt||'')}</small></div>`).join(''):'<div class="muted">目前沒有資料</div>';document.querySelectorAll('.thread').forEach(n=>n.onclick=()=>openThread(n.dataset.id));}
+async function openThread(id){active=id;renderThreads();$('empty').hidden=true;$('chatBox').hidden=false;const local=threads.find(t=>t.id===id)||{};$('chatName').textContent=local.name||local.lineUserId||id;$('chatMeta').textContent=[local.lineUserId,local.status,fmt(local.lastAt||local.updatedAt)].filter(Boolean).join(' / ');$('chatTags').innerHTML=(local.tags||[]).map(t=>`<span class="tag">${esc(t)}</span>`).join('');$('note').value=local.note||'';if(local.debug){$('messages').innerHTML=`<div class="msg user"><b>${esc(local.debug.stage||'debug')}</b><br>${esc(local.debug.text||JSON.stringify(local.debug,null,2))}<div class="time">${fmt(local.debug.at||local.debug.createdAt)}</div></div>`;return;}try{const res=await api('/api/line-monitor/thread?id='+encodeURIComponent(id));const msgs=res.data?.messages||[];$('messages').innerHTML=msgs.map(m=>`<div class="msg ${m.direction==='admin'?'admin':'user'}">${esc(m.text||m.type||'')}<div class="time">${fmt(m.createdAt)}</div></div>`).join('')||'<div class="muted">沒有訊息</div>'}catch(e){$('messages').innerHTML='<div class="muted">讀取失敗：'+esc(e.message)+'</div>'}}
+function renderAudience(a){$('active30').textContent=a.active30||threads.length||0;$('riskCount').textContent=a.highRisk||threads.filter(t=>t.risk==='high').length;$('messages7').textContent=a.messages7||0;$('openCount').textContent=a.open||threads.filter(t=>t.status!=='closed').length;const tags=a.tags||collectTags();$('tags').innerHTML=Object.entries(tags).slice(0,20).map(([k,v])=>`<span class="tag">${esc(k)} ${v}</span>`).join('')||'<span class="muted">尚無標籤</span>'}
+function collectTags(){const out={};threads.forEach(t=>(t.tags||[]).forEach(x=>out[x]=(out[x]||0)+1));return out}
+function renderDebug(){$('debugList').innerHTML=debugRows.slice(0,20).map(r=>`<div class="debug-row"><b>${esc(r.stage||'')}</b><br>${esc(r.text||r.message||'')}<br><span class="muted">${esc(r.lineUserId||'')} ${fmt(r.at||r.createdAt||'')}</span></div>`).join('')||'尚無紀錄'}
+async function saveThread(){if(!active||active.startsWith('debug-'))return alert('debug 紀錄不能儲存狀態');const tags=[$('tag').value.trim()].filter(Boolean);try{await api('/api/line-monitor/thread',{method:'POST',body:JSON.stringify({id:active,note:$('note').value,tags})});$('tag').value='';await load();}catch(e){alert(e.message)}}
+document.querySelectorAll('[data-filter]').forEach(b=>b.onclick=()=>{filter=b.dataset.filter;document.querySelectorAll('[data-filter]').forEach(x=>x.classList.toggle('active',x===b));renderThreads()});document.querySelectorAll('[data-status]').forEach(b=>b.onclick=async()=>{if(!active||active.startsWith('debug-'))return;try{await api('/api/line-monitor/thread',{method:'POST',body:JSON.stringify({id:active,status:b.dataset.status,note:$('note').value})});await load()}catch(e){alert(e.message)}});$('saveNote').onclick=saveThread;$('refresh').onclick=load;$('search').oninput=renderThreads;$('adminEmail').value=email();load();
+</script>
+</body>
+</html>
