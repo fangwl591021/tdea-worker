@@ -5,6 +5,8 @@ type Env = {
   ASSETS_BUCKET?: R2Bucket;
   AIWE_WP_USER?: string;
   AIWE_WP_APP_PASSWORD?: string;
+  LINE_CHANNEL_SECRET?: string;
+  LINE_CHANNEL_ACCESS_TOKEN?: string;
 };
 
 type AiweMember = {
@@ -21,6 +23,42 @@ type AiweMember = {
   importedAt?: string;
 };
 
+type LineEvent = {
+  type?: string;
+  replyToken?: string;
+  source?: { type?: string; userId?: string; groupId?: string; roomId?: string };
+  message?: { id?: string; type?: string; text?: string };
+  postback?: { data?: string };
+  timestamp?: number;
+};
+
+type MonitorThread = {
+  id: string;
+  lineUserId?: string;
+  name?: string;
+  pictureUrl?: string;
+  status?: string;
+  risk?: string;
+  tags?: string[];
+  note?: string;
+  lastMessage?: string;
+  lastAt?: string;
+  updatedAt?: string;
+  unread?: number;
+  messageCount?: number;
+};
+
+type MonitorMessage = {
+  id: string;
+  threadId: string;
+  lineUserId?: string;
+  direction: "user" | "system";
+  type: string;
+  text: string;
+  createdAt: string;
+  raw?: unknown;
+};
+
 const corsHeaders = {
   "access-control-allow-origin": "*",
   "access-control-allow-methods": "GET,POST,PUT,OPTIONS",
@@ -28,6 +66,7 @@ const corsHeaders = {
 };
 
 const aiweMembersKey = "aiwe/members.json";
+const monitorThreadsKey = "line-monitor/threads.json";
 const uidRe = /U[0-9a-f]{32}/i;
 const memberNoRe = /[A-Z]\d{7}/i;
 
@@ -43,6 +82,14 @@ function requireAdmin(request: Request, env: Env) {
   const email = request.headers.get("x-admin-email")?.trim().toLowerCase();
   if (!email || !allowed.includes(email)) return json({ success: false, message: "Unauthorized" }, 401);
   return null;
+}
+
+function normalizeText(value: unknown) {
+  return String(value || "").replace(/<[^>]*>/g, "").replace(/\s+/g, " ").trim();
+}
+
+function firstString(...values: unknown[]) {
+  return values.map(normalizeText).find(Boolean) || "";
 }
 
 async function readAiweMembers(env: Env): Promise<AiweMember[]> {
@@ -63,14 +110,6 @@ async function writeAiweMembers(env: Env, members: AiweMember[]) {
 
 function memberKey(member: AiweMember) {
   return (member.lineUserId || member.memberNo || member.email || String(member.wpUserId || crypto.randomUUID())).toLowerCase();
-}
-
-function normalizeText(value: unknown) {
-  return String(value || "").replace(/<[^>]*>/g, "").replace(/\s+/g, " ").trim();
-}
-
-function firstString(...values: unknown[]) {
-  return values.map(normalizeText).find(Boolean) || "";
 }
 
 function extractFromUser(user: Record<string, unknown>, sourceUrl: string): AiweMember {
@@ -176,11 +215,203 @@ async function syncAiweMembers(request: Request, env: Env) {
   });
 }
 
+function rebuildRequest(request: Request, body: string) {
+  return new Request(request.url, { method: request.method, headers: request.headers, body });
+}
+
+async function verifyLineSignature(rawBody: string, signature: string | null, secret?: string) {
+  if (!secret || !signature) return false;
+  const key = await crypto.subtle.importKey("raw", new TextEncoder().encode(secret), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
+  const signed = await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(rawBody));
+  const expected = btoa(String.fromCharCode(...new Uint8Array(signed)));
+  return expected === signature;
+}
+
+function monitorThreadId(event: LineEvent) {
+  return event.source?.userId || event.source?.groupId || event.source?.roomId || "unknown";
+}
+
+function monitorMessageText(event: LineEvent) {
+  if (event.message?.type === "text") return normalizeText(event.message.text);
+  if (event.postback?.data) return `postback: ${event.postback.data}`;
+  if (event.message?.type) return `[${event.message.type}]`;
+  return `[${event.type || "event"}]`;
+}
+
+function monitorMessageKey(threadId: string) {
+  return `line-monitor/messages/${encodeURIComponent(threadId)}.json`;
+}
+
+async function readMonitorThreads(env: Env): Promise<MonitorThread[]> {
+  if (!env.ASSETS_BUCKET) return [];
+  const object = await env.ASSETS_BUCKET.get(monitorThreadsKey);
+  const data = object ? await object.json().catch(() => []) : [];
+  return Array.isArray(data) ? data as MonitorThread[] : [];
+}
+
+async function writeMonitorThreads(env: Env, rows: MonitorThread[]) {
+  if (!env.ASSETS_BUCKET) return;
+  await env.ASSETS_BUCKET.put(monitorThreadsKey, JSON.stringify(rows.slice(0, 2000), null, 2), {
+    httpMetadata: { contentType: "application/json; charset=utf-8", cacheControl: "no-store" }
+  });
+}
+
+async function readMonitorMessages(env: Env, threadId: string): Promise<MonitorMessage[]> {
+  if (!env.ASSETS_BUCKET) return [];
+  const object = await env.ASSETS_BUCKET.get(monitorMessageKey(threadId));
+  const data = object ? await object.json().catch(() => []) : [];
+  return Array.isArray(data) ? data as MonitorMessage[] : [];
+}
+
+async function writeMonitorMessages(env: Env, threadId: string, rows: MonitorMessage[]) {
+  if (!env.ASSETS_BUCKET) return;
+  await env.ASSETS_BUCKET.put(monitorMessageKey(threadId), JSON.stringify(rows.slice(0, 500), null, 2), {
+    httpMetadata: { contentType: "application/json; charset=utf-8", cacheControl: "no-store" }
+  });
+}
+
+function classifyRisk(text: string) {
+  const high = ["客訴", "投訴", "退費", "退款", "生氣", "不滿", "失望", "立即", "馬上", "緊急"];
+  return high.some((word) => text.includes(word)) ? "high" : "low";
+}
+
+async function fetchLineProfile(env: Env, userId: string) {
+  const token = env.LINE_CHANNEL_ACCESS_TOKEN?.trim();
+  if (!token || !userId) return {} as Record<string, unknown>;
+  const response = await fetch(`https://api.line.me/v2/bot/profile/${encodeURIComponent(userId)}`, { headers: { authorization: `Bearer ${token}` } });
+  if (!response.ok) return {} as Record<string, unknown>;
+  return await response.json().catch(() => ({})) as Record<string, unknown>;
+}
+
+async function recordLineMonitorWebhook(request: Request, env: Env, rawBody: string) {
+  if (!env.ASSETS_BUCKET) return;
+  const signature = request.headers.get("x-line-signature");
+  if (!await verifyLineSignature(rawBody, signature, env.LINE_CHANNEL_SECRET)) return;
+  const payload = JSON.parse(rawBody) as { events?: LineEvent[] };
+  const events = Array.isArray(payload.events) ? payload.events : [];
+  if (!events.length) return;
+  const threads = await readMonitorThreads(env);
+  const map = new Map(threads.map((thread) => [thread.id, thread]));
+  for (const event of events) {
+    const threadId = monitorThreadId(event);
+    if (!threadId || threadId === "unknown") continue;
+    const now = event.timestamp ? new Date(event.timestamp).toISOString() : new Date().toISOString();
+    const textValue = monitorMessageText(event);
+    const profile = event.source?.userId ? await fetchLineProfile(env, event.source.userId) : {};
+    const message: MonitorMessage = {
+      id: event.message?.id || `${Date.now()}-${crypto.randomUUID()}`,
+      threadId,
+      lineUserId: event.source?.userId,
+      direction: "user",
+      type: event.message?.type || event.type || "event",
+      text: textValue,
+      createdAt: now,
+      raw: event
+    };
+    const messages = await readMonitorMessages(env, threadId);
+    if (!messages.some((item) => item.id === message.id)) await writeMonitorMessages(env, threadId, [message, ...messages]);
+    const previous = map.get(threadId) || { id: threadId, status: "open", tags: [], unread: 0, messageCount: 0 };
+    const risk = previous.risk === "high" || classifyRisk(textValue) === "high" ? "high" : "low";
+    map.set(threadId, {
+      ...previous,
+      lineUserId: event.source?.userId || previous.lineUserId,
+      name: normalizeText(profile.displayName) || previous.name || event.source?.userId || threadId,
+      pictureUrl: normalizeText(profile.pictureUrl) || previous.pictureUrl,
+      status: previous.status || "open",
+      risk,
+      lastMessage: textValue,
+      lastAt: now,
+      updatedAt: new Date().toISOString(),
+      unread: Number(previous.unread || 0) + 1,
+      messageCount: Number(previous.messageCount || 0) + 1
+    });
+  }
+  await writeMonitorThreads(env, Array.from(map.values()).sort((a, b) => String(b.lastAt || "").localeCompare(String(a.lastAt || ""))));
+}
+
+async function listMonitorThreads(request: Request, env: Env) {
+  const guard = requireAdmin(request, env);
+  if (guard) return guard;
+  const url = new URL(request.url);
+  const q = normalizeText(url.searchParams.get("q")).toLowerCase();
+  const filter = normalizeText(url.searchParams.get("filter") || "all");
+  let rows = await readMonitorThreads(env);
+  if (q) rows = rows.filter((row) => JSON.stringify(row).toLowerCase().includes(q));
+  if (filter === "open") rows = rows.filter((row) => row.status !== "closed");
+  if (filter === "risk") rows = rows.filter((row) => row.risk === "high");
+  return json({ success: true, data: rows });
+}
+
+async function getMonitorThread(request: Request, env: Env) {
+  const guard = requireAdmin(request, env);
+  if (guard) return guard;
+  const url = new URL(request.url);
+  const id = normalizeText(url.searchParams.get("id"));
+  if (!id) return json({ success: false, message: "Missing id" }, 400);
+  const threads = await readMonitorThreads(env);
+  const thread = threads.find((row) => row.id === id) || null;
+  return json({ success: true, data: { thread, messages: await readMonitorMessages(env, id) } });
+}
+
+async function updateMonitorThread(request: Request, env: Env) {
+  const guard = requireAdmin(request, env);
+  if (guard) return guard;
+  const input = await request.json().catch(() => ({})) as Record<string, unknown>;
+  const id = normalizeText(input.id);
+  if (!id) return json({ success: false, message: "Missing id" }, 400);
+  const threads = await readMonitorThreads(env);
+  const index = threads.findIndex((row) => row.id === id);
+  const current = index >= 0 ? threads[index] : { id, tags: [] as string[] };
+  const nextTags = Array.from(new Set([...(current.tags || []), ...String(input.tags || "").split(",").map((tag) => tag.trim()).filter(Boolean)]));
+  const next = {
+    ...current,
+    status: normalizeText(input.status) || current.status || "open",
+    note: input.note === undefined ? current.note : normalizeText(input.note),
+    tags: nextTags,
+    unread: 0,
+    updatedAt: new Date().toISOString()
+  } as MonitorThread;
+  if (index >= 0) threads[index] = next;
+  else threads.unshift(next);
+  await writeMonitorThreads(env, threads);
+  return json({ success: true, data: next });
+}
+
+async function monitorAudience(request: Request, env: Env) {
+  const guard = requireAdmin(request, env);
+  if (guard) return guard;
+  const rows = await readMonitorThreads(env);
+  const now = Date.now();
+  const day = 24 * 60 * 60 * 1000;
+  const tags: Record<string, number> = {};
+  for (const row of rows) for (const tag of row.tags || []) tags[tag] = (tags[tag] || 0) + 1;
+  return json({
+    success: true,
+    data: {
+      total: rows.length,
+      active30: rows.filter((row) => row.lastAt && now - new Date(row.lastAt).getTime() <= 30 * day).length,
+      highRisk: rows.filter((row) => row.risk === "high").length,
+      messages7: rows.reduce((sum, row) => sum + (row.lastAt && now - new Date(row.lastAt).getTime() <= 7 * day ? Number(row.messageCount || 0) : 0), 0),
+      open: rows.filter((row) => row.status !== "closed").length,
+      tags
+    }
+  });
+}
+
 export default {
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
     const url = new URL(request.url);
     if (request.method === "OPTIONS") return new Response(null, { status: 204, headers: corsHeaders });
     if ((request.method === "POST" || request.method === "GET") && url.pathname === "/api/aiwe-sync") return syncAiweMembers(request, env);
+    if (request.method === "GET" && url.pathname === "/api/line-monitor/threads") return listMonitorThreads(request, env);
+    if (request.method === "GET" && url.pathname === "/api/line-monitor/thread") return getMonitorThread(request, env);
+    if (request.method === "POST" && url.pathname === "/api/line-monitor/thread") return updateMonitorThread(request, env);
+    if (request.method === "GET" && url.pathname === "/api/line-monitor/audience") return monitorAudience(request, env);
+    if (request.method === "POST" && url.pathname === "/line-webhook") {
+      const rawBody = await request.text();
+      await recordLineMonitorWebhook(request, env, rawBody).catch(() => undefined);
+      return entry.fetch(rebuildRequest(request, rawBody), env, ctx);
+    }
     return entry.fetch(request, env, ctx);
   }
 };
