@@ -133,14 +133,33 @@
     });
   }
 
+  function richMenuScriptUrl() {
+    const existing = document.querySelector('script[src*="rich-menu-manager.js"]')?.getAttribute("src") || "";
+    if (existing) return existing.split("?")[0] + "?v=rich-menu5&retry=" + Date.now();
+    const prefix = location.pathname.includes("/tdea-worker") ? "public/" : "";
+    return prefix + "rich-menu-manager.js?v=rich-menu5&retry=" + Date.now();
+  }
+
+  function loadRichMenuManager() {
+    if (window.TDEARichMenuManager?.show) return Promise.resolve(true);
+    return new Promise((resolve) => {
+      const script = document.createElement("script");
+      script.src = richMenuScriptUrl();
+      script.onload = () => resolve(Boolean(window.TDEARichMenuManager?.show));
+      script.onerror = () => resolve(false);
+      document.body.appendChild(script);
+    });
+  }
+
   function registerRichMenu() {
     register({
       id: "rich-menu",
       label: "圖文選單",
       order: 28,
-      onClick: () => {
+      onClick: async () => {
+        if (!window.TDEARichMenuManager?.show) await loadRichMenuManager();
         if (window.TDEARichMenuManager?.show) window.TDEARichMenuManager.show();
-        else alert("圖文選單模組尚未載入，請重新整理頁面。");
+        else alert("圖文選單模組載入失敗，請強制重新整理頁面。");
       },
       isActive: () => Boolean(window.TDEARichMenuManager?.isActive?.())
     });
