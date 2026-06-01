@@ -71,7 +71,11 @@
       if (action.displayText) next.displayText = String(action.displayText);
       return next;
     }
-    if (type === "richmenuswitch") return { type, richMenuAliasId: String(action.richMenuAliasId || ""), data: String(action.data || "") };
+    if (type === "richmenuswitch") {
+      const richMenuAliasId = String(action.richMenuAliasId || "").trim();
+      const data = String(action.data || "").trim() || (richMenuAliasId ? `switch:${richMenuAliasId}` : "");
+      return { type, richMenuAliasId, data };
+    }
     return { type: "message", text: String(action.text || "") };
   }
 
@@ -378,12 +382,19 @@
     const rect = canvas.getObjects("rect")[index];
     if (!rect) return;
     if (prop === "label") rect.label = value;
-    if (prop === "type") rect.action = normalizeAction({ type: value });
+    if (prop === "type") {
+      const current = normalizeAction(rect.action || {});
+      const currentValue = current.type === "uri" ? current.uri : current.type === "postback" ? current.data : current.type === "richmenuswitch" ? current.richMenuAliasId : current.text;
+      if (value === "richmenuswitch") rect.action = normalizeAction({ type: value, richMenuAliasId: currentValue, data: currentValue ? `switch:${currentValue}` : "" });
+      else if (value === "uri") rect.action = normalizeAction({ type: value, uri: currentValue });
+      else if (value === "postback") rect.action = normalizeAction({ type: value, data: currentValue });
+      else rect.action = normalizeAction({ type: "message", text: currentValue });
+    }
     if (prop === "value") {
       const type = normalizeAction(rect.action || {}).type;
       if (type === "uri") rect.action = normalizeAction({ type, uri: value });
       else if (type === "postback") rect.action = normalizeAction({ type, data: value });
-      else if (type === "richmenuswitch") rect.action = normalizeAction({ type, richMenuAliasId: value });
+      else if (type === "richmenuswitch") rect.action = normalizeAction({ type, richMenuAliasId: value, data: value ? `switch:${value}` : "" });
       else rect.action = normalizeAction({ type: "message", text: value });
     }
     if (["x", "y", "width", "height"].includes(prop)) {

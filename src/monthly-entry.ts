@@ -133,7 +133,10 @@ function normalizeRichMenuAction(action: Record<string, unknown>) {
     if (displayText) out.displayText = displayText;
     return out;
   }
-  if (type === "richmenuswitch") return { type: "richmenuswitch", richMenuAliasId: clean(action.richMenuAliasId), data: clean(action.data) };
+  if (type === "richmenuswitch") {
+    const richMenuAliasId = clean(action.richMenuAliasId);
+    return { type: "richmenuswitch", richMenuAliasId, data: clean(action.data) || (richMenuAliasId ? `switch:${richMenuAliasId}` : "") };
+  }
   return { type: "message", text: clean(action.text) };
 }
 
