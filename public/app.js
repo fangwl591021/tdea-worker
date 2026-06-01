@@ -68,6 +68,24 @@
     return `<a class="link" href="${esc(url)}" target="_blank" rel="noopener noreferrer">${esc(url)}</a>`;
   }
   function save() { localStorage.setItem(key, JSON.stringify(state.data)); }
+  function deletedActivityKeys() {
+    if (!Array.isArray(state.data.deletedActivityKeys)) state.data.deletedActivityKeys = [];
+    return state.data.deletedActivityKeys;
+  }
+  function activityDeleteKeys(activity) {
+    return [activity?.id, activity?.activityNo, activity?.lineDraftId, activity?.name]
+      .map(value => String(value || "").trim())
+      .filter(Boolean);
+  }
+  function isDeletedActivity(activity) {
+    const deleted = new Set(deletedActivityKeys());
+    return activityDeleteKeys(activity).some(value => deleted.has(value));
+  }
+  function markActivityDeleted(activity) {
+    const keys = new Set(deletedActivityKeys());
+    activityDeleteKeys(activity).forEach(value => keys.add(value));
+    state.data.deletedActivityKeys = [...keys].slice(-300);
+  }
   function load() {
     try { const raw = localStorage.getItem(key); if (raw) return JSON.parse(raw); } catch (_) {}
     return {
@@ -76,7 +94,8 @@
         { id: uid(), name: "AI 教學工作坊", type: "教學類", courseTime: "2026/06/15 10:00", deadline: "2026/06/08", capacity: 40, reg: 0, check: 0, status: "下架", formUrl: "" }
       ],
       association: [],
-      vendor: []
+      vendor: [],
+      deletedActivityKeys: []
     };
   }
 
@@ -347,6 +366,7 @@
       const activity = row.activity || {};
       const key = activity.lineDraftId || row.id || activity.id;
       if (!key) continue;
+      if (isDeletedActivity({ ...activity, lineDraftId: key })) continue;
       const existing = state.data.activities.find(item => item.lineDraftId === key || item.id === activity.id);
       if (existing) {
         if (!existing.detailText) existing.detailText = activity.detailText || defaultActivityDetail(existing);
@@ -606,6 +626,7 @@
   function deleteActivity(rowId) {
     const row = state.data.activities.find(x => x.id === rowId);
     if (!row || !confirm(`確定刪除活動「${row.name || rowId}」？`)) return;
+    markActivityDeleted(row);
     state.data.activities = state.data.activities.filter(x => x.id !== rowId);
     if (state.data.formSettings) {
       delete state.data.formSettings[rowId];

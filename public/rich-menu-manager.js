@@ -97,13 +97,31 @@
   }
 
   function ensureNav() {
-    window.TDEALineNav?.register?.({
-      id: "rich-menu",
-      label: "圖文選單",
-      order: 28,
-      onClick: () => show(),
-      isActive: () => active
-    });
+    if (window.TDEALineNav?.register) {
+      window.TDEALineNav.register({
+        id: "rich-menu",
+        label: "圖文選單",
+        order: 28,
+        onClick: () => show(),
+        isActive: () => active
+      });
+      window.TDEALineNav.refresh?.();
+    }
+    setTimeout(ensureFallbackNav, 0);
+  }
+
+  function ensureFallbackNav() {
+    if (document.querySelector('[data-line-item="rich-menu"],[data-rich-menu-fallback]')) return;
+    const children = document.querySelector(".line-nav-children");
+    if (!children) return;
+    const button = document.createElement("button");
+    button.type = "button";
+    button.dataset.richMenuFallback = "1";
+    button.textContent = "圖文選單";
+    button.addEventListener("click", () => show());
+    const push = children.querySelector('[data-line-item="push"]');
+    if (push) children.insertBefore(button, push);
+    else children.appendChild(button);
   }
 
   function ensureStyles() {
@@ -434,6 +452,7 @@
 
   function boot() {
     ensureNav();
+    ensureFallbackNav();
   }
   boot();
   setTimeout(boot, 100);
