@@ -454,6 +454,11 @@
     ensureNav();
     ensureFallbackNav();
   }
+  window.TDEARichMenuManager = {
+    show,
+    ensureNav,
+    isActive: () => active
+  };
   boot();
   setTimeout(boot, 100);
   setTimeout(boot, 500);

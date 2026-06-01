@@ -133,10 +133,25 @@
     });
   }
 
+  function registerRichMenu() {
+    register({
+      id: "rich-menu",
+      label: "圖文選單",
+      order: 28,
+      onClick: () => {
+        if (window.TDEARichMenuManager?.show) window.TDEARichMenuManager.show();
+        else alert("圖文選單模組尚未載入，請重新整理頁面。");
+      },
+      isActive: () => Boolean(window.TDEARichMenuManager?.isActive?.())
+    });
+  }
+
   new MutationObserver(() => {
     registerKeywords();
+    registerRichMenu();
     refresh();
   }).observe(document.body, { childList: true, subtree: true });
   registerKeywords();
+  registerRichMenu();
   refreshSoon();
 })();
