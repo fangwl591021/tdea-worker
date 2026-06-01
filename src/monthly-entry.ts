@@ -21,6 +21,10 @@ type RedeemTransaction = { id: string; lineUserId: string; amount?: number; poin
 type RedeemRequest = { id: string; token: string; vendorId?: string; vendorName: string; amount?: number; points: number; maxPoints?: number; pointRate?: number; mode?: RedeemMode; note?: string; status: "active" | "pending" | "used" | "expired" | "closed"; createdAt: string; startsAt?: string; expiresAt: string; usedAt?: string; lineUserId?: string; pointBalance?: number; pointResult?: unknown; transactions?: RedeemTransaction[] };
 type PushTarget = { kind?: string; memberNoPrefix?: string; rosterType?: string; qualification?: string; manualUids?: string };
 type PushLog = { id: string; createdAt: string; mode: string; target: PushTarget; count: number; messageType: string; title?: string; dryRun?: boolean; responses?: unknown[]; error?: string };
+type RichMenuBounds = { x: number; y: number; width: number; height: number };
+type RichMenuArea = { id?: string; label?: string; bounds: RichMenuBounds; action: Record<string, unknown> };
+type RichMenuDeployment = { id: string; richMenuId: string; createdAt: string; name: string; chatBarText: string; areaCount: number; imageUrl?: string; setDefault: boolean };
+type RichMenuConfig = { name?: string; chatBarText?: string; selected?: boolean; size?: { width: number; height: number }; imageUrl?: string; areas?: RichMenuArea[]; lastRichMenuId?: string; updatedAt?: string; deployments?: RichMenuDeployment[] };
 type LineActivityDraft = { id: string; lineUserId: string; step: string; answers: Record<string, unknown>; status: "active" | "completed" | "cancelled"; activity?: Record<string, unknown>; createdAt: string; updatedAt: string; completedAt?: string };
 type LineActivityAiResult = { intent?: string; confidence?: number; question?: string; fields?: Record<string, unknown> };
 
@@ -30,6 +34,7 @@ const registrationSummaryKey = "registrations/summary.json";
 const redeemListKey = "redeem/records.json";
 const pointLedgerKey = "points/ledger.json";
 const pushLogKey = "push/logs.json";
+const richMenuKey = "line/rich-menu.json";
 const aiweMembersKey = "aiwe/members.json";
 const lineActivityDraftListKey = "line-activity/drafts.json";
 const lineActivityLatestDraftKey = "line-activity/latest-active.json";
@@ -111,6 +116,183 @@ async function writeVendorCardConfig(env: Env, config: VendorCardConfig) {
   normalized.updatedAt = new Date().toISOString();
   await env.ASSETS_BUCKET.put(vendorCardKey, JSON.stringify(normalized, null, 2), { httpMetadata: { contentType: "application/json; charset=utf-8", cacheControl: "no-store" } });
   return true;
+}
+
+function clampInt(value: unknown, min: number, max: number, fallback: number) {
+  const next = Math.round(Number(value));
+  if (!Number.isFinite(next)) return fallback;
+  return Math.min(Math.max(next, min), max);
+}
+
+function normalizeRichMenuAction(action: Record<string, unknown>) {
+  const type = clean(action.type || "message").toLowerCase();
+  if (type === "uri") return { type: "uri", uri: clean(action.uri) };
+  if (type === "postback") {
+    const out: Record<string, unknown> = { type: "postback", data: clean(action.data) };
+    const displayText = clean(action.displayText);
+    if (displayText) out.displayText = displayText;
+    return out;
+  }
+  if (type === "richmenuswitch") return { type: "richmenuswitch", richMenuAliasId: clean(action.richMenuAliasId), data: clean(action.data) };
+  return { type: "message", text: clean(action.text) };
+}
+
+function normalizeRichMenuConfig(input: RichMenuConfig): RichMenuConfig {
+  const height = clampInt(input.size?.height, 843, 1686, 1686) > 1260 ? 1686 : 843;
+  const width = 2500;
+  const areas = Array.isArray(input.areas) ? input.areas : [];
+  return {
+    name: clean(input.name || "TDEA Rich Menu").slice(0, 300) || "TDEA Rich Menu",
+    chatBarText: clean(input.chatBarText || "選單").slice(0, 14) || "選單",
+    selected: input.selected !== false,
+    size: { width, height },
+    imageUrl: clean(input.imageUrl),
+    lastRichMenuId: clean(input.lastRichMenuId),
+    updatedAt: input.updatedAt,
+    deployments: Array.isArray(input.deployments) ? input.deployments.slice(0, 30) : [],
+    areas: areas.slice(0, 20).map((area, index) => {
+      const rawBounds = area.bounds || { x: 0, y: 0, width, height };
+      const x = clampInt(rawBounds.x, 0, width - 1, 0);
+      const y = clampInt(rawBounds.y, 0, height - 1, 0);
+      const maxWidth = width - x;
+      const maxHeight = height - y;
+      return {
+        id: clean(area.id) || crypto.randomUUID(),
+        label: clean(area.label || `區域 ${index + 1}`),
+        bounds: {
+          x,
+          y,
+          width: clampInt(rawBounds.width, 1, maxWidth, maxWidth),
+          height: clampInt(rawBounds.height, 1, maxHeight, maxHeight)
+        },
+        action: normalizeRichMenuAction(asRecord(area.action))
+      };
+    })
+  };
+}
+
+async function readRichMenuConfig(env: Env): Promise<RichMenuConfig> {
+  const object = env.ASSETS_BUCKET ? await env.ASSETS_BUCKET.get(richMenuKey) : null;
+  if (!object) return normalizeRichMenuConfig({ name: "TDEA 圖文選單", chatBarText: "選單", selected: true, size: { width: 2500, height: 1686 }, areas: [], deployments: [] });
+  const data = await object.json().catch(() => ({}));
+  return normalizeRichMenuConfig(data as RichMenuConfig);
+}
+
+async function writeRichMenuConfig(env: Env, config: RichMenuConfig) {
+  if (!env.ASSETS_BUCKET) return false;
+  const normalized = normalizeRichMenuConfig(config);
+  normalized.updatedAt = new Date().toISOString();
+  await env.ASSETS_BUCKET.put(richMenuKey, JSON.stringify(normalized, null, 2), { httpMetadata: { contentType: "application/json; charset=utf-8", cacheControl: "no-store" } });
+  return true;
+}
+
+function assertRichMenuConfig(config: RichMenuConfig) {
+  const normalized = normalizeRichMenuConfig(config);
+  if (!normalized.name) throw new Error("請輸入選單名稱");
+  if (!normalized.chatBarText) throw new Error("請輸入選單列文字");
+  if (!normalized.imageUrl) throw new Error("請上傳或填入圖文選單底圖");
+  if (!normalized.areas?.length) throw new Error("請至少建立一個點擊區域");
+  for (const [index, area] of normalized.areas.entries()) {
+    const action = asRecord(area.action);
+    const type = clean(action.type);
+    if (type === "uri" && !clean(action.uri)) throw new Error(`區域 ${index + 1} 缺少網址`);
+    if (type === "message" && !clean(action.text)) throw new Error(`區域 ${index + 1} 缺少送出文字`);
+    if (type === "postback" && !clean(action.data)) throw new Error(`區域 ${index + 1} 缺少 Postback data`);
+    if (type === "richmenuswitch" && (!clean(action.richMenuAliasId) || !clean(action.data))) throw new Error(`區域 ${index + 1} 缺少 rich menu switch 參數`);
+  }
+  return normalized;
+}
+
+function buildLineRichMenuObject(config: RichMenuConfig) {
+  const normalized = assertRichMenuConfig(config);
+  return {
+    size: normalized.size,
+    selected: normalized.selected !== false,
+    name: normalized.name,
+    chatBarText: normalized.chatBarText,
+    areas: (normalized.areas || []).map((area) => ({ bounds: area.bounds, action: area.action }))
+  };
+}
+
+async function fetchRichMenuImage(urlValue: string) {
+  const url = urlValue.startsWith("/") ? `${workerBaseUrl}${urlValue}` : urlValue;
+  const response = await fetch(url);
+  if (!response.ok) throw new Error(`底圖讀取失敗：${response.status}`);
+  const contentType = (response.headers.get("content-type") || "").split(";")[0].trim().toLowerCase();
+  if (!["image/jpeg", "image/png"].includes(contentType)) throw new Error("LINE 圖文選單底圖只支援 JPG 或 PNG");
+  return { contentType, body: await response.arrayBuffer() };
+}
+
+async function lineRichMenuRequest(env: Env, url: string, init: RequestInit = {}) {
+  const token = clean(env.LINE_CHANNEL_ACCESS_TOKEN);
+  if (!token) throw new Error("LINE_CHANNEL_ACCESS_TOKEN is not configured");
+  const headers = new Headers(init.headers || {});
+  headers.set("authorization", `Bearer ${token}`);
+  const response = await fetch(url, { ...init, headers });
+  const body = await response.text().catch(() => "");
+  if (!response.ok) throw new Error(`LINE Rich Menu API failed ${response.status}: ${body}`);
+  return body ? JSON.parse(body) : {};
+}
+
+async function getRichMenuApi(request: Request, env: Env) {
+  const guard = requireAdmin(request, env);
+  if (guard) return guard;
+  return json({ success: true, data: await readRichMenuConfig(env) });
+}
+
+async function saveRichMenuApi(request: Request, env: Env) {
+  const guard = requireAdmin(request, env);
+  if (guard) return guard;
+  if (!env.ASSETS_BUCKET) return json({ success: false, message: "R2 bucket is not configured" }, 503);
+  const input = await request.json().catch(() => ({})) as RichMenuConfig;
+  const existing = await readRichMenuConfig(env);
+  const normalized = normalizeRichMenuConfig({ ...input, deployments: input.deployments || existing.deployments || [], lastRichMenuId: input.lastRichMenuId || existing.lastRichMenuId });
+  await writeRichMenuConfig(env, normalized);
+  return json({ success: true, data: await readRichMenuConfig(env) });
+}
+
+async function deployRichMenuApi(request: Request, env: Env) {
+  const guard = requireAdmin(request, env);
+  if (guard) return guard;
+  if (!env.ASSETS_BUCKET) return json({ success: false, message: "R2 bucket is not configured" }, 503);
+  try {
+    const input = await request.json().catch(() => ({})) as RichMenuConfig & { setDefault?: boolean };
+    const existing = await readRichMenuConfig(env);
+    const config = assertRichMenuConfig({ ...existing, ...input, areas: input.areas || existing.areas, imageUrl: input.imageUrl || existing.imageUrl });
+    const menuObject = buildLineRichMenuObject(config);
+    const image = await fetchRichMenuImage(clean(config.imageUrl));
+    const created = await lineRichMenuRequest(env, "https://api.line.me/v2/bot/richmenu", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(menuObject)
+    }) as Record<string, unknown>;
+    const richMenuId = clean(created.richMenuId);
+    if (!richMenuId) throw new Error("LINE 沒有回傳 richMenuId");
+    await lineRichMenuRequest(env, `https://api-data.line.me/v2/bot/richmenu/${encodeURIComponent(richMenuId)}/content`, {
+      method: "POST",
+      headers: { "content-type": image.contentType },
+      body: image.body
+    });
+    const setDefault = input.setDefault !== false;
+    if (setDefault) {
+      await lineRichMenuRequest(env, `https://api.line.me/v2/bot/user/all/richmenu/${encodeURIComponent(richMenuId)}`, { method: "POST" });
+    }
+    const deployment: RichMenuDeployment = {
+      id: `RM-${Date.now()}`,
+      richMenuId,
+      createdAt: new Date().toISOString(),
+      name: clean(config.name),
+      chatBarText: clean(config.chatBarText),
+      areaCount: config.areas?.length || 0,
+      imageUrl: clean(config.imageUrl),
+      setDefault
+    };
+    const next = normalizeRichMenuConfig({ ...config, lastRichMenuId: richMenuId, deployments: [deployment, ...(existing.deployments || [])] });
+    await writeRichMenuConfig(env, next);
+    return json({ success: true, data: next, deployment });
+  } catch (error) {
+    return json({ success: false, message: String((error as Error).message || error) }, 400);
+  }
 }
 
 async function readRegistrationSummary(env: Env): Promise<RegistrationSummary> {
@@ -2805,6 +2987,9 @@ export default {
 	    if (request.method === "GET" && url.pathname === "/api/vendor-card-menu") return json({ success: true, data: await readVendorCardConfig(env) });
 	    if ((request.method === "PUT" || request.method === "POST") && url.pathname === "/api/vendor-card-menu") { const guard = requireAdmin(request, env); if (guard) return guard; if (!env.ASSETS_BUCKET) return json({ success: false, message: "R2 bucket is not configured" }, 503); const config = await request.json().catch(() => ({})) as VendorCardConfig; await writeVendorCardConfig(env, config); return json({ success: true, data: await readVendorCardConfig(env), flex: buildVendorCardFlex(config) }); }
 	    if (request.method === "GET" && url.pathname === "/api/vendor-card-menu/flex") { const config = await readVendorCardConfig(env); return json({ success: true, flex: buildVendorCardFlex(config), data: config }); }
+	    if (request.method === "GET" && url.pathname === "/api/rich-menu") return getRichMenuApi(request, env);
+	    if ((request.method === "PUT" || request.method === "POST") && url.pathname === "/api/rich-menu") return saveRichMenuApi(request, env);
+	    if (request.method === "POST" && url.pathname === "/api/rich-menu/deploy") return deployRichMenuApi(request, env);
 	    if (request.method === "POST" && url.pathname === "/api/native-forms/create") return createNativeForm(request, env);
 	    const nativeLoginMatch = url.pathname.match(/^\/api\/native-forms\/([^/]+)\/login-register$/);
 	    if (nativeLoginMatch && request.method === "POST") return submitNativeLoginRegistration(request, env, decodeURIComponent(nativeLoginMatch[1]));
