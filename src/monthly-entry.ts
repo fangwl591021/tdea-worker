@@ -217,8 +217,19 @@ function buildLineRichMenuObject(config: RichMenuConfig) {
   };
 }
 
-async function fetchRichMenuImage(urlValue: string) {
+async function fetchRichMenuImage(urlValue: string, env: Env) {
   const url = urlValue.startsWith("/") ? `${workerBaseUrl}${urlValue}` : urlValue;
+  const parsed = new URL(url, workerBaseUrl);
+  const workerOrigin = new URL(workerBaseUrl).origin;
+  if (parsed.origin === workerOrigin && parsed.pathname.startsWith("/api/uploads/")) {
+    if (!env.ASSETS_BUCKET) throw new Error("R2 bucket is not configured");
+    const key = decodeURIComponent(parsed.pathname.replace(/^\/api\/uploads\//, ""));
+    const object = await env.ASSETS_BUCKET.get(key);
+    if (!object) throw new Error(`底圖讀取失敗：404 (${key})`);
+    const contentType = (object.httpMetadata?.contentType || "image/jpeg").split(";")[0].trim().toLowerCase();
+    if (!["image/jpeg", "image/png"].includes(contentType)) throw new Error("LINE 圖文選單底圖只支援 JPG 或 PNG");
+    return { contentType, body: await object.arrayBuffer() };
+  }
   const response = await fetch(url);
   if (!response.ok) throw new Error(`底圖讀取失敗：${response.status}`);
   const contentType = (response.headers.get("content-type") || "").split(";")[0].trim().toLowerCase();
@@ -263,7 +274,7 @@ async function deployRichMenuApi(request: Request, env: Env) {
     const existing = await readRichMenuConfig(env);
     const config = assertRichMenuConfig({ ...existing, ...input, areas: input.areas || existing.areas, imageUrl: input.imageUrl || existing.imageUrl });
     const menuObject = buildLineRichMenuObject(config);
-    const image = await fetchRichMenuImage(clean(config.imageUrl));
+    const image = await fetchRichMenuImage(clean(config.imageUrl), env);
     const created = await lineRichMenuRequest(env, "https://api.line.me/v2/bot/richmenu", {
       method: "POST",
       headers: { "content-type": "application/json" },
