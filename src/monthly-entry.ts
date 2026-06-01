@@ -2639,6 +2639,53 @@ async function listLineActivityDrafts(request: Request, env: Env) {
   return json({ success: true, data: merged.map((item) => ({ ...item, activity: item.activity || buildLineActivityFromDraft(item) })) });
 }
 
+async function deleteLineActivityDraft(request: Request, env: Env) {
+  const guard = requireAdmin(request, env);
+  if (guard) return guard;
+  if (!env.ASSETS_BUCKET) return json({ success: false, message: "R2 bucket is not configured" }, 503);
+  const url = new URL(request.url);
+  const input = await request.json().catch(() => ({})) as Record<string, unknown>;
+  const keys = new Set(
+    [
+      input.id,
+      input.lineDraftId,
+      input.activityId,
+      input.activityNo,
+      input.name,
+      url.searchParams.get("id"),
+      url.searchParams.get("lineDraftId"),
+      url.searchParams.get("activityId"),
+      url.searchParams.get("activityNo"),
+      url.searchParams.get("name"),
+      ...(Array.isArray(input.keys) ? input.keys : [])
+    ].map((value) => clean(value)).filter(Boolean)
+  );
+  if (!keys.size) return json({ success: false, message: "Missing activity key" }, 400);
+  const object = await env.ASSETS_BUCKET.get(lineActivityDraftListKey);
+  const rows = object ? await object.json().catch(() => []) : [];
+  const list = Array.isArray(rows) ? rows as LineActivityDraft[] : [];
+  const removed: LineActivityDraft[] = [];
+  const kept = list.filter((item) => {
+    const activity = item.activity || {};
+    const candidates = [
+      item.id,
+      item.lineUserId,
+      activity.id,
+      activity.lineDraftId,
+      activity.activityNo,
+      activity.name
+    ].map((value) => clean(value)).filter(Boolean);
+    const matched = candidates.some((value) => keys.has(value));
+    if (matched) removed.push(item);
+    return !matched;
+  });
+  if (removed.length) {
+    await env.ASSETS_BUCKET.put(lineActivityDraftListKey, JSON.stringify(kept, null, 2), { httpMetadata: { contentType: "application/json; charset=utf-8", cacheControl: "no-store" } });
+    await Promise.allSettled(removed.map((item) => env.ASSETS_BUCKET!.delete(lineActivityDraftKey(item.lineUserId))));
+  }
+  return json({ success: true, deleted: removed.length });
+}
+
 async function getLineActivityDebug(request: Request, env: Env) {
   const guard = requireAdmin(request, env);
   if (guard) return guard;
@@ -2979,6 +3026,7 @@ export default {
     const url = new URL(request.url);
     if (request.method === "OPTIONS") return new Response(null, { status: 204, headers });
 	    if (request.method === "GET" && url.pathname === "/api/line-activity-drafts") return listLineActivityDrafts(request, env);
+	    if ((request.method === "DELETE" || request.method === "POST") && url.pathname === "/api/line-activity-drafts/delete") return deleteLineActivityDraft(request, env);
 	    if (request.method === "GET" && url.pathname === "/api/line-activity-debug") return getLineActivityDebug(request, env);
 	    if ((request.method === "GET" || request.method === "POST") && url.pathname === "/api/line-activity-ai-check") return testLineActivityAi(request, env);
 	    if (request.method === "GET" && url.pathname === "/api/monthly-activity") return json({ success: true, data: await readMonthly(env) });

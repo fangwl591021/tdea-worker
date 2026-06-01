@@ -86,6 +86,24 @@
     activityDeleteKeys(activity).forEach(value => keys.add(value));
     state.data.deletedActivityKeys = [...keys].slice(-300);
   }
+  async function deleteRemoteLineActivityDraft(activity) {
+    const email = localStorage.getItem("tdea-admin-email") || sessionStorage.getItem("tdea-admin-email") || "";
+    if (!email) return;
+    try {
+      await fetch(api + "/api/line-activity-drafts/delete", {
+        method: "POST",
+        headers: { "content-type": "application/json", "x-admin-email": email },
+        body: JSON.stringify({
+          id: activity?.id || "",
+          lineDraftId: activity?.lineDraftId || "",
+          activityNo: activity?.activityNo || "",
+          name: activity?.name || "",
+          keys: activityDeleteKeys(activity)
+        }),
+        keepalive: true
+      });
+    } catch (_) {}
+  }
   function load() {
     try { const raw = localStorage.getItem(key); if (raw) return JSON.parse(raw); } catch (_) {}
     return {
@@ -627,6 +645,7 @@
     const row = state.data.activities.find(x => x.id === rowId);
     if (!row || !confirm(`確定刪除活動「${row.name || rowId}」？`)) return;
     markActivityDeleted(row);
+    deleteRemoteLineActivityDraft(row);
     state.data.activities = state.data.activities.filter(x => x.id !== rowId);
     if (state.data.formSettings) {
       delete state.data.formSettings[rowId];
@@ -669,7 +688,9 @@
 
   function clearTestData() {
     if (!confirm("確定清空目前測試資料？\n\n會刪除：活動、協會名冊、廠商名冊、表單設定與每月活動設定。")) return;
-    state.data = { activities: [], association: [], vendor: [], formSettings: {}, monthlyActivity: null };
+    const keys = new Set(deletedActivityKeys());
+    (state.data.activities || []).forEach(activity => activityDeleteKeys(activity).forEach(value => keys.add(value)));
+    state.data = { activities: [], association: [], vendor: [], formSettings: {}, monthlyActivity: null, deletedActivityKeys: [...keys].slice(-300) };
     save();
     state.drawer = "";
     state.view = "dashboard";
