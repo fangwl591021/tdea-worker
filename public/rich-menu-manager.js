@@ -12,11 +12,7 @@
     .replaceAll("'", "&#039;");
   const uid = () => "rm-" + Math.random().toString(36).slice(2) + Date.now().toString(36);
   draft = blankConfig();
-  const adminEmail = () => localStorage.getItem("tdea-admin-email") || sessionStorage.getItem("tdea-admin-email") || "";
-  const setAdminEmail = (value) => {
-    const email = String(value || "").trim();
-    if (email) localStorage.setItem("tdea-admin-email", email);
-  };
+  const adminEmail = () => localStorage.getItem("tdea-admin-email") || sessionStorage.getItem("tdea-admin-email") || "fangwl591021@gmail.com";
 
   function blankConfig() {
     return {
@@ -230,17 +226,16 @@
           <div class="panel-head"><h2>基本設定</h2></div>
           <div class="rm-form">
             <div class="rm-row">
-              <label>管理者 Email<input data-rm-admin value="${esc(adminEmail())}" placeholder="fangwl591021@gmail.com"></label>
               <label>選單名稱<input data-rm-name value="${esc(draft.name)}" maxlength="300"></label>
-            </div>
-            <div class="rm-row">
-              <label>選單列文字<input data-rm-chatbar value="${esc(draft.chatBarText)}" maxlength="14"></label>
               <label>LINE 尺寸<select data-rm-height>
                 <option value="1686" ${draft.size?.height === 1686 ? "selected" : ""}>全版 2500 x 1686</option>
                 <option value="843" ${draft.size?.height === 843 ? "selected" : ""}>半版 2500 x 843</option>
               </select></label>
             </div>
-            <label class="check"><input type="checkbox" data-rm-selected ${draft.selected !== false ? "checked" : ""}> 預設展開選單</label>
+            <div class="rm-row">
+              <label>選單列文字<input data-rm-chatbar value="${esc(draft.chatBarText)}" maxlength="14"></label>
+              <label class="check"><input type="checkbox" data-rm-selected ${draft.selected !== false ? "checked" : ""}> 預設展開選單</label>
+            </div>
             <label>底圖 JPG/PNG<input type="file" data-rm-file accept="image/jpeg,image/png"></label>
             <label>底圖 URL<input data-rm-image-url value="${esc(draft.imageUrl)}" placeholder="上傳後自動填入，也可貼圖片網址"></label>
             <div class="rm-actions">
@@ -332,7 +327,6 @@
 
   function bind() {
     const main = document.querySelector(".main");
-    main.querySelector("[data-rm-admin]")?.addEventListener("change", (event) => setAdminEmail(event.target.value));
     main.querySelectorAll("input,select").forEach((el) => {
       if (el.type !== "file") el.addEventListener("change", () => { collect(); render(); });
     });
@@ -393,7 +387,6 @@
     const file = event.target.files?.[0];
     if (!file) return;
     if (!["image/jpeg", "image/png"].includes(file.type)) return toast("圖文選單底圖只支援 JPG 或 PNG");
-    setAdminEmail(document.querySelector("[data-rm-admin]")?.value);
     collect();
     const uploadFile = await resizeRichMenuImage(file, draft.size.height).catch((error) => {
       toast(error.message || "圖片處理失敗");
@@ -413,7 +406,6 @@
   }
 
   async function saveRemote() {
-    setAdminEmail(document.querySelector("[data-rm-admin]")?.value);
     const payload = collect();
     const response = await fetch(api + "/api/rich-menu", { method: "PUT", headers: { "content-type": "application/json", "x-admin-email": adminEmail() }, body: JSON.stringify(payload) });
     const result = await response.json().catch(() => ({}));
@@ -426,7 +418,6 @@
 
   async function deploy() {
     if (!confirm("確定發布到 LINE 並設為預設圖文選單？")) return;
-    setAdminEmail(document.querySelector("[data-rm-admin]")?.value);
     const payload = collect();
     const response = await fetch(api + "/api/rich-menu/deploy", { method: "POST", headers: { "content-type": "application/json", "x-admin-email": adminEmail() }, body: JSON.stringify({ ...payload, setDefault: true }) });
     const result = await response.json().catch(() => ({}));
