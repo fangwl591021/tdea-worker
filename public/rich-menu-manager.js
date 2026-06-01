@@ -2,7 +2,7 @@
   const api = "https://tdeawork.fangwl591021.workers.dev";
   const storageKey = "tdea-rich-menu-draft";
   let active = false;
-  let draft = blankConfig();
+  let draft;
 
   const esc = (value) => String(value ?? "")
     .replaceAll("&", "&amp;")
@@ -11,6 +11,7 @@
     .replaceAll('"', "&quot;")
     .replaceAll("'", "&#039;");
   const uid = () => "rm-" + Math.random().toString(36).slice(2) + Date.now().toString(36);
+  draft = blankConfig();
   const adminEmail = () => localStorage.getItem("tdea-admin-email") || sessionStorage.getItem("tdea-admin-email") || "";
   const setAdminEmail = (value) => {
     const email = String(value || "").trim();
