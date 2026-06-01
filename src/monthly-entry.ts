@@ -856,6 +856,57 @@ async function queryPointBalance(env: Env, lineUserId: string) {
   return { httpStatus: response.status, ...body, balance, list };
 }
 
+function parseMotherPointKeyword(text: string) {
+  const raw = clean(text);
+  const compact = raw.replace(/\s+/g, "");
+  if (!compact) return null;
+  const aliases = ["TDEA點數", "TDEA查點", "TDEA點數查詢", "TDEA紅利"];
+  if (aliases.some((alias) => normalizeKeyword(compact) === normalizeKeyword(alias))) {
+    return { uid: "" };
+  }
+  for (const alias of aliases) {
+    const prefix = normalizeKeyword(alias);
+    const normalized = normalizeKeyword(compact);
+    if (normalized.startsWith(prefix + "+") || normalized.startsWith(prefix + "＋") || normalized.startsWith(prefix + ":") || normalized.startsWith(prefix + "：")) {
+      return { uid: compact.slice(alias.length + 1).trim() };
+    }
+  }
+  return null;
+}
+
+function formatMotherPointReply(result: Record<string, unknown>, label: string) {
+  if (result.success !== true) {
+    return `${label}點數查詢失敗：${clean(result.message) || clean(result.code) || "未知錯誤"}`;
+  }
+  const flatList = Array.isArray(result.list) ? result.list.map(asRecord) : [];
+  const data = asRecord(result.data);
+  const dataList = Array.isArray(data.list) ? data.list.map(asRecord) : [];
+  const list = flatList.length ? flatList : dataList;
+  if (!list.length) return `${label}目前查不到點數紀錄。`;
+  const balance = result.balance ?? list[0].point_balance ?? "未提供";
+  const rows = list.slice(0, 3).map((item) => {
+    const createdAt = clean(item.created_at);
+    const eventName = clean(item.event_name) || "點數異動";
+    const points = item.get_point ?? 0;
+    return `${createdAt} ${eventName} ${points} 點`.trim();
+  }).join("\n");
+  return `${label}目前點數餘額：${balance}\n\n最近紀錄：\n${rows}`;
+}
+
+async function handleMotherPointEvents(events: Array<{ event: LineEvent; query: { uid: string } }>, env: Env) {
+  const lineReplies = await Promise.all(events.map(async ({ event, query }) => {
+    if (!event.replyToken) return { ok: false, status: 400, message: "Missing replyToken" };
+    const uid = query.uid || event.source?.userId || "";
+    if (!uid) {
+      return replyToLine(event.replyToken, [{ type: "text", text: "查詢點數需要 LINE UID，請輸入：TDEA點數+UID" }], env);
+    }
+    const result = await queryPointBalance(env, uid) as Record<string, unknown>;
+    const label = query.uid ? `${uid} ` : "你的";
+    return replyToLine(event.replyToken, [{ type: "text", text: formatMotherPointReply(result, label) }], env);
+  }));
+  return json({ success: true, mode: "mother-point-keyword", matched: ["TDEA點數"], forwarded: false, lineReplies });
+}
+
 async function readPointAccount(env: Env, lineUserId: string): Promise<PointAccount> {
   if (!env.ASSETS_BUCKET || !lineUserId) return { balance: 0, logs: [] };
   const object = await env.ASSETS_BUCKET.get(pointAccountKey(lineUserId));
@@ -2950,10 +3001,14 @@ async function handleMonthlyWebhook(request: Request, env: Env, rawBody: string,
   const memberQrEvents = allEvents.filter((event) => normalizeKeyword(extractTriggerText(event)) === normalizeKeyword(memberQrKeyword));
   const calendarEvents = allEvents.filter((event) => normalizeKeyword(extractTriggerText(event)) === normalizeKeyword(calendarKeyword));
   const vendorCardEvents = allEvents.filter((event) => normalizeKeyword(extractTriggerText(event)) === normalizeKeyword(vendorCardKeyword));
+  const pointEvents = allEvents
+    .map((event) => ({ event, query: parseMotherPointKeyword(extractTriggerText(event)) }))
+    .filter((match): match is { event: LineEvent; query: { uid: string } } => Boolean(match.query));
   const events = allEvents.filter((event) => normalizeKeyword(extractTriggerText(event)) === normalizeKeyword(fixedKeyword));
-  if (!queryEvents.length && !memberQrEvents.length && !calendarEvents.length && !vendorCardEvents.length && !events.length) return null;
+  if (!queryEvents.length && !memberQrEvents.length && !calendarEvents.length && !vendorCardEvents.length && !pointEvents.length && !events.length) return null;
   const signature = request.headers.get("x-line-signature");
   if (!await verifyLineSignature(rawBody, signature, env.LINE_CHANNEL_SECRET)) return new Response("Invalid Signature", { status: 403, headers });
+  if (pointEvents.length) return handleMotherPointEvents(pointEvents, env);
   if (queryEvents.length) {
     const queryUrl = `${publicLiffUrl}?query=1`;
     const queryMessage = {
