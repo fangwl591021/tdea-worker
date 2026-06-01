@@ -1970,7 +1970,21 @@ async function saveLineActivityImageFromLine(env: Env, draft: LineActivityDraft,
   await env.ASSETS_BUCKET.put(key, body, {
     httpMetadata: { contentType, cacheControl: "public, max-age=31536000" }
   });
-  return `${workerBaseUrl}/api/uploads/${encodeURIComponent(key)}`;
+  return `${workerBaseUrl}/api/uploads/${key.split("/").map(encodeURIComponent).join("/")}`;
+}
+
+async function getUploadedFile(env: Env, key: string) {
+  if (!env.ASSETS_BUCKET) return json({ success: false, message: "R2 bucket is not configured" }, 503);
+  const normalizedKey = clean(key).replace(/^\/+/, "");
+  if (!normalizedKey || normalizedKey.includes("..")) return json({ success: false, message: "Invalid upload key" }, 400);
+  const object = await env.ASSETS_BUCKET.get(normalizedKey);
+  if (!object) return json({ success: false, message: "Upload not found" }, 404);
+  const responseHeaders = new Headers();
+  object.writeHttpMetadata(responseHeaders);
+  responseHeaders.set("etag", object.httpEtag);
+  responseHeaders.set("cache-control", "public, max-age=31536000");
+  responseHeaders.set("access-control-allow-origin", "*");
+  return new Response(object.body, { headers: responseHeaders });
 }
 
 async function readLineActivityDraft(env: Env, lineUserId: string): Promise<LineActivityDraft | null> {
@@ -3083,6 +3097,8 @@ export default {
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
     const url = new URL(request.url);
     if (request.method === "OPTIONS") return new Response(null, { status: 204, headers });
+	    const uploadMatch = url.pathname.match(/^\/api\/uploads\/(.+)$/);
+	    if ((request.method === "GET" || request.method === "HEAD") && uploadMatch) return getUploadedFile(env, decodeURIComponent(uploadMatch[1]));
 	    if (request.method === "GET" && url.pathname === "/api/line-activity-drafts") return listLineActivityDrafts(request, env);
 	    if ((request.method === "DELETE" || request.method === "POST") && url.pathname === "/api/line-activity-drafts/delete") return deleteLineActivityDraft(request, env);
 	    if (request.method === "GET" && url.pathname === "/api/line-activity-debug") return getLineActivityDebug(request, env);
