@@ -26,45 +26,9 @@
       selected: true,
       size: { width: 2500, height: 1686 },
       imageUrl: "",
-      areas: presetAreas("grid6", 1686),
+      areas: [],
       deployments: []
     };
-  }
-
-  function presetAreas(type, height) {
-    const h = Number(height) === 843 ? 843 : 1686;
-    const area = (label, x, y, width, areaHeight, text) => ({
-      label,
-      bounds: { x, y, width, height: areaHeight },
-      action: { type: "message", text }
-    });
-    if (type === "full") return [area("全版", 0, 0, 2500, h, "TDEA")];
-    if (type === "rows2") {
-      const half = Math.floor(h / 2);
-      return [
-        area("上半部", 0, 0, 2500, half, "TDEA每月活動"),
-        area("下半部", 0, half, 2500, h - half, "TDEA會員專區")
-      ];
-    }
-    if (type === "grid4") {
-      const halfW = 1250;
-      const halfH = Math.floor(h / 2);
-      return [
-        area("左上", 0, 0, halfW, halfH, "TDEA每月活動"),
-        area("右上", halfW, 0, halfW, halfH, "TDEA活動查詢"),
-        area("左下", 0, halfH, halfW, h - halfH, "TDEA廠商列表"),
-        area("右下", halfW, halfH, halfW, h - halfH, "TDEA會員QR")
-      ];
-    }
-    const labels = ["每月活動", "活動查詢", "廠商列表", "會員QR", "行事曆", "會員專區"];
-    const texts = ["TDEA每月活動", "TDEA活動查詢", "TDEA廠商列表", "TDEA會員QR", "TDEA行事曆", "TDEA會員專區"];
-    const colW = Math.floor(2500 / 3);
-    const rowH = Math.floor(h / 2);
-    return labels.map((label, index) => {
-      const col = index % 3;
-      const row = Math.floor(index / 3);
-      return area(label, col * colW, row * rowH, col === 2 ? 2500 - col * colW : colW, row === 1 ? h - row * rowH : rowH, texts[index]);
-    });
   }
 
   function normalizeConfig(input) {
@@ -74,7 +38,7 @@
     next.selected = next.selected !== false;
     next.size = { width: 2500, height: Number(next.size?.height) === 843 ? 843 : 1686 };
     next.imageUrl = String(next.imageUrl || "").trim();
-    next.areas = Array.isArray(next.areas) && next.areas.length ? next.areas.map(normalizeArea) : presetAreas("grid6", next.size.height);
+    next.areas = Array.isArray(next.areas) ? next.areas.map(normalizeArea) : [];
     next.deployments = Array.isArray(next.deployments) ? next.deployments : [];
     return next;
   }
@@ -185,9 +149,7 @@
           <div class="rm-toolbar">
             <div class="left">
               <button type="button" class="rm-btn dark" data-rm-draw>劃定點擊區域</button>
-              <button type="button" class="rm-btn" data-rm-preset="grid6">套用 6 格</button>
-              <button type="button" class="rm-btn" data-rm-preset="grid4">套用 4 格</button>
-              <button type="button" class="rm-btn" data-rm-preset="rows2">套用上下 2 格</button>
+              <button type="button" class="rm-btn" data-rm-clear>清除全部區域</button>
             </div>
             <div class="right">
               <button type="button" class="rm-btn warn" data-rm-copy>複製 JSON</button>
@@ -229,11 +191,7 @@
     document.querySelector("#rm-name")?.addEventListener("input", updateOutput);
     document.querySelector("#rm-chatbar")?.addEventListener("input", updateOutput);
     document.querySelector("[data-rm-draw]")?.addEventListener("click", toggleDrawMode);
-    document.querySelectorAll("[data-rm-preset]").forEach((button) => button.addEventListener("click", () => {
-      draft.areas = presetAreas(button.dataset.rmPreset, draft.size.height);
-      importAreas(draft.areas);
-      updateOutput();
-    }));
+    document.querySelector("[data-rm-clear]")?.addEventListener("click", clearAreas);
     document.querySelector("[data-rm-copy]")?.addEventListener("click", copyJson);
     document.querySelector("[data-rm-save]")?.addEventListener("click", saveRemote);
     document.querySelector("[data-rm-deploy]")?.addEventListener("click", deploy);
@@ -277,6 +235,13 @@
   function toggleDrawMode() {
     drawing = !drawing;
     document.querySelector("[data-rm-draw]").textContent = drawing ? "拖曳建立區域中..." : "劃定點擊區域";
+  }
+
+  function clearAreas() {
+    if (!canvas) return;
+    if (!confirm("確定清除全部點擊區域？")) return;
+    canvas.getObjects().forEach((object) => canvas.remove(object));
+    updateOutput();
   }
 
   function makeRect(bounds, label, action, nativeBounds = true) {
