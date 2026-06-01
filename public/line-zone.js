@@ -134,9 +134,7 @@
   }
 
   function richMenuStandaloneUrl() {
-    const path = location.pathname || "";
-    if (path.includes("/tdea-worker/")) return "/tdea-worker/public/rich-menu.html?v=rich-menu6";
-    return "/rich-menu.html?v=rich-menu6";
+    return "https://tdeawork.fangwl591021.workers.dev/rich-menu.html?v=rich-menu7";
   }
 
   function registerRichMenu() {
