@@ -140,6 +140,12 @@
     return prefix + "rich-menu-manager.js?v=rich-menu5&retry=" + Date.now();
   }
 
+  function richMenuStandaloneUrl() {
+    const path = location.pathname || "";
+    if (path.includes("/tdea-worker/")) return "/tdea-worker/public/rich-menu.html?v=rich-menu5";
+    return "/rich-menu.html?v=rich-menu5";
+  }
+
   function loadRichMenuManager() {
     if (window.TDEARichMenuManager?.show) return Promise.resolve(true);
     return new Promise((resolve) => {
@@ -157,9 +163,16 @@
       label: "圖文選單",
       order: 28,
       onClick: async () => {
+        const fallbackWindow = window.TDEARichMenuManager?.show ? null : window.open("about:blank", "_blank");
         if (!window.TDEARichMenuManager?.show) await loadRichMenuManager();
-        if (window.TDEARichMenuManager?.show) window.TDEARichMenuManager.show();
-        else alert("圖文選單模組載入失敗，請強制重新整理頁面。");
+        if (window.TDEARichMenuManager?.show) {
+          fallbackWindow?.close?.();
+          window.TDEARichMenuManager.show();
+        } else if (fallbackWindow) {
+          fallbackWindow.location.href = richMenuStandaloneUrl();
+        } else {
+          location.href = richMenuStandaloneUrl();
+        }
       },
       isActive: () => Boolean(window.TDEARichMenuManager?.isActive?.())
     });
