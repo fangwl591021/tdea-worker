@@ -133,28 +133,10 @@
     });
   }
 
-  function richMenuScriptUrl() {
-    const existing = document.querySelector('script[src*="rich-menu-manager.js"]')?.getAttribute("src") || "";
-    if (existing) return existing.split("?")[0] + "?v=rich-menu5&retry=" + Date.now();
-    const prefix = location.pathname.includes("/tdea-worker") ? "public/" : "";
-    return prefix + "rich-menu-manager.js?v=rich-menu5&retry=" + Date.now();
-  }
-
   function richMenuStandaloneUrl() {
     const path = location.pathname || "";
-    if (path.includes("/tdea-worker/")) return "/tdea-worker/public/rich-menu.html?v=rich-menu5";
-    return "/rich-menu.html?v=rich-menu5";
-  }
-
-  function loadRichMenuManager() {
-    if (window.TDEARichMenuManager?.show) return Promise.resolve(true);
-    return new Promise((resolve) => {
-      const script = document.createElement("script");
-      script.src = richMenuScriptUrl();
-      script.onload = () => resolve(Boolean(window.TDEARichMenuManager?.show));
-      script.onerror = () => resolve(false);
-      document.body.appendChild(script);
-    });
+    if (path.includes("/tdea-worker/")) return "/tdea-worker/public/rich-menu.html?v=rich-menu6";
+    return "/rich-menu.html?v=rich-menu6";
   }
 
   function registerRichMenu() {
@@ -162,19 +144,11 @@
       id: "rich-menu",
       label: "圖文選單",
       order: 28,
-      onClick: async () => {
-        const fallbackWindow = window.TDEARichMenuManager?.show ? null : window.open("about:blank", "_blank");
-        if (!window.TDEARichMenuManager?.show) await loadRichMenuManager();
-        if (window.TDEARichMenuManager?.show) {
-          fallbackWindow?.close?.();
-          window.TDEARichMenuManager.show();
-        } else if (fallbackWindow) {
-          fallbackWindow.location.href = richMenuStandaloneUrl();
-        } else {
-          location.href = richMenuStandaloneUrl();
-        }
+      onClick: () => {
+        const next = window.open(richMenuStandaloneUrl(), "_blank");
+        if (!next) location.href = richMenuStandaloneUrl();
       },
-      isActive: () => Boolean(window.TDEARichMenuManager?.isActive?.())
+      isActive: () => false
     });
   }
 
