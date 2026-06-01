@@ -126,17 +126,35 @@
     const style = document.createElement("style");
     style.id = "tdea-rich-menu-style";
     style.textContent = `
-      .rm-workspace{display:grid;grid-template-columns:minmax(0,1fr) minmax(360px,38%);gap:18px;align-items:start}
-      .rm-form{display:grid;gap:14px;padding:18px}.rm-row{display:grid;grid-template-columns:1fr 1fr;gap:12px}
-      .rm-actions{display:flex;gap:10px;flex-wrap:wrap;align-items:center}.rm-help{font-size:13px;color:#667085;line-height:1.6}
-      .rm-preview{position:sticky;top:24px}.rm-canvas{position:relative;width:min(100%,420px);margin:0 auto;background:#e5e7eb;border:12px solid #111827;border-radius:24px;overflow:hidden}
+      .main{padding:0!important;max-width:none!important}
+      .rm-workspace{display:grid;grid-template-columns:minmax(720px,60%) minmax(420px,40%);gap:18px;align-items:start;padding:28px;background:#eef3f8;min-height:100vh}
+      .rm-editor,.rm-preview{background:#fff;border:1px solid #e5e7eb;border-radius:8px;overflow:hidden}
+      .rm-preview{position:sticky;top:20px}
+      .rm-head{display:flex;align-items:center;justify-content:space-between;padding:26px 24px;border-bottom:1px solid #e5e7eb}
+      .rm-head h1,.rm-head h2{margin:0;color:#071833;font-size:24px;font-weight:900}
+      .rm-basic{padding:24px;display:grid;grid-template-columns:1fr 1fr;gap:18px 34px;align-items:center}
+      .rm-field{display:grid;grid-template-columns:auto minmax(140px,1fr);gap:6px;align-items:center;font-size:16px;color:#0f172a}
+      .rm-field input,.rm-field select{height:30px;border:1px solid #8b8b8b;border-radius:2px;padding:2px 6px;font-size:16px;background:#fff}
+      .rm-field input[type=file]{border:0;padding:0;height:auto}.rm-field-wide{grid-column:1 / -1;max-width:520px}
+      .rm-check{display:flex;align-items:center;gap:8px;font-size:16px}.rm-check input{width:16px;height:16px}
+      .rm-actions{grid-column:1 / -1;display:flex;gap:12px;flex-wrap:wrap;align-items:center;margin-top:2px}
+      .rm-actions .btn,.rm-footer-actions .btn{border:1px solid #d7dde8;background:#fff;border-radius:8px;padding:10px 18px;font-size:16px;font-weight:900;color:#071833}
+      .rm-actions .btn:hover,.rm-footer-actions .btn:hover{background:#f8fafc}.rm-footer-actions .primary{background:#06c755;color:#fff;border-color:#06c755}
+      .rm-footer-actions .danger{color:#dc2626;border-color:#fecaca}
+      .rm-help{grid-column:1 / -1;font-size:13px;color:#667085;line-height:1.6}
+      .rm-section-title{padding:26px 24px;border-top:1px solid #e5e7eb;border-bottom:1px solid #e5e7eb;font-size:24px;font-weight:900;color:#071833}
+      .rm-canvas{position:relative;width:min(100%,420px);margin:20px auto;background:#e5e7eb;border:12px solid #111827;border-radius:24px;overflow:hidden}
       .rm-canvas::before{content:"";display:block;padding-top:67.44%}.rm-canvas[data-half="1"]::before{padding-top:33.72%}
       .rm-canvas img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover}.rm-placeholder{position:absolute;inset:0;display:grid;place-items:center;color:#667085;font-weight:800;text-align:center;padding:24px}
       .rm-area{position:absolute;border:2px solid #06c755;background:rgba(6,199,85,.2);color:#063;font-size:12px;font-weight:900;display:grid;place-items:center;text-align:center;padding:4px}
-      .rm-table-wrap{overflow:auto}.rm-table{width:100%;border-collapse:collapse;min-width:980px}.rm-table th,.rm-table td{border-top:1px solid #e5e7eb;padding:10px;text-align:left;vertical-align:top}.rm-table th{background:#f8fafc;color:#344054;font-size:13px}
-      .rm-table input,.rm-table select{width:100%;box-sizing:border-box}.rm-num{width:82px!important}.rm-chip{display:inline-flex;align-items:center;border-radius:999px;background:#eafff1;color:#027a48;padding:5px 10px;font-weight:800;font-size:12px}
-      .rm-log{display:grid;gap:10px;padding:18px}.rm-log-item{border:1px solid #e5e7eb;border-radius:8px;padding:12px;background:#fff}.rm-json{white-space:pre-wrap;font-family:ui-monospace,SFMono-Regular,Consolas,monospace;font-size:12px;background:#0f172a;color:#e2e8f0;border-radius:8px;padding:12px;max-height:260px;overflow:auto}
-      @media(max-width:1100px){.rm-workspace{grid-template-columns:1fr}.rm-preview{position:static}.rm-row{grid-template-columns:1fr}}
+      .rm-table-wrap{overflow:auto}.rm-table{width:100%;border-collapse:collapse;min-width:900px}.rm-table th,.rm-table td{border-top:1px solid #e5e7eb;padding:12px 10px;text-align:left;vertical-align:middle}.rm-table th{background:#f8fafc;color:#344054;font-size:14px;font-weight:700}
+      .rm-table input,.rm-table select{height:28px;border:1px solid #888;border-radius:2px;padding:2px 4px;font-size:16px;background:#fff;box-sizing:border-box}
+      .rm-table input[data-rm-label]{width:180px}.rm-table input[data-rm-text],.rm-table input[data-rm-uri],.rm-table input[data-rm-data],.rm-table input[data-rm-alias],.rm-table input[data-rm-display]{width:220px}
+      .rm-num{width:88px!important}.rm-table .danger{border:1px solid #fecaca;background:#fff;color:#dc2626;border-radius:6px;padding:6px 10px}
+      .rm-chip{display:inline-flex;align-items:center;border-radius:999px;background:#eafff1;color:#027a48;padding:5px 10px;font-weight:800;font-size:12px}
+      .rm-json{white-space:pre-wrap;font-family:ui-monospace,SFMono-Regular,Consolas,monospace;font-size:12px;background:#0f172a;color:#e2e8f0;padding:12px;max-height:300px;overflow:auto;margin:0 0 24px}
+      .rm-log{display:grid;gap:10px;padding:0 24px 24px}.rm-log-item{border:1px solid #e5e7eb;border-radius:8px;padding:12px;background:#fff}.rm-footer-actions{display:flex;gap:10px;flex-wrap:wrap;padding:0 24px 24px}
+      @media(max-width:1100px){.rm-workspace{grid-template-columns:1fr}.rm-preview{position:static}.rm-basic{grid-template-columns:1fr}.rm-field-wide{max-width:none}}
     `;
     document.head.appendChild(style);
   }
@@ -210,34 +228,19 @@
     const main = document.querySelector(".main");
     if (!main) return;
     main.innerHTML = `
-      <div class="topbar">
-        <div>
-          <h1>圖文選單</h1>
-          <div class="subtitle">建立 LINE Rich Menu，設定熱區後可直接發布為官方帳號預設選單。</div>
-        </div>
-        <div class="actions">
-          <button class="btn" data-rm-copy>複製 JSON</button>
-          <button class="btn" data-rm-save>儲存草稿</button>
-          <button class="btn primary" data-rm-deploy>發布到 LINE</button>
-        </div>
-      </div>
       <div class="rm-workspace">
-        <section class="panel">
-          <div class="panel-head"><h2>基本設定</h2></div>
-          <div class="rm-form">
-            <div class="rm-row">
-              <label>選單名稱<input data-rm-name value="${esc(draft.name)}" maxlength="300"></label>
-              <label>LINE 尺寸<select data-rm-height>
+        <section class="rm-editor">
+          <div class="rm-head"><h1>基本設定</h1></div>
+          <div class="rm-basic">
+            <label class="rm-field"><span>選單名稱</span><input data-rm-name value="${esc(draft.name)}" maxlength="300"></label>
+            <label class="rm-field"><span>LINE 尺寸</span><select data-rm-height>
                 <option value="1686" ${draft.size?.height === 1686 ? "selected" : ""}>全版 2500 x 1686</option>
                 <option value="843" ${draft.size?.height === 843 ? "selected" : ""}>半版 2500 x 843</option>
               </select></label>
-            </div>
-            <div class="rm-row">
-              <label>選單列文字<input data-rm-chatbar value="${esc(draft.chatBarText)}" maxlength="14"></label>
-              <label class="check"><input type="checkbox" data-rm-selected ${draft.selected !== false ? "checked" : ""}> 預設展開選單</label>
-            </div>
-            <label>底圖 JPG/PNG<input type="file" data-rm-file accept="image/jpeg,image/png"></label>
-            <label>底圖 URL<input data-rm-image-url value="${esc(draft.imageUrl)}" placeholder="上傳後自動填入，也可貼圖片網址"></label>
+            <label class="rm-field"><span>選單列文字</span><input data-rm-chatbar value="${esc(draft.chatBarText)}" maxlength="14"></label>
+            <label class="rm-check"><input type="checkbox" data-rm-selected ${draft.selected !== false ? "checked" : ""}> <span>預設展開選單</span></label>
+            <label class="rm-field rm-field-wide"><span>底圖 JPG/PNG</span><input type="file" data-rm-file accept="image/jpeg,image/png"></label>
+            <label class="rm-field rm-field-wide"><span>底圖 URL</span><input data-rm-image-url value="${esc(draft.imageUrl)}" placeholder="上傳後自動填入，也可貼圖片網址"></label>
             <div class="rm-actions">
               <button class="btn" data-rm-preset="grid6">套用 6 格</button>
               <button class="btn" data-rm-preset="grid4">套用 4 格</button>
@@ -248,13 +251,18 @@
             </div>
             <div class="rm-help">規格：LINE 圖文選單底圖只接受 JPG 或 PNG。全版 2500x1686、半版 2500x843。座標以 LINE 原始尺寸計算。</div>
           </div>
-          <div class="panel-head"><h2>點擊區域</h2></div>
+          <div class="rm-section-title">點擊區域</div>
           <div class="rm-table-wrap">${areaTable()}</div>
+          <div class="rm-footer-actions">
+            <button class="btn" data-rm-copy>複製 JSON</button>
+            <button class="btn" data-rm-save>儲存草稿</button>
+            <button class="btn primary" data-rm-deploy>發布到 LINE</button>
+          </div>
         </section>
-        <aside class="panel rm-preview">
-          <div class="panel-head"><h2>預覽</h2><span class="rm-chip">${draft.areas.length} 個區域</span></div>
+        <aside class="rm-preview">
+          <div class="rm-head"><h2>預覽</h2><span class="rm-chip">${draft.areas.length} 個區域</span></div>
           ${previewHtml()}
-          <div class="panel-head"><h2>發布紀錄</h2></div>
+          <div class="rm-head"><h2>發布紀錄</h2></div>
           <div class="rm-log">${logHtml()}</div>
         </aside>
       </div>
