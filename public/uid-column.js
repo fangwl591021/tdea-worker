@@ -166,16 +166,26 @@
     return data;
   }
 
-  function applyUidEditor() {
+  async function applyUidEditor() {
     const form = document.querySelector("#drawer-member");
     if (!form || form.dataset.uidEditorReady === "1") return;
     form.dataset.uidEditorReady = "1";
     const type = form.dataset.type || "";
     const id = clean(form.querySelector('input[name="id"]')?.value);
+    const memberNo = normalize(form.querySelector('input[name="memberNo"]')?.value);
     const data = loadData();
     const rows = Array.isArray(data[type]) ? data[type] : [];
-    const current = rows.find((row) => clean(row.id) === id) || {};
-    const value = getLineUid(current);
+    const current = rows.find((row) => clean(row.id) === id) || rows.find((row) => normalize(row.memberNo) === memberNo) || {};
+    let value = getLineUid(current);
+    if (!value && memberNo) {
+      const uidMap = await loadUidMap();
+      const remote = uidMap.get(memberNo);
+      value = clean(remote?.lineUserId || remote?.uid || remote?.LINE_user_id);
+      if (value && current) {
+        setLineUid(current, value);
+        saveData(data);
+      }
+    }
     const memberField = form.querySelector('input[name="memberNo"]')?.closest(".field");
     const wrapper = document.createElement("div");
     wrapper.className = "field";
