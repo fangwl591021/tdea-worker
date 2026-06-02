@@ -194,11 +194,50 @@
 
   function validateCheckboxes(form) {
     for (const block of form.querySelectorAll("[data-checkbox-field][data-required='1']")) {
+      if (!isElementVisible(block)) continue;
       const key = block.dataset.checkboxField;
       if (!key || form.querySelectorAll(`[name="${CSS.escape(key)}"]:checked`).length) continue;
       return `${block.querySelector("label")?.textContent?.replace("*", "").trim() || "複選欄位"} 為必填`;
     }
     return "";
+  }
+
+  function isElementVisible(node) {
+    if (!node) return false;
+    if (node.closest("[hidden]")) return false;
+    if (node.closest("[style*='display:none']")) return false;
+    if (node.closest("[style*='display: none']")) return false;
+    return Boolean(node.offsetParent || node.getClientRects().length);
+  }
+
+  function fieldLabel(node) {
+    const field = node.closest(".nf-field");
+    return trim(field?.querySelector("label")?.textContent?.replace("*", "")) || trim(node.name) || "欄位";
+  }
+
+  function validateVisibleRequired(form) {
+    disableAutoLineInputs(form);
+    const checkedRadioNames = new Set();
+    for (const node of form.querySelectorAll("input,textarea,select")) {
+      if (node.disabled || !node.required || !isElementVisible(node)) continue;
+      if (node.type === "radio") {
+        if (checkedRadioNames.has(node.name)) continue;
+        checkedRadioNames.add(node.name);
+        if (!form.querySelector(`input[type="radio"][name="${CSS.escape(node.name)}"]:checked`)) {
+          return `${fieldLabel(node)} 為必填`;
+        }
+        continue;
+      }
+      if (!trim(node.value)) return `${fieldLabel(node)} 為必填`;
+    }
+    return "";
+  }
+
+  function setFormControlsDisabled(form, disabled) {
+    form?.querySelectorAll("input,textarea,select,button").forEach((node) => {
+      node.disabled = disabled;
+    });
+    if (!disabled) disableAutoLineInputs(form);
   }
 
   function renderReceipt(result) {
@@ -243,7 +282,7 @@
   function loginRegisterPanel(mode, sessions, fields) {
     if (mode !== "member_login" && mode !== "mixed") return "";
     const extraFields = loginFields(fields);
-    return `<form class="nf-form nf-login-box" data-login-register-box>
+    return `<form class="nf-form nf-login-box" data-login-register-box novalidate>
       <div class="nf-ok">會員與廠商會員可使用 LINE Login 快速報名。按下後系統會取得 LINE UID，比對名冊並自動帶入基本資料。</div>
       <div data-login-member-area></div>
       ${sessionFieldHtml(sessions)}
@@ -310,7 +349,7 @@
         <div class="nf-meta">${activity.courseTime ? `<span class="nf-pill">${esc(activity.courseTime)}</span>` : ""}${activity.deadline ? `<span class="nf-pill">截止 ${esc(activity.deadline)}</span>` : ""}</div>
         ${activity.detailText ? `<div class="nf-detail">${esc(activity.detailText)}</div>` : ""}
         ${loginRegisterPanel(mode, sessions, fields)}
-        ${showFullForm ? `<form class="nf-form" data-native-register>
+        ${showFullForm ? `<form class="nf-form" data-native-register novalidate>
           ${sessionFieldHtml(sessions)}
           ${fields.map(fieldHtml).join("")}
           <div class="nf-actions"><button class="nf-btn primary" type="submit">送出報名</button><a class="nf-btn" href="?query=1">報名查詢/取消</a></div>
@@ -322,13 +361,14 @@
       const body = app.querySelector(".nf-body");
       body?.insertAdjacentHTML("beforeend", `
         <div class="nf-alert" data-register-fallback-message style="display:none"></div>
-        <form class="nf-form" data-native-register style="display:none">
+        <form class="nf-form" data-native-register style="display:none" novalidate>
           ${sessionFieldHtml(sessions)}
           ${fields.map(fieldHtml).join("")}
           <div class="nf-actions"><button class="nf-btn primary" type="submit">送出報名</button><a class="nf-btn" href="?query=1">報名查詢/取消</a></div>
         </form>
       `);
       disableAutoLineInputs(app);
+      setFormControlsDisabled(app.querySelector("[data-native-register]"), true);
     }
     const loginButton = app.querySelector("[data-login-register]");
     let pendingLoginSubmit = null;
@@ -340,7 +380,10 @@
         fallback.style.display = "";
         fallback.textContent = message || "LINE UID 尚未綁定名冊，請填寫報名資料。若您是會員或廠商會員，請務必填寫姓名與會員編號，送出後會自動綁定。";
       }
-      if (registerForm) registerForm.style.display = "";
+      if (registerForm) {
+        registerForm.style.display = "";
+        setFormControlsDisabled(registerForm, false);
+      }
     }
 
     async function runLineMemberRegistration(event) {
@@ -348,7 +391,8 @@
       event?.stopImmediatePropagation?.();
       if (pendingLoginSubmit) return pendingLoginSubmit(event);
       const loginBox = app.querySelector("[data-login-register-box]");
-      if (loginBox?.reportValidity && !loginBox.reportValidity()) return;
+      const requiredError = loginBox ? validateVisibleRequired(loginBox) : "";
+      if (requiredError) return alert(requiredError);
       const checkboxError = loginBox ? validateCheckboxes(loginBox) : "";
       if (checkboxError) return alert(checkboxError);
       loginButton.disabled = true;
@@ -398,7 +442,8 @@
     if (loginButton && (mode === "member_login" || mode === "mixed")) setTimeout(() => loginButton.click(), 50);
     loginButton?.addEventListener("click", async () => {
       const loginBox = app.querySelector("[data-login-register-box]");
-      if (loginBox?.reportValidity && !loginBox.reportValidity()) return;
+      const requiredError = loginBox ? validateVisibleRequired(loginBox) : "";
+      if (requiredError) return alert(requiredError);
       const checkboxError = loginBox ? validateCheckboxes(loginBox) : "";
       if (checkboxError) return alert(checkboxError);
       loginButton.disabled = true;
@@ -441,6 +486,8 @@
     registerForm?.addEventListener("submit", async (event) => {
       event.preventDefault();
       disableAutoLineInputs(registerForm);
+      const requiredError = validateVisibleRequired(registerForm);
+      if (requiredError) return alert(requiredError);
       const checkboxError = validateCheckboxes(registerForm);
       if (checkboxError) return alert(checkboxError);
       const submit = registerForm.querySelector("button[type='submit']");
