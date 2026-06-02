@@ -23,7 +23,7 @@ type PushTarget = { kind?: string; memberNoPrefix?: string; rosterType?: string;
 type PushLog = { id: string; createdAt: string; mode: string; target: PushTarget; count: number; messageType: string; title?: string; dryRun?: boolean; responses?: unknown[]; error?: string };
 type RichMenuBounds = { x: number; y: number; width: number; height: number };
 type RichMenuArea = { id?: string; label?: string; bounds: RichMenuBounds; action: Record<string, unknown> };
-type RichMenuDeployment = { id: string; richMenuId: string; createdAt: string; name: string; chatBarText: string; areaCount: number; imageUrl?: string; setDefault: boolean };
+type RichMenuDeployment = { id: string; richMenuId: string; createdAt: string; name: string; chatBarText: string; areaCount: number; imageUrl?: string; setDefault: boolean; aliasId?: string; lineDefaultRichMenuId?: string; verified?: boolean };
 type RichMenuConfig = { name?: string; chatBarText?: string; selected?: boolean; size?: { width: number; height: number }; imageUrl?: string; areas?: RichMenuArea[]; lastRichMenuId?: string; updatedAt?: string; deployments?: RichMenuDeployment[] };
 type LineActivityDraft = { id: string; lineUserId: string; step: string; answers: Record<string, unknown>; status: "active" | "completed" | "cancelled"; activity?: Record<string, unknown>; createdAt: string; updatedAt: string; completedAt?: string };
 type LineActivityAiResult = { intent?: string; confidence?: number; question?: string; fields?: Record<string, unknown> };
@@ -248,6 +248,32 @@ async function lineRichMenuRequest(env: Env, url: string, init: RequestInit = {}
   return body ? JSON.parse(body) : {};
 }
 
+async function upsertRichMenuAlias(env: Env, aliasId: string, richMenuId: string) {
+  const cleanAliasId = clean(aliasId);
+  if (!cleanAliasId || !richMenuId) return null;
+  const payload = { richMenuAliasId: cleanAliasId, richMenuId };
+  try {
+    await lineRichMenuRequest(env, "https://api.line.me/v2/bot/richmenu/alias", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(payload)
+    });
+    return { aliasId: cleanAliasId, mode: "created" };
+  } catch (error) {
+    await lineRichMenuRequest(env, `https://api.line.me/v2/bot/richmenu/alias/${encodeURIComponent(cleanAliasId)}`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ richMenuId })
+    });
+    return { aliasId: cleanAliasId, mode: "updated", createError: String((error as Error).message || error) };
+  }
+}
+
+async function getLineDefaultRichMenuId(env: Env) {
+  const result = await lineRichMenuRequest(env, "https://api.line.me/v2/bot/user/all/richmenu", { method: "GET" }) as Record<string, unknown>;
+  return clean(result.richMenuId);
+}
+
 async function getRichMenuApi(request: Request, env: Env) {
   const guard = requireAdmin(request, env);
   if (guard) return guard;
@@ -291,6 +317,9 @@ async function deployRichMenuApi(request: Request, env: Env) {
     if (setDefault) {
       await lineRichMenuRequest(env, `https://api.line.me/v2/bot/user/all/richmenu/${encodeURIComponent(richMenuId)}`, { method: "POST" });
     }
+    const aliasResult = await upsertRichMenuAlias(env, clean(config.name), richMenuId);
+    const lineDefaultRichMenuId = setDefault ? await getLineDefaultRichMenuId(env) : "";
+    const verified = !setDefault || lineDefaultRichMenuId === richMenuId;
     const deployment: RichMenuDeployment = {
       id: `RM-${Date.now()}`,
       richMenuId,
@@ -299,11 +328,14 @@ async function deployRichMenuApi(request: Request, env: Env) {
       chatBarText: clean(config.chatBarText),
       areaCount: config.areas?.length || 0,
       imageUrl: clean(config.imageUrl),
-      setDefault
+      setDefault,
+      aliasId: clean(aliasResult?.aliasId),
+      lineDefaultRichMenuId,
+      verified
     };
     const next = normalizeRichMenuConfig({ ...config, lastRichMenuId: richMenuId, deployments: [deployment, ...(existing.deployments || [])] });
     await writeRichMenuConfig(env, next);
-    return json({ success: true, data: next, deployment });
+    return json({ success: verified, data: next, deployment, alias: aliasResult, lineDefaultRichMenuId, message: verified ? "LINE 圖文選單已發布並確認為預設" : "已建立圖文選單，但 LINE 預設選單驗證未通過" }, verified ? 200 : 409);
   } catch (error) {
     return json({ success: false, message: String((error as Error).message || error) }, 400);
   }
