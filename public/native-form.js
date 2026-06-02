@@ -15,7 +15,7 @@
   const esc = (value) => String(value ?? "").replace(/[&<>"']/g, (ch) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#039;" }[ch]));
   const trim = (value) => String(value ?? "").trim();
   const fieldTypes = new Set(["text", "email", "paragraph", "radio", "checkbox", "dropdown"]);
-  const autoMemberKeys = new Set(["line_user_id", "lineuserid", "uid", "name", "phone", "mobile", "email", "company", "memberno", "gender", "ismember", "membertype"]);
+  const autoMemberKeys = new Set(["line_user_id", "lineuserid", "lineid", "line_id", "lineuid", "line_uid", "uid", "name", "phone", "mobile", "email", "company", "memberno", "gender", "ismember", "membertype"]);
 
   if (!app || (!formId && !checkinToken && !redeemToken && !queryMode && !memberQrMode && !calendarMode)) return;
 
@@ -86,6 +86,7 @@
   }
 
   function fieldHtml(field) {
+    if (isAutoMemberField(field)) return "";
     const type = fieldTypes.has(field.type) ? field.type : "text";
     const label = `${esc(field.label || field.key)}${field.required ? ' <span class="nf-required">*</span>' : ""}`;
     const name = esc(field.key);
@@ -107,6 +108,7 @@
   function collectAnswers(form, fields) {
     const answers = {};
     for (const field of fields) {
+      if (isAutoMemberField(field)) continue;
       if (field.type === "checkbox") {
         answers[field.key] = [...form.querySelectorAll(`[name="${CSS.escape(field.key)}"]:checked`)].map((node) => node.value);
       } else {
@@ -114,6 +116,13 @@
       }
     }
     return answers;
+  }
+
+  function isAutoMemberField(field) {
+    const key = trim(field?.key).toLowerCase().replace(/[\s_-]+/g, "");
+    const label = trim(field?.label).toLowerCase().replace(/[\s_-]+/g, "");
+    if (autoMemberKeys.has(key)) return true;
+    return ["lineid", "lineuid", "lineuserid", "line使用者id", "line帳號"].includes(label);
   }
 
   function answerText(answers, keys) {
@@ -145,7 +154,7 @@
   }
 
   function loginFields(fields) {
-    return fields.filter((field) => !autoMemberKeys.has(trim(field.key).toLowerCase()));
+    return fields.filter((field) => !isAutoMemberField(field));
   }
 
   function memberSummary(member) {
@@ -411,8 +420,9 @@
       const submit = registerForm.querySelector("button[type='submit']");
       submit.disabled = true;
       submit.textContent = "送出中...";
-      const uid = await loadLiff(mode === "form" ? {} : { login: true });
+      const uid = await loadLiff({ login: true });
       const answers = collectAnswers(registerForm, fields);
+      if (uid) answers.LINE_user_id = uid;
       const claimError = missingMemberClaimIdentity(answers);
       if (claimError) {
         submit.disabled = false;
