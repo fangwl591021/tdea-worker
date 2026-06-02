@@ -161,7 +161,7 @@
             </div>
             <div class="right">
               <button type="button" class="rm-btn warn" data-rm-copy>複製 JSON</button>
-              <button type="button" class="rm-btn" data-rm-save>儲存草稿</button>
+              <button type="button" class="rm-btn" data-rm-save>儲存檔案</button>
               <button type="button" class="rm-btn primary" data-rm-deploy>發布到 LINE</button>
             </div>
           </div>
@@ -548,7 +548,7 @@
     if (!response.ok || !result.success) return toast(result.message || "儲存失敗");
     draft = normalizeConfig(result.data);
     localStorage.setItem(storageKey, JSON.stringify(draft));
-    toast("草稿已儲存");
+    toast("檔案已儲存");
   }
 
   async function saveRemote() {
