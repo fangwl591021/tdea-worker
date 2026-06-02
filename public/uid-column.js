@@ -25,8 +25,8 @@
   }
 
   function setLineUid(row, uid) {
-    if (!row || !uid) return;
-    row.lineUserId = uid;
+    if (!row) return;
+    row.lineUserId = clean(uid);
     delete row.lineUid;
     delete row.uid;
     delete row.LINE_user_id;
@@ -184,6 +184,40 @@
     else form.insertBefore(wrapper, form.firstChild);
   }
 
+  function persistEditorUid(form) {
+    if (!form || form.id !== "drawer-member") return;
+    const type = form.dataset.type || "";
+    if (type !== "association" && type !== "vendor") return;
+    const formData = new FormData(form);
+    const id = clean(formData.get("id"));
+    const memberNo = normalize(formData.get("memberNo"));
+    const lineUserId = clean(formData.get("lineUserId"));
+    const data = loadData();
+    const rows = Array.isArray(data[type]) ? data[type] : [];
+    const row = rows.find((item) => clean(item.id) === id) || rows.find((item) => normalize(item.memberNo) === memberNo);
+    if (!row) return;
+    setLineUid(row, lineUserId);
+    saveData(data);
+  }
+
+  function persistEditorUidAfterNativeSave(form) {
+    const type = form?.dataset?.type || "";
+    const formData = new FormData(form);
+    const memberNo = normalize(formData.get("memberNo"));
+    const lineUserId = clean(formData.get("lineUserId"));
+    if (!memberNo || (type !== "association" && type !== "vendor")) return;
+    setTimeout(() => {
+      const data = loadData();
+      const rows = Array.isArray(data[type]) ? data[type] : [];
+      const row = rows.find((item) => normalize(item.memberNo) === memberNo);
+      if (!row) return;
+      setLineUid(row, lineUserId);
+      saveData(data);
+      uidMapPromise = null;
+      scheduleApply();
+    }, 0);
+  }
+
   function escapeHtml(value) {
     return String(value ?? "").replace(/[&<>"']/g, (char) => ({
       "&": "&amp;",
@@ -208,6 +242,12 @@
 
   new MutationObserver(scheduleApply).observe(document.body, { childList: true, subtree: true });
   document.addEventListener("click", () => setTimeout(scheduleApply, 80), true);
+  document.addEventListener("submit", (event) => {
+    const form = event.target;
+    if (!(form instanceof HTMLFormElement) || form.id !== "drawer-member") return;
+    persistEditorUid(form);
+    persistEditorUidAfterNativeSave(form);
+  }, true);
   window.addEventListener("storage", () => {
     uidMapPromise = null;
     scheduleApply();
