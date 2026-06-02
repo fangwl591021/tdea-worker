@@ -7,7 +7,12 @@
 
   const normalize = (value) => String(value || "").trim().toUpperCase();
   const clean = (value) => String(value || "").trim();
-  const lineUidOf = (item) => clean(item?.lineUserId || item?.uid || item?.LINE_user_id || item?.line_user_id);
+  const isLineUid = (value) => /^U[0-9a-f]{32}$/i.test(clean(value));
+  const validLineUid = (value) => {
+    const uid = clean(value);
+    return isLineUid(uid) ? uid : "";
+  };
+  const lineUidOf = (item) => validLineUid(item?.lineUserId || item?.uid || item?.LINE_user_id || item?.line_user_id);
 
   function loadData() {
     try {
@@ -22,7 +27,7 @@
   }
 
   function getLineUid(row) {
-    return clean(row?.lineUserId || row?.lineUid || row?.uid || row?.LINE_user_id || row?.line_user_id);
+    return validLineUid(row?.lineUserId || row?.lineUid || row?.uid || row?.LINE_user_id || row?.line_user_id);
   }
 
   function setLineUid(row, uid) {
@@ -36,7 +41,7 @@
 
   function displayUid(uid) {
     const value = clean(uid);
-    if (!value) return "-";
+    if (!value) return "";
     if (value.length <= 24) return value;
     return `${value.slice(0, 10)}...${value.slice(-8)}`;
   }
