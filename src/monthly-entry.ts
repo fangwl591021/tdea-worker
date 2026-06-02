@@ -48,6 +48,7 @@ const vendorCardKeyword = "TDEA廠商列表";
 const queryKeyword = "TDEA活動查詢";
 const memberQrKeyword = "TDEA會員QR";
 const calendarKeyword = "TDEA行事曆";
+const uidBindKeyword = "UID";
 const lineActivityCreateKeyword = "TDEA建立活動";
 const lineActivityCreateAliases = ["TDEA新增活動", "TDEA活動上稿", "TDEA製作活動"];
 const defaultLiffBase = "https://liff.line.me/2005868456-2jmxqyFU?monthlyDetail={id}";
@@ -2932,6 +2933,12 @@ async function readAiweMembers(env: Env): Promise<Array<Record<string, unknown>>
   return Array.isArray(rows) ? rows.map(asRecord) : [];
 }
 
+async function writeAiweMembers(env: Env, rows: Array<Record<string, unknown>>) {
+  if (!env.ASSETS_BUCKET) return false;
+  await env.ASSETS_BUCKET.put(aiweMembersKey, JSON.stringify(rows, null, 2), { httpMetadata: { contentType: "application/json; charset=utf-8", cacheControl: "no-store" } });
+  return true;
+}
+
 function publicAiweMember(row: Record<string, unknown>) {
   const rosterType = clean(row.rosterType) === "vendor" ? "vendor" : "association";
   return {
@@ -2952,6 +2959,82 @@ async function listAiweMembersPublicApi(request: Request, env: Env) {
   if (guard) return guard;
   const rows = await readAiweMembers(env);
   return json({ success: true, data: rows.map(publicAiweMember), total: rows.length });
+}
+
+function parseUidBindKeyword(text: string) {
+  const raw = clean(text);
+  const normalized = normalizeKeyword(raw);
+  if (normalized === uidBindKeyword) return { active: true, memberNo: "" };
+  if (!normalized.startsWith(uidBindKeyword)) return { active: false, memberNo: "" };
+  const suffix = raw.replace(/^UID\s*[:：+＋-]?\s*/i, "").trim();
+  return suffix ? { active: true, memberNo: clean(suffix).toUpperCase() } : { active: false, memberNo: "" };
+}
+
+function aiweMemberNo(row: Record<string, unknown>) {
+  return firstClean(row.rosterMemberNo, row.memberNo, row.user_login).toUpperCase();
+}
+
+function rowMatchesMemberNo(row: Record<string, unknown>, memberNo: string) {
+  const target = clean(memberNo).toUpperCase();
+  return Boolean(target) && [row.rosterMemberNo, row.memberNo, row.user_login].some((value) => clean(value).toUpperCase() === target);
+}
+
+function setAiweRowLineUid(row: Record<string, unknown>, lineUserId: string) {
+  row.lineUserId = lineUserId;
+  row.LINE_user_id = lineUserId;
+  row.uid = lineUserId;
+  if (clean(row.email).match(/^U[0-9a-f]{32}@aiwe\./i) || !clean(row.email)) row.email = `${lineUserId}@aiwe.cc`;
+}
+
+function inferUidBindMemberNo(rows: Array<Record<string, unknown>>, lineUserId: string, env: Env) {
+  const lowerUid = clean(lineUserId).toLowerCase();
+  const uidMatched = rows.filter((row) => memberLineUid(row).toLowerCase() === lowerUid);
+  const uidMemberNos = Array.from(new Set(uidMatched.map(aiweMemberNo).filter(Boolean)));
+  if (uidMemberNos.length === 1) return { memberNo: uidMemberNos[0], reason: "uid" };
+
+  const adminEmails = staticAdminEmails(env);
+  const emailMatched = rows.filter((row) => adminEmails.includes(clean(row.email).toLowerCase()));
+  const emailMemberNos = Array.from(new Set(emailMatched.map(aiweMemberNo).filter(Boolean)));
+  if (emailMemberNos.length === 1) return { memberNo: emailMemberNos[0], reason: "admin-email" };
+
+  return { memberNo: "", reason: "" };
+}
+
+async function bindLineUidEvents(events: LineEvent[], env: Env) {
+  if (!env.ASSETS_BUCKET) return json({ success: false, message: "R2 bucket is not configured" }, 503);
+  const rows = await readAiweMembers(env);
+  const replies = [];
+  const results = [];
+  for (const event of events) {
+    const lineUserId = clean(event.source?.userId);
+    const parsed = parseUidBindKeyword(extractTriggerText(event));
+    if (!lineUserId) {
+      const message = { type: "text", text: "無法取得 LINE UID，請確認是在一對一 LINE 聊天中輸入。" };
+      replies.push(event.replyToken ? await replyToLine(event.replyToken, [message], env) : { ok: false, status: 400, message: "Missing replyToken" });
+      results.push({ success: false, message: message.text });
+      continue;
+    }
+    const inferred = parsed.memberNo ? { memberNo: parsed.memberNo, reason: "input" } : inferUidBindMemberNo(rows, lineUserId, env);
+    if (!inferred.memberNo) {
+      const message = { type: "text", text: `已取得你的 LINE UID：${lineUserId}\n但無法唯一判定會員編號，請輸入 UID+會員編號，例如：UID+Z1160215。` };
+      replies.push(event.replyToken ? await replyToLine(event.replyToken, [message], env) : { ok: false, status: 400, message: "Missing replyToken" });
+      results.push({ success: false, lineUserId, message: "missing-member-no" });
+      continue;
+    }
+    const matched = rows.filter((row) => rowMatchesMemberNo(row, inferred.memberNo));
+    if (!matched.length) {
+      const message = { type: "text", text: `已取得你的 LINE UID：${lineUserId}\n但找不到會員編號 ${inferred.memberNo}，請確認名冊編號。` };
+      replies.push(event.replyToken ? await replyToLine(event.replyToken, [message], env) : { ok: false, status: 400, message: "Missing replyToken" });
+      results.push({ success: false, lineUserId, memberNo: inferred.memberNo, message: "member-not-found" });
+      continue;
+    }
+    for (const row of matched) setAiweRowLineUid(row, lineUserId);
+    const message = { type: "text", text: `UID 已綁定。\n會員編號：${inferred.memberNo}\nLINE UID：${lineUserId}\n更新筆數：${matched.length}` };
+    replies.push(event.replyToken ? await replyToLine(event.replyToken, [message], env) : { ok: false, status: 400, message: "Missing replyToken" });
+    results.push({ success: true, lineUserId, memberNo: inferred.memberNo, updated: matched.length, reason: inferred.reason });
+  }
+  await writeAiweMembers(env, rows);
+  return json({ success: true, mode: "uid-bind", results, lineReplies: replies });
 }
 
 function lineUidFromText(value: unknown) {
@@ -3183,14 +3266,16 @@ async function handleMonthlyWebhook(request: Request, env: Env, rawBody: string,
   const queryEvents = allEvents.filter((event) => normalizeKeyword(extractTriggerText(event)) === normalizeKeyword(queryKeyword));
   const memberQrEvents = allEvents.filter((event) => normalizeKeyword(extractTriggerText(event)) === normalizeKeyword(memberQrKeyword));
   const calendarEvents = allEvents.filter((event) => normalizeKeyword(extractTriggerText(event)) === normalizeKeyword(calendarKeyword));
+  const uidBindEvents = allEvents.filter((event) => parseUidBindKeyword(extractTriggerText(event)).active);
   const vendorCardEvents = allEvents.filter((event) => normalizeKeyword(extractTriggerText(event)) === normalizeKeyword(vendorCardKeyword));
   const pointEvents = allEvents
     .map((event) => ({ event, query: parseMotherPointKeyword(extractTriggerText(event)) }))
     .filter((match): match is { event: LineEvent; query: { uid: string } } => Boolean(match.query));
   const events = allEvents.filter((event) => normalizeKeyword(extractTriggerText(event)) === normalizeKeyword(fixedKeyword));
-  if (!queryEvents.length && !memberQrEvents.length && !calendarEvents.length && !vendorCardEvents.length && !pointEvents.length && !events.length) return null;
+  if (!queryEvents.length && !memberQrEvents.length && !calendarEvents.length && !uidBindEvents.length && !vendorCardEvents.length && !pointEvents.length && !events.length) return null;
   const signature = request.headers.get("x-line-signature");
   if (!await verifyLineSignature(rawBody, signature, env.LINE_CHANNEL_SECRET)) return new Response("Invalid Signature", { status: 403, headers });
+  if (uidBindEvents.length) return bindLineUidEvents(uidBindEvents, env);
   if (pointEvents.length) return handleMotherPointEvents(pointEvents, env);
   if (queryEvents.length) {
     const queryUrl = `${publicLiffUrl}?query=1`;
