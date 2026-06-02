@@ -8,11 +8,16 @@
   const normalize = (value) => String(value || "").trim().toUpperCase();
   const clean = (value) => String(value || "").trim();
   const isLineUid = (value) => /^U[0-9a-f]{32}$/i.test(clean(value));
+  const isSyntheticAiweEmail = (value) => /^U[0-9a-f]{32}@aiwe\./i.test(clean(value));
   const validLineUid = (value) => {
     const uid = clean(value);
     return isLineUid(uid) ? uid : "";
   };
   const lineUidOf = (item) => validLineUid(item?.lineUserId || item?.uid || item?.LINE_user_id || item?.line_user_id);
+  const aiweMemberNoOf = (item) => clean(item?.aiweMemberNo || item?.motherMemberNo || item?.memberNo || item?.member_no);
+  const emailOf = (item) => clean(item?.email || item?.mail || item?.userEmail);
+  const phoneOf = (item) => clean(item?.phone || item?.mobile || item?.tel);
+  const companyOf = (item) => clean(item?.companyName || item?.company || item?.unit);
 
   function loadData() {
     try {
@@ -37,6 +42,50 @@
     delete row.uid;
     delete row.LINE_user_id;
     delete row.line_user_id;
+  }
+
+  function bestProfileValue(localValue, remoteValue, field) {
+    const local = clean(localValue);
+    const remote = clean(remoteValue);
+    if (!remote) return local;
+    if (field === "email") {
+      if (local && !isSyntheticAiweEmail(local)) return local;
+      if (isSyntheticAiweEmail(remote) && local) return local;
+    } else if (local) {
+      return local;
+    }
+    return remote;
+  }
+
+  function mergeProfileFields(row, remote) {
+    if (!row || !remote) return 0;
+    let count = 0;
+    const before = JSON.stringify({
+      aiweMemberNo: row.aiweMemberNo,
+      email: row.email,
+      phone: row.phone,
+      company: row.company,
+      companyName: row.companyName
+    });
+    row.aiweMemberNo = bestProfileValue(row.aiweMemberNo, aiweMemberNoOf(remote), "memberNo");
+    row.email = bestProfileValue(row.email, emailOf(remote), "email");
+    row.phone = bestProfileValue(row.phone, phoneOf(remote), "phone");
+    const company = companyOf(remote);
+    if (company) {
+      if (!clean(row.company)) row.company = company;
+      if (!clean(row.companyName)) row.companyName = company;
+    }
+    if (JSON.stringify({
+      aiweMemberNo: row.aiweMemberNo,
+      email: row.email,
+      phone: row.phone,
+      company: row.company,
+      companyName: row.companyName
+    }) !== before) {
+      row.aiweSyncedAt = new Date().toISOString();
+      count = 1;
+    }
+    return count;
   }
 
   function displayUid(uid) {
@@ -146,22 +195,40 @@
     return { data, rows, row: rows.find((item) => normalize(item.memberNo) === memberNo) };
   }
 
-  function ensureUidHeader(table) {
+  function makeProfileCell(className, value = "") {
+    const td = document.createElement("td");
+    td.className = className;
+    td.textContent = value;
+    td.style.fontSize = "12px";
+    td.style.whiteSpace = "nowrap";
+    td.style.color = "#475569";
+    return td;
+  }
+
+  function ensureProfileHeaders(table) {
     const headerRow = table.querySelector("thead tr");
-    if (!headerRow || headerRow.textContent.includes("LINE UID")) return;
-    const th = document.createElement("th");
-    th.textContent = "LINE UID";
-    headerRow.insertBefore(th, headerRow.children[2] || null);
+    if (!headerRow || headerRow.dataset.aiweProfileHeaders === "1") return;
+    const headers = [
+      ["LINE UID", "aiwe-uid-head"],
+      ["母站帳號", "aiwe-member-head"],
+      ["Email", "aiwe-email-head"],
+      ["手機", "aiwe-phone-head"]
+    ];
+    headers.slice().reverse().forEach(([label, className]) => {
+      const th = document.createElement("th");
+      th.textContent = label;
+      th.className = className;
+      headerRow.insertBefore(th, headerRow.children[2] || null);
+    });
     for (const row of table.querySelectorAll("tbody tr")) {
-      const td = document.createElement("td");
-      td.className = "aiwe-uid-cell";
-      td.textContent = "-";
-      td.style.fontFamily = "ui-monospace, SFMono-Regular, Consolas, monospace";
-      td.style.fontSize = "12px";
-      td.style.whiteSpace = "nowrap";
-      td.style.color = "#94a3b8";
-      row.insertBefore(td, row.children[2] || null);
+      [
+        makeProfileCell("aiwe-phone-cell"),
+        makeProfileCell("aiwe-email-cell"),
+        makeProfileCell("aiwe-member-cell"),
+        makeProfileCell("aiwe-uid-cell")
+      ].forEach((td) => row.insertBefore(td, row.children[2] || null));
     }
+    headerRow.dataset.aiweProfileHeaders = "1";
   }
 
   async function applyUidColumn() {
@@ -172,8 +239,10 @@
     table.dataset.uidColumnApplying = "1";
     lastAppliedAt = Date.now();
 
-    ensureUidHeader(table);
+    ensureProfileHeaders(table);
     const uidMap = await loadUidMap();
+    const data = loadData();
+    const localRows = Array.isArray(data[type]) ? data[type] : [];
     let changed = false;
 
     for (const row of table.querySelectorAll("tbody tr")) {
@@ -181,22 +250,31 @@
       if (!memberNo) continue;
       const cell = row.querySelector(".aiwe-uid-cell");
       if (!cell) continue;
-      const local = findLocalRoster(type, memberNo);
+      const localRow = localRows.find((item) => normalize(item.memberNo) === memberNo);
       const remote = uidMap.get(memberNo);
       const remoteUid = remote?.__uidConflict ? "" : lineUidOf(remote);
-      let uid = getLineUid(local.row);
-      if (!uid && remoteUid && local.row) {
+      let uid = getLineUid(localRow);
+      if (!uid && remoteUid && localRow) {
         uid = remoteUid;
-        setLineUid(local.row, uid);
+        setLineUid(localRow, uid);
         changed = true;
+      }
+      if (remote && localRow && !remote.__uidConflict) {
+        changed = Boolean(mergeProfileFields(localRow, remote)) || changed;
       }
       cell.textContent = displayUid(uid);
       cell.title = uid || "尚未匹配 LINE UID";
       cell.style.color = uid ? "#0f172a" : "#94a3b8";
       if (uid) row.dataset.lineUid = uid;
+      const memberCell = row.querySelector(".aiwe-member-cell");
+      const emailCell = row.querySelector(".aiwe-email-cell");
+      const phoneCell = row.querySelector(".aiwe-phone-cell");
+      if (memberCell) memberCell.textContent = clean(localRow?.aiweMemberNo || aiweMemberNoOf(remote));
+      if (emailCell) emailCell.textContent = clean(localRow?.email || emailOf(remote));
+      if (phoneCell) phoneCell.textContent = clean(localRow?.phone || phoneOf(remote));
     }
 
-    if (changed) saveData(loadDataWithMerged(type, table));
+    if (changed) saveData(data);
     table.dataset.uidColumnApplying = "";
   }
 
@@ -242,7 +320,7 @@
       }
     }
 
-    const report = { total: rows.length, matched: 0, written: 0, skipped: 0, conflicts: 0, missing: 0, suspicious: 0 };
+    const report = { total: rows.length, matched: 0, written: 0, profileWritten: 0, skipped: 0, conflicts: 0, missing: 0, suspicious: 0 };
     for (const row of rows) {
       const memberNo = normalize(row.memberNo);
       const name = normalize(type === "vendor" ? row.companyName : row.name);
@@ -272,10 +350,12 @@
         continue;
       }
       if (currentUid === uid) {
+        report.profileWritten += mergeProfileFields(row, matched);
         report.skipped += 1;
         continue;
       }
       setLineUid(row, uid);
+      report.profileWritten += mergeProfileFields(row, matched);
       report.written += 1;
     }
     return report;
@@ -300,9 +380,9 @@
     scheduleApply();
     const lines = targets.map((target) => {
       const r = reports[target];
-      return `${target === "vendor" ? "廠商" : "協會"}：匹配 ${r.matched}，寫入 ${r.written}，已存在 ${r.skipped}，衝突 ${r.conflicts}，未找到 ${r.missing}，姓名疑似 ${r.suspicious}`;
+      return `${target === "vendor" ? "廠商" : "協會"}：匹配 ${r.matched}，UID 寫入 ${r.written}，資料補齊 ${r.profileWritten}，已存在 ${r.skipped}，衝突 ${r.conflicts}，未找到 ${r.missing}，姓名疑似 ${r.suspicious}`;
     });
-    alert(`母站 UID 同步完成\n${lines.join("\n")}`);
+    alert(`母站資料同步完成\n${lines.join("\n")}`);
   }
 
   async function applyUidEditor() {
@@ -327,8 +407,15 @@
     }
     const memberField = form.querySelector('input[name="memberNo"]')?.closest(".field");
     const wrapper = document.createElement("div");
-    wrapper.className = "field";
-    wrapper.innerHTML = `<label>LINE UID</label><input name="lineUserId" value="${escapeHtml(value)}" placeholder="例如：Ub68b9724664b889e790c789ece72f717">`;
+    wrapper.className = "aiwe-profile-grid";
+    wrapper.style.display = "grid";
+    wrapper.style.gridTemplateColumns = "repeat(2, minmax(0, 1fr))";
+    wrapper.style.gap = "14px";
+    wrapper.innerHTML = `
+      <div class="field"><label>LINE UID</label><input name="lineUserId" value="${escapeHtml(value)}" placeholder="例如：Ub68b9724664b889e790c789ece72f717"></div>
+      <div class="field"><label>母站帳號</label><input name="aiweMemberNo" value="${escapeHtml(current.aiweMemberNo || "")}" placeholder="母站會員帳號"></div>
+      <div class="field"><label>Email</label><input name="email" value="${escapeHtml(current.email || "")}" placeholder="會員 Email"></div>
+      <div class="field"><label>手機</label><input name="phone" value="${escapeHtml(current.phone || "")}" placeholder="手機"></div>`;
     if (memberField?.nextSibling) form.insertBefore(wrapper, memberField.nextSibling);
     else form.insertBefore(wrapper, form.firstChild);
   }
@@ -341,11 +428,17 @@
     const id = clean(formData.get("id"));
     const memberNo = normalize(formData.get("memberNo"));
     const lineUserId = clean(formData.get("lineUserId"));
+    const aiweMemberNo = clean(formData.get("aiweMemberNo"));
+    const email = clean(formData.get("email"));
+    const phone = clean(formData.get("phone"));
     const data = loadData();
     const rows = Array.isArray(data[type]) ? data[type] : [];
     const row = rows.find((item) => clean(item.id) === id) || rows.find((item) => normalize(item.memberNo) === memberNo);
     if (!row) return;
     setLineUid(row, lineUserId);
+    row.aiweMemberNo = aiweMemberNo;
+    row.email = email;
+    row.phone = phone;
     saveData(data);
   }
 
@@ -354,6 +447,9 @@
     const formData = new FormData(form);
     const memberNo = normalize(formData.get("memberNo"));
     const lineUserId = clean(formData.get("lineUserId"));
+    const aiweMemberNo = clean(formData.get("aiweMemberNo"));
+    const email = clean(formData.get("email"));
+    const phone = clean(formData.get("phone"));
     if (!memberNo || (type !== "association" && type !== "vendor")) return;
     setTimeout(() => {
       const data = loadData();
@@ -361,6 +457,9 @@
       const row = rows.find((item) => normalize(item.memberNo) === memberNo);
       if (!row) return;
       setLineUid(row, lineUserId);
+      row.aiweMemberNo = aiweMemberNo;
+      row.email = email;
+      row.phone = phone;
       saveData(data);
       uidMapPromise = null;
       scheduleApply();
