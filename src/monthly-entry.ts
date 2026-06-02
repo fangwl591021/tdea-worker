@@ -26,6 +26,7 @@ type RichMenuArea = { id?: string; label?: string; bounds: RichMenuBounds; actio
 type RichMenuDeployment = { id: string; richMenuId: string; createdAt: string; name: string; chatBarText: string; areaCount: number; imageUrl?: string; setDefault: boolean; aliasId?: string; lineDefaultRichMenuId?: string; verified?: boolean };
 type RichMenuConfig = { name?: string; chatBarText?: string; selected?: boolean; size?: { width: number; height: number }; imageUrl?: string; areas?: RichMenuArea[]; lastRichMenuId?: string; updatedAt?: string; deployments?: RichMenuDeployment[] };
 type LineActivityDraft = { id: string; lineUserId: string; step: string; answers: Record<string, unknown>; status: "active" | "completed" | "cancelled"; activity?: Record<string, unknown>; createdAt: string; updatedAt: string; completedAt?: string };
+type AdminAccessRecord = { memberNo: string; email: string; name?: string; loginAccess: boolean; updatedAt?: string; updatedBy?: string };
 type LineActivityAiResult = { intent?: string; confidence?: number; question?: string; fields?: Record<string, unknown> };
 
 const monthlyKey = "flex/monthly-activity.json";
@@ -35,6 +36,7 @@ const redeemListKey = "redeem/records.json";
 const pointLedgerKey = "points/ledger.json";
 const pushLogKey = "push/logs.json";
 const richMenuKey = "line/rich-menu.json";
+const adminAccessKey = "line/admin-access.json";
 const aiweMembersKey = "aiwe/members.json";
 const lineActivityDraftListKey = "line-activity/drafts.json";
 const lineActivityLatestDraftKey = "line-activity/latest-active.json";
@@ -59,10 +61,68 @@ const json = (data: unknown, status = 200) => new Response(JSON.stringify(data),
 const esc = (value: unknown) => String(value ?? "").replace(/[&<>'"]/g, (ch) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "'": "&#039;", "\"": "&quot;" }[ch] || ch));
 const normalizeKeyword = (value: string) => value.trim().replace(/\s+/g, "").toUpperCase();
 
-function requireAdmin(request: Request, env: Env) {
-  const allowed = (env.ADMIN_EMAILS || "admin@example.com").split(",").map((item) => item.trim().toLowerCase()).filter(Boolean);
-  const email = request.headers.get("x-admin-email")?.trim().toLowerCase();
-  return email && allowed.includes(email) ? null : json({ success: false, message: "Unauthorized" }, 401);
+function staticAdminEmails(env: Env) {
+  return (env.ADMIN_EMAILS || "admin@example.com").split(",").map((item) => item.trim().toLowerCase()).filter(Boolean);
+}
+
+function adminEmailFromRequest(request: Request) {
+  return request.headers.get("x-admin-email")?.trim().toLowerCase() || "";
+}
+
+async function readAdminAccess(env: Env): Promise<Record<string, AdminAccessRecord>> {
+  if (!env.ASSETS_BUCKET) return {};
+  const object = await env.ASSETS_BUCKET.get(adminAccessKey);
+  const data = object ? await object.json().catch(() => ({})) : {};
+  return data && typeof data === "object" && !Array.isArray(data) ? data as Record<string, AdminAccessRecord> : {};
+}
+
+async function writeAdminAccess(env: Env, records: Record<string, AdminAccessRecord>) {
+  if (!env.ASSETS_BUCKET) return false;
+  await env.ASSETS_BUCKET.put(adminAccessKey, JSON.stringify(records, null, 2), {
+    httpMetadata: { contentType: "application/json; charset=utf-8", cacheControl: "no-store" }
+  });
+  return true;
+}
+
+async function isDynamicAdmin(email: string, env: Env) {
+  if (!email) return false;
+  const records = await readAdminAccess(env);
+  return Object.values(records).some((record) => clean(record.email).toLowerCase() === email && record.loginAccess === true);
+}
+
+async function requireAdmin(request: Request, env: Env) {
+  const email = adminEmailFromRequest(request);
+  if (email && staticAdminEmails(env).includes(email)) return null;
+  if (email && await isDynamicAdmin(email, env)) return null;
+  return json({ success: false, message: "Unauthorized" }, 401);
+}
+
+async function listAdminAccessApi(request: Request, env: Env) {
+  const guard = await requireAdmin(request, env);
+  if (guard) return guard;
+  return json({ success: true, data: await readAdminAccess(env), staticAdmins: staticAdminEmails(env) });
+}
+
+async function updateAdminAccessApi(request: Request, env: Env) {
+  const guard = await requireAdmin(request, env);
+  if (guard) return guard;
+  if (!env.ASSETS_BUCKET) return json({ success: false, message: "R2 bucket is not configured" }, 503);
+  const input = await request.json().catch(() => ({})) as Record<string, unknown>;
+  const memberNo = clean(input.memberNo).toUpperCase();
+  const email = clean(input.email).toLowerCase();
+  if (!memberNo) return json({ success: false, message: "Missing memberNo" }, 400);
+  if (Boolean(input.loginAccess) && !email) return json({ success: false, message: "此會員缺少 Email，不能授予後台登入權限" }, 400);
+  const records = await readAdminAccess(env);
+  records[memberNo] = {
+    memberNo,
+    email,
+    name: clean(input.name),
+    loginAccess: Boolean(input.loginAccess),
+    updatedAt: new Date().toISOString(),
+    updatedBy: adminEmailFromRequest(request)
+  };
+  await writeAdminAccess(env, records);
+  return json({ success: true, data: records[memberNo] });
 }
 
 async function readMonthly(env: Env): Promise<MonthlyConfig> {
@@ -275,13 +335,13 @@ async function getLineDefaultRichMenuId(env: Env) {
 }
 
 async function getRichMenuApi(request: Request, env: Env) {
-  const guard = requireAdmin(request, env);
+  const guard = await requireAdmin(request, env);
   if (guard) return guard;
   return json({ success: true, data: await readRichMenuConfig(env) });
 }
 
 async function saveRichMenuApi(request: Request, env: Env) {
-  const guard = requireAdmin(request, env);
+  const guard = await requireAdmin(request, env);
   if (guard) return guard;
   if (!env.ASSETS_BUCKET) return json({ success: false, message: "R2 bucket is not configured" }, 503);
   const input = await request.json().catch(() => ({})) as RichMenuConfig;
@@ -292,7 +352,7 @@ async function saveRichMenuApi(request: Request, env: Env) {
 }
 
 async function deployRichMenuApi(request: Request, env: Env) {
-  const guard = requireAdmin(request, env);
+  const guard = await requireAdmin(request, env);
   if (guard) return guard;
   if (!env.ASSETS_BUCKET) return json({ success: false, message: "R2 bucket is not configured" }, 503);
   try {
@@ -492,7 +552,7 @@ async function handleFormSubmission(request: Request, env: Env) {
 }
 
 async function syncGoogleFormResponses(request: Request, env: Env) {
-  const guard = requireAdmin(request, env);
+  const guard = await requireAdmin(request, env);
   if (guard) return guard;
   const scriptUrl = env.GOOGLE_FORMS_SCRIPT_URL?.trim();
   if (!scriptUrl) return json({ success: false, message: "GOOGLE_FORMS_SCRIPT_URL is not configured" }, 503);
@@ -1124,7 +1184,7 @@ function publicRedeem(redeem: RedeemRequest, extra: Record<string, unknown> = {}
 }
 
 async function createRedeemRequest(request: Request, env: Env) {
-  const guard = requireAdmin(request, env);
+  const guard = await requireAdmin(request, env);
   if (guard) return guard;
   if (!env.ASSETS_BUCKET) return json({ success: false, message: "R2 bucket is not configured" }, 503);
   const input = await request.json().catch(() => ({})) as Record<string, unknown>;
@@ -1166,7 +1226,7 @@ async function createRedeemRequest(request: Request, env: Env) {
 }
 
 async function listRedeemRequests(request: Request, env: Env) {
-  const guard = requireAdmin(request, env);
+  const guard = await requireAdmin(request, env);
   if (guard) return guard;
   const list = await readRedeemList(env);
   return json({ success: true, data: list.map((item) => publicRedeem(item)) });
@@ -1239,14 +1299,14 @@ async function confirmRedeemRequest(request: Request, env: Env, token: string) {
 }
 
 async function getPointAccountApi(request: Request, env: Env, lineUserId: string) {
-  const guard = requireAdmin(request, env);
+  const guard = await requireAdmin(request, env);
   if (guard) return guard;
   if (!lineUserId) return json({ success: false, message: "缺少會員 UID" }, 400);
   return json({ success: true, data: await getUnifiedPointAccount(env, lineUserId, { autoImport: true }) });
 }
 
 async function syncLegacyPointApi(request: Request, env: Env) {
-  const guard = requireAdmin(request, env);
+  const guard = await requireAdmin(request, env);
   if (guard) return guard;
   const input = await request.json().catch(() => ({})) as Record<string, unknown>;
   const lineUserId = firstClean(input.lineUserId, input.uid, input.LINE_user_id);
@@ -1256,7 +1316,7 @@ async function syncLegacyPointApi(request: Request, env: Env) {
 }
 
 async function listPointLedgerApi(request: Request, env: Env) {
-  const guard = requireAdmin(request, env);
+  const guard = await requireAdmin(request, env);
   if (guard) return guard;
   if (!env.ASSETS_BUCKET) return json({ success: true, data: [] });
   const url = new URL(request.url);
@@ -1280,7 +1340,7 @@ function publicNativeForm(form: NativeForm) {
 }
 
 async function createNativeForm(request: Request, env: Env) {
-  const guard = requireAdmin(request, env);
+  const guard = await requireAdmin(request, env);
   if (guard) return guard;
   if (!env.ASSETS_BUCKET) return json({ success: false, message: "R2 bucket is not configured" }, 503);
   const input = await request.json().catch(() => ({})) as Record<string, unknown>;
@@ -1541,7 +1601,7 @@ async function verifyNativeCheckin(request: Request, env: Env) {
 }
 
 async function confirmNativeCheckin(request: Request, env: Env) {
-  const guard = requireAdmin(request, env);
+  const guard = await requireAdmin(request, env);
   if (guard) return guard;
   const input = await request.json().catch(() => ({})) as Record<string, unknown>;
   const token = clean(input.token);
@@ -1619,7 +1679,7 @@ async function resolveOpnFormWorkspaceId(env: Env) {
 }
 
 async function createOpnForm(request: Request, env: Env) {
-  const guard = requireAdmin(request, env);
+  const guard = await requireAdmin(request, env);
   if (guard) return guard;
   if (!clean(env.OPNFORM_API_TOKEN) || !clean(env.OPNFORM_WORKSPACE_ID)) return json({ success: false, code: "opnform_not_configured", message: "OPNFORM_API_TOKEN / OPNFORM_WORKSPACE_ID is not configured" }, 503);
 
@@ -1715,7 +1775,7 @@ async function createOpnForm(request: Request, env: Env) {
 }
 
 async function listOpnFormWorkspaces(request: Request, env: Env) {
-  const guard = requireAdmin(request, env);
+  const guard = await requireAdmin(request, env);
   if (guard) return guard;
   if (!clean(env.OPNFORM_API_TOKEN)) return json({ success: false, code: "opnform_not_configured", message: "OPNFORM_API_TOKEN is not configured" }, 503);
   const result = await opnFormRawJson(env, "/open/workspaces", { method: "GET" });
@@ -1782,7 +1842,7 @@ async function handleOpnFormWebhook(request: Request, env: Env) {
 }
 
 async function syncOpnFormResponses(request: Request, env: Env) {
-  const guard = requireAdmin(request, env);
+  const guard = await requireAdmin(request, env);
   if (guard) return guard;
   if (!clean(env.OPNFORM_API_TOKEN)) return json({ success: false, code: "opnform_not_configured", message: "OPNFORM_API_TOKEN is not configured" }, 503);
   const input = await request.json().catch(() => ({})) as Record<string, unknown>;
@@ -2762,7 +2822,7 @@ async function handleLineActivityMaker(request: Request, env: Env, rawBody: stri
 }
 
 async function listLineActivityDrafts(request: Request, env: Env) {
-  const guard = requireAdmin(request, env);
+  const guard = await requireAdmin(request, env);
   if (guard) return guard;
   if (!env.ASSETS_BUCKET) return json({ success: false, message: "R2 bucket is not configured" }, 503);
   const object = await env.ASSETS_BUCKET.get(lineActivityDraftListKey);
@@ -2774,7 +2834,7 @@ async function listLineActivityDrafts(request: Request, env: Env) {
 }
 
 async function deleteLineActivityDraft(request: Request, env: Env) {
-  const guard = requireAdmin(request, env);
+  const guard = await requireAdmin(request, env);
   if (guard) return guard;
   if (!env.ASSETS_BUCKET) return json({ success: false, message: "R2 bucket is not configured" }, 503);
   const url = new URL(request.url);
@@ -2821,7 +2881,7 @@ async function deleteLineActivityDraft(request: Request, env: Env) {
 }
 
 async function getLineActivityDebug(request: Request, env: Env) {
-  const guard = requireAdmin(request, env);
+  const guard = await requireAdmin(request, env);
   if (guard) return guard;
   if (!env.ASSETS_BUCKET) return json({ success: false, message: "R2 bucket is not configured" }, 503);
   const object = await env.ASSETS_BUCKET.get(lineActivityDebugKey);
@@ -2830,7 +2890,7 @@ async function getLineActivityDebug(request: Request, env: Env) {
 }
 
 async function testLineActivityAi(request: Request, env: Env) {
-  const guard = requireAdmin(request, env);
+  const guard = await requireAdmin(request, env);
   if (guard) return guard;
   const url = new URL(request.url);
   const input = request.method === "POST" ? await request.json().catch(() => ({})) as Record<string, unknown> : {};
@@ -2935,7 +2995,7 @@ async function appendPushLog(env: Env, log: PushLog) {
 }
 
 async function getPushSegments(request: Request, env: Env) {
-  const guard = requireAdmin(request, env);
+  const guard = await requireAdmin(request, env);
   if (guard) return guard;
   const members = await readAiweMembers(env);
   const counts = {
@@ -2948,7 +3008,7 @@ async function getPushSegments(request: Request, env: Env) {
 }
 
 async function resolvePushTargetsApi(request: Request, env: Env) {
-  const guard = requireAdmin(request, env);
+  const guard = await requireAdmin(request, env);
   if (guard) return guard;
   const input = await request.json().catch(() => ({})) as Record<string, unknown>;
   const target = asRecord(input.target) as PushTarget;
@@ -2957,7 +3017,7 @@ async function resolvePushTargetsApi(request: Request, env: Env) {
 }
 
 async function sendPushApi(request: Request, env: Env) {
-  const guard = requireAdmin(request, env);
+  const guard = await requireAdmin(request, env);
   if (guard) return guard;
   const input = await request.json().catch(() => ({})) as Record<string, unknown>;
   const target = asRecord(input.target) as PushTarget;
@@ -3169,11 +3229,13 @@ export default {
 	    if ((request.method === "DELETE" || request.method === "POST") && url.pathname === "/api/line-activity-drafts/delete") return deleteLineActivityDraft(request, env);
 	    if (request.method === "GET" && url.pathname === "/api/line-activity-debug") return getLineActivityDebug(request, env);
 	    if ((request.method === "GET" || request.method === "POST") && url.pathname === "/api/line-activity-ai-check") return testLineActivityAi(request, env);
+	    if (request.method === "GET" && url.pathname === "/api/admin-access") return listAdminAccessApi(request, env);
+	    if ((request.method === "PUT" || request.method === "POST") && url.pathname === "/api/admin-access") return updateAdminAccessApi(request, env);
 	    if (request.method === "GET" && url.pathname === "/api/monthly-activity") return json({ success: true, data: await readMonthly(env) });
-	    if ((request.method === "PUT" || request.method === "POST") && url.pathname === "/api/monthly-activity") { const guard = requireAdmin(request, env); if (guard) return guard; if (!env.ASSETS_BUCKET) return json({ success: false, message: "R2 bucket is not configured" }, 503); const config = await request.json().catch(() => ({})) as MonthlyConfig; await writeMonthly(env, config); return json({ success: true, data: await readMonthly(env), flex: buildMonthlyFlex(config) }); }
+	    if ((request.method === "PUT" || request.method === "POST") && url.pathname === "/api/monthly-activity") { const guard = await requireAdmin(request, env); if (guard) return guard; if (!env.ASSETS_BUCKET) return json({ success: false, message: "R2 bucket is not configured" }, 503); const config = await request.json().catch(() => ({})) as MonthlyConfig; await writeMonthly(env, config); return json({ success: true, data: await readMonthly(env), flex: buildMonthlyFlex(config) }); }
 	    if (request.method === "GET" && url.pathname === "/api/monthly-activity/flex") { const config = await readMonthly(env); return json({ success: true, flex: buildMonthlyFlex(config), data: config }); }
 	    if (request.method === "GET" && url.pathname === "/api/vendor-card-menu") return json({ success: true, data: await readVendorCardConfig(env) });
-	    if ((request.method === "PUT" || request.method === "POST") && url.pathname === "/api/vendor-card-menu") { const guard = requireAdmin(request, env); if (guard) return guard; if (!env.ASSETS_BUCKET) return json({ success: false, message: "R2 bucket is not configured" }, 503); const config = await request.json().catch(() => ({})) as VendorCardConfig; await writeVendorCardConfig(env, config); return json({ success: true, data: await readVendorCardConfig(env), flex: buildVendorCardFlex(config) }); }
+	    if ((request.method === "PUT" || request.method === "POST") && url.pathname === "/api/vendor-card-menu") { const guard = await requireAdmin(request, env); if (guard) return guard; if (!env.ASSETS_BUCKET) return json({ success: false, message: "R2 bucket is not configured" }, 503); const config = await request.json().catch(() => ({})) as VendorCardConfig; await writeVendorCardConfig(env, config); return json({ success: true, data: await readVendorCardConfig(env), flex: buildVendorCardFlex(config) }); }
 	    if (request.method === "GET" && url.pathname === "/api/vendor-card-menu/flex") { const config = await readVendorCardConfig(env); return json({ success: true, flex: buildVendorCardFlex(config), data: config }); }
 	    if (request.method === "GET" && url.pathname === "/api/rich-menu") return getRichMenuApi(request, env);
 	    if ((request.method === "PUT" || request.method === "POST") && url.pathname === "/api/rich-menu") return saveRichMenuApi(request, env);
@@ -3218,3 +3280,4 @@ export default {
     return baseEntry.fetch(request, env, ctx);
   }
 };
+

@@ -1,8 +1,22 @@
 (() => {
   const storageKey = "tdea-manager-v3";
+  const adminKey = "tdea-admin-email";
+  const api = "https://tdeawork.fangwl591021.workers.dev";
   let lastAppliedAt = 0;
+  let accessMap = null;
+  let accessLoadedAt = 0;
 
   const normalize = (value) => String(value || "").trim().toUpperCase();
+  const clean = (value) => String(value || "").trim();
+
+  function adminEmail() {
+    return sessionStorage.getItem(adminKey) || localStorage.getItem(adminKey) || "";
+  }
+
+  function toast(message) {
+    if (typeof window.toast === "function") return window.toast(message);
+    alert(message);
+  }
 
   function loadData() {
     try {
@@ -14,6 +28,55 @@
 
   function saveData(data) {
     localStorage.setItem(storageKey, JSON.stringify(data));
+  }
+
+  async function loadAccess(force = false) {
+    const now = Date.now();
+    if (!force && accessMap && now - accessLoadedAt < 30000) return accessMap;
+    accessMap = new Map();
+    accessLoadedAt = now;
+    const email = adminEmail();
+    if (!email) return accessMap;
+
+    const response = await fetch(`${api}/api/admin-access`, {
+      headers: { "x-admin-email": email },
+      cache: "no-store"
+    });
+    const result = await response.json().catch(() => ({}));
+    if (!response.ok || !result.success) throw new Error(result.message || "登入權限載入失敗");
+
+    const records = result.data && typeof result.data === "object" ? result.data : {};
+    Object.values(records).forEach((record) => {
+      const memberNo = normalize(record?.memberNo);
+      if (memberNo) accessMap.set(memberNo, record);
+    });
+    return accessMap;
+  }
+
+  async function updateAccess(member, memberNo, loginAccess) {
+    const email = adminEmail();
+    if (!email) throw new Error("請先設定管理者 Email");
+    let targetEmail = clean(member?.email || member?.Email || member?.mail || member?.user_email);
+    if (loginAccess && !targetEmail) {
+      targetEmail = clean(prompt("請輸入此管理者 Email") || "");
+    }
+    if (loginAccess && !targetEmail) throw new Error("此會員沒有 Email，不能設定為系統管理員");
+
+    const response = await fetch(`${api}/api/admin-access`, {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-admin-email": email },
+      body: JSON.stringify({
+        memberNo,
+        email: targetEmail,
+        name: clean(member?.name || member?.displayName || member?.memberName),
+        loginAccess
+      })
+    });
+    const result = await response.json().catch(() => ({}));
+    if (!response.ok || !result.success) throw new Error(result.message || "登入權限更新失敗");
+    accessMap = null;
+    await loadAccess(true);
+    return result.data;
   }
 
   function findAssociationTable() {
@@ -57,7 +120,7 @@
     document.head.appendChild(style);
   }
 
-  function applyLoginAccessColumn() {
+  async function applyLoginAccessColumn() {
     const table = findAssociationTable();
     if (!table || table.dataset.loginAccessReady === "1") return;
     const headerRow = table.querySelector("thead tr");
@@ -76,22 +139,42 @@
 
     const data = loadData();
     data.association ||= [];
+    let remoteAccess = new Map();
+    try {
+      remoteAccess = await loadAccess();
+    } catch (error) {
+      console.warn(error);
+      toast(error.message || "登入權限載入失敗");
+    }
 
     for (const row of bodyRows) {
       const memberNo = normalize(row.children[0]?.textContent);
       const member = findMember(data, memberNo);
+      const remote = remoteAccess.get(memberNo);
+      const checked = remote ? remote.loginAccess === true : member?.loginAccess === true;
       const td = document.createElement("td");
       td.className = "tdea-login-access-cell";
-      td.innerHTML = `<label><input type="checkbox" ${member?.loginAccess ? "checked" : ""}><span>允許</span></label>`;
+      td.innerHTML = `<label><input type="checkbox" ${checked ? "checked" : ""}><span>允許</span></label>`;
       const input = td.querySelector("input");
-      input.addEventListener("change", () => {
-        const fresh = loadData();
-        fresh.association ||= [];
-        const target = findMember(fresh, memberNo);
-        if (target) {
+      input.addEventListener("change", async () => {
+        const previous = !input.checked;
+        input.disabled = true;
+        try {
+          const fresh = loadData();
+          fresh.association ||= [];
+          const target = findMember(fresh, memberNo) || member || { memberNo };
+          const record = await updateAccess(target, memberNo, input.checked);
           target.loginAccess = input.checked;
+          if (record?.email) target.email = record.email;
+          if (!findMember(fresh, memberNo)) fresh.association.push(target);
           saveData(fresh);
           window.dispatchEvent(new CustomEvent("tdea:login-access-change", { detail: { memberNo, loginAccess: input.checked } }));
+          toast(input.checked ? "已授予系統管理員權限" : "已取消系統管理員權限");
+        } catch (error) {
+          input.checked = previous;
+          toast(error.message || "登入權限更新失敗");
+        } finally {
+          input.disabled = false;
         }
       });
       row.insertBefore(td, row.children[insertIndex] || null);
@@ -110,5 +193,9 @@
 
   new MutationObserver(scheduleApply).observe(document.body, { childList: true, subtree: true });
   document.addEventListener("click", () => setTimeout(scheduleApply, 80), true);
+  window.addEventListener("storage", () => {
+    accessMap = null;
+    scheduleApply();
+  });
   scheduleApply();
 })();
