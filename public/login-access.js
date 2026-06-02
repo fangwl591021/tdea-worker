@@ -1,4 +1,4 @@
-(() => {
+﻿(() => {
   const storageKey = "tdea-manager-v3";
   const adminKey = "tdea-admin-email";
   const api = "https://tdeawork.fangwl591021.workers.dev";
@@ -55,12 +55,9 @@
 
   async function updateAccess(member, memberNo, loginAccess) {
     const email = adminEmail();
-    if (!email) throw new Error("請先設定管理者 Email");
-    let targetEmail = clean(member?.email || member?.Email || member?.mail || member?.user_email);
-    if (loginAccess && !targetEmail) {
-      targetEmail = clean(prompt("請輸入此管理者 Email") || "");
-    }
-    if (loginAccess && !targetEmail) throw new Error("此會員沒有 Email，不能設定為系統管理員");
+    if (!email) throw new Error("Missing current admin email");
+    const targetEmail = clean(member?.email || member?.Email || member?.mail || member?.user_email);
+    const targetLineUserId = clean(member?.lineUserId || member?.lineUid || member?.uid || member?.LINE_user_id || member?.line_user_id);
 
     const response = await fetch(`${api}/api/admin-access`, {
       method: "POST",
@@ -68,12 +65,13 @@
       body: JSON.stringify({
         memberNo,
         email: targetEmail,
+        lineUserId: targetLineUserId,
         name: clean(member?.name || member?.displayName || member?.memberName),
         loginAccess
       })
     });
     const result = await response.json().catch(() => ({}));
-    if (!response.ok || !result.success) throw new Error(result.message || "登入權限更新失敗");
+    if (!response.ok || !result.success) throw new Error(result.message || "Failed to update login access");
     accessMap = null;
     await loadAccess(true);
     return result.data;
@@ -169,7 +167,7 @@
           if (!findMember(fresh, memberNo)) fresh.association.push(target);
           saveData(fresh);
           window.dispatchEvent(new CustomEvent("tdea:login-access-change", { detail: { memberNo, loginAccess: input.checked } }));
-          toast(input.checked ? "已授予系統管理員權限" : "已取消系統管理員權限");
+          toast(input.checked ? "已授予後台登入權限" : "已取消後台登入權限");
         } catch (error) {
           input.checked = previous;
           toast(error.message || "登入權限更新失敗");

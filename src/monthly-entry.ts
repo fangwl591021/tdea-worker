@@ -26,7 +26,7 @@ type RichMenuArea = { id?: string; label?: string; bounds: RichMenuBounds; actio
 type RichMenuDeployment = { id: string; richMenuId: string; createdAt: string; name: string; chatBarText: string; areaCount: number; imageUrl?: string; setDefault: boolean; aliasId?: string; lineDefaultRichMenuId?: string; verified?: boolean };
 type RichMenuConfig = { name?: string; chatBarText?: string; selected?: boolean; size?: { width: number; height: number }; imageUrl?: string; areas?: RichMenuArea[]; lastRichMenuId?: string; updatedAt?: string; deployments?: RichMenuDeployment[] };
 type LineActivityDraft = { id: string; lineUserId: string; step: string; answers: Record<string, unknown>; status: "active" | "completed" | "cancelled"; activity?: Record<string, unknown>; createdAt: string; updatedAt: string; completedAt?: string };
-type AdminAccessRecord = { memberNo: string; email: string; name?: string; loginAccess: boolean; updatedAt?: string; updatedBy?: string };
+type AdminAccessRecord = { memberNo: string; email?: string; lineUserId?: string; name?: string; loginAccess: boolean; updatedAt?: string; updatedBy?: string };
 type LineActivityAiResult = { intent?: string; confidence?: number; question?: string; fields?: Record<string, unknown> };
 
 const monthlyKey = "flex/monthly-activity.json";
@@ -69,6 +69,14 @@ function adminEmailFromRequest(request: Request) {
   return request.headers.get("x-admin-email")?.trim().toLowerCase() || "";
 }
 
+function adminMemberNoFromRequest(request: Request) {
+  return request.headers.get("x-admin-member-no")?.trim().toUpperCase() || "";
+}
+
+function adminLineUserIdFromRequest(request: Request) {
+  return clean(request.headers.get("x-line-user-id") || request.headers.get("x-line-uid"));
+}
+
 async function readAdminAccess(env: Env): Promise<Record<string, AdminAccessRecord>> {
   if (!env.ASSETS_BUCKET) return {};
   const object = await env.ASSETS_BUCKET.get(adminAccessKey);
@@ -84,16 +92,25 @@ async function writeAdminAccess(env: Env, records: Record<string, AdminAccessRec
   return true;
 }
 
-async function isDynamicAdmin(email: string, env: Env) {
-  if (!email) return false;
+async function isDynamicAdmin(identity: { email?: string; memberNo?: string; lineUserId?: string }, env: Env) {
+  const email = clean(identity.email).toLowerCase();
+  const memberNo = clean(identity.memberNo).toUpperCase();
+  const lineUserId = clean(identity.lineUserId);
+  if (!email && !memberNo && !lineUserId) return false;
   const records = await readAdminAccess(env);
-  return Object.values(records).some((record) => clean(record.email).toLowerCase() === email && record.loginAccess === true);
+  return Object.values(records).some((record) => {
+    if (record.loginAccess !== true) return false;
+    if (memberNo && clean(record.memberNo).toUpperCase() === memberNo) return true;
+    if (lineUserId && clean(record.lineUserId) === lineUserId) return true;
+    if (email && clean(record.email).toLowerCase() === email) return true;
+    return false;
+  });
 }
 
 async function requireAdmin(request: Request, env: Env) {
   const email = adminEmailFromRequest(request);
   if (email && staticAdminEmails(env).includes(email)) return null;
-  if (email && await isDynamicAdmin(email, env)) return null;
+  if (await isDynamicAdmin({ email, memberNo: adminMemberNoFromRequest(request), lineUserId: adminLineUserIdFromRequest(request) }, env)) return null;
   return json({ success: false, message: "Unauthorized" }, 401);
 }
 
@@ -110,12 +127,13 @@ async function updateAdminAccessApi(request: Request, env: Env) {
   const input = await request.json().catch(() => ({})) as Record<string, unknown>;
   const memberNo = clean(input.memberNo).toUpperCase();
   const email = clean(input.email).toLowerCase();
+  const lineUserId = firstClean(input.lineUserId, input.lineUid, input.uid, input.LINE_user_id, input.line_user_id);
   if (!memberNo) return json({ success: false, message: "Missing memberNo" }, 400);
-  if (Boolean(input.loginAccess) && !email) return json({ success: false, message: "此會員缺少 Email，不能授予後台登入權限" }, 400);
   const records = await readAdminAccess(env);
   records[memberNo] = {
     memberNo,
-    email,
+    email: email || undefined,
+    lineUserId: lineUserId || undefined,
     name: clean(input.name),
     loginAccess: Boolean(input.loginAccess),
     updatedAt: new Date().toISOString(),
