@@ -2932,6 +2932,28 @@ async function readAiweMembers(env: Env): Promise<Array<Record<string, unknown>>
   return Array.isArray(rows) ? rows.map(asRecord) : [];
 }
 
+function publicAiweMember(row: Record<string, unknown>) {
+  const rosterType = clean(row.rosterType) === "vendor" ? "vendor" : "association";
+  return {
+    rosterType,
+    rosterMemberNo: firstClean(row.rosterMemberNo, row.memberNo, row.user_login),
+    memberNo: firstClean(row.memberNo, row.rosterMemberNo, row.user_login),
+    rosterName: firstClean(row.rosterName, row.name, row.display_name, row.user_nicename, row.companyName),
+    companyName: firstClean(row.companyName, row.company, row.organization, row.unit),
+    lineUserId: memberLineUid(row),
+    phone: firstClean(row.phone, row.mobile, row.tel, row.telephone),
+    email: firstClean(row.email, row.user_email),
+    qualification: firstClean(row.qualification, row.memberQualification, row.status)
+  };
+}
+
+async function listAiweMembersPublicApi(request: Request, env: Env) {
+  const guard = await requireAdmin(request, env);
+  if (guard) return guard;
+  const rows = await readAiweMembers(env);
+  return json({ success: true, data: rows.map(publicAiweMember), total: rows.length });
+}
+
 function lineUidFromText(value: unknown) {
   const match = String(value || "").match(/U[0-9a-f]{32}/i);
   return match ? match[0] : "";
@@ -3249,6 +3271,7 @@ export default {
 	    if ((request.method === "GET" || request.method === "POST") && url.pathname === "/api/line-activity-ai-check") return testLineActivityAi(request, env);
 	    if (request.method === "GET" && url.pathname === "/api/admin-access") return listAdminAccessApi(request, env);
 	    if ((request.method === "PUT" || request.method === "POST") && url.pathname === "/api/admin-access") return updateAdminAccessApi(request, env);
+	    if (request.method === "GET" && url.pathname === "/api/aiwe-members-public") return listAiweMembersPublicApi(request, env);
 	    if (request.method === "GET" && url.pathname === "/api/monthly-activity") return json({ success: true, data: await readMonthly(env) });
 	    if ((request.method === "PUT" || request.method === "POST") && url.pathname === "/api/monthly-activity") { const guard = await requireAdmin(request, env); if (guard) return guard; if (!env.ASSETS_BUCKET) return json({ success: false, message: "R2 bucket is not configured" }, 503); const config = await request.json().catch(() => ({})) as MonthlyConfig; await writeMonthly(env, config); return json({ success: true, data: await readMonthly(env), flex: buildMonthlyFlex(config) }); }
 	    if (request.method === "GET" && url.pathname === "/api/monthly-activity/flex") { const config = await readMonthly(env); return json({ success: true, flex: buildMonthlyFlex(config), data: config }); }

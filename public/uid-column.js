@@ -7,6 +7,7 @@
 
   const normalize = (value) => String(value || "").trim().toUpperCase();
   const clean = (value) => String(value || "").trim();
+  const lineUidOf = (item) => clean(item?.lineUserId || item?.uid || item?.LINE_user_id || item?.line_user_id);
 
   function loadData() {
     try {
@@ -44,13 +45,18 @@
     return sessionStorage.getItem(tokenKey) || "";
   }
 
+  function adminEmail() {
+    return sessionStorage.getItem("tdea-admin-email") || localStorage.getItem("tdea-admin-email") || "";
+  }
+
   async function loadUidMap() {
     if (uidMapPromise) return uidMapPromise;
     uidMapPromise = (async () => {
       const token = getToken();
-      if (!token) return new Map();
+      const email = adminEmail();
+      if (!token && !email) return new Map();
       const response = await fetch(`${apiBase}/api/aiwe-members-public`, {
-        headers: { "x-aiwe-token": token },
+        headers: email ? { "x-admin-email": email } : { "x-aiwe-token": token },
         cache: "no-store"
       });
       if (response.status === 401) {
@@ -62,9 +68,16 @@
       const result = await response.json().catch(() => ({}));
       const map = new Map();
       for (const item of result.data || []) {
+        const uid = lineUidOf(item);
+        if (!uid) continue;
         const keys = [item.rosterMemberNo, item.memberNo, item.member_no].map(normalize).filter(Boolean);
         for (const key of keys) {
           const current = map.get(key);
+          const currentUid = lineUidOf(current);
+          if (current && currentUid && currentUid !== uid) {
+            map.set(key, { ...current, __uidConflict: true });
+            continue;
+          }
           if (!current || item.rosterMemberNo) map.set(key, item);
         }
       }
@@ -74,6 +87,19 @@
       return new Map();
     });
     return uidMapPromise;
+  }
+
+  async function loadAiweRows() {
+    const token = getToken();
+    const email = adminEmail();
+    if (!token && !email) throw new Error("請先以管理者身份進入後台");
+    const response = await fetch(`${apiBase}/api/aiwe-members-public`, {
+      headers: email ? { "x-admin-email": email } : { "x-aiwe-token": token },
+      cache: "no-store"
+    });
+    const result = await response.json().catch(() => ({}));
+    if (!response.ok || !result.success) throw new Error(result.message || `母站 UID 讀取失敗 HTTP ${response.status}`);
+    return Array.isArray(result.data) ? result.data : [];
   }
 
   function activeRosterType() {
@@ -92,6 +118,21 @@
       const headerText = table.querySelector("thead")?.textContent || "";
       return headerText.includes("會員編號") && headerText.includes("資格") && headerText.includes("操作");
     }) || null;
+  }
+
+  function ensureSyncButton() {
+    const type = activeRosterType();
+    if (!type) return;
+    const actions = document.querySelector(".page-actions, .actions") || document.querySelector("header .actions");
+    const panelHead = Array.from(document.querySelectorAll(".panel-head")).find((node) => node.textContent.includes(type === "vendor" ? "廠商" : "協會"));
+    const host = actions || panelHead;
+    if (!host || host.querySelector("[data-sync-aiwe-uid]")) return;
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "btn";
+    button.dataset.syncAiweUid = type;
+    button.textContent = "同步母站 UID";
+    host.prepend(button);
   }
 
   function findLocalRoster(type, memberNo) {
@@ -137,7 +178,7 @@
       if (!cell) continue;
       const local = findLocalRoster(type, memberNo);
       const remote = uidMap.get(memberNo);
-      const remoteUid = clean(remote?.lineUserId || remote?.uid || remote?.LINE_user_id);
+      const remoteUid = remote?.__uidConflict ? "" : lineUidOf(remote);
       let uid = getLineUid(local.row);
       if (!uid && remoteUid && local.row) {
         uid = remoteUid;
@@ -164,6 +205,99 @@
       if (row && uid) setLineUid(row, uid);
     }
     return data;
+  }
+
+  function mergeUidIntoRoster(rows, aiweRows, type) {
+    const byMemberNo = new Map();
+    const byName = new Map();
+    for (const item of aiweRows) {
+      const itemType = clean(item.rosterType) === "vendor" ? "vendor" : "association";
+      if (itemType !== type) continue;
+      const uid = lineUidOf(item);
+      if (!uid) continue;
+      const memberNo = normalize(item.rosterMemberNo || item.memberNo || item.member_no);
+      const name = normalize(type === "vendor" ? (item.companyName || item.rosterName) : item.rosterName);
+      if (memberNo) {
+        const current = byMemberNo.get(memberNo);
+        const currentUid = lineUidOf(current?.item || current);
+        if (current && currentUid && currentUid !== uid) {
+          byMemberNo.set(memberNo, { item: current.item || current, conflict: true });
+        } else if (!current) {
+          byMemberNo.set(memberNo, { item, conflict: false });
+        }
+      }
+      if (name) {
+        const current = byName.get(name);
+        const currentUid = lineUidOf(current?.item || current);
+        if (current && currentUid && currentUid !== uid) {
+          byName.set(name, { item: current.item || current, conflict: true });
+        } else if (!current) {
+          byName.set(name, { item, conflict: false });
+        }
+      }
+    }
+
+    const report = { total: rows.length, matched: 0, written: 0, skipped: 0, conflicts: 0, missing: 0, suspicious: 0 };
+    for (const row of rows) {
+      const memberNo = normalize(row.memberNo);
+      const name = normalize(type === "vendor" ? row.companyName : row.name);
+      const currentUid = getLineUid(row);
+      const matchedRecord = memberNo ? byMemberNo.get(memberNo) : null;
+      if (!matchedRecord && name && byName.has(name)) {
+        report.suspicious += 1;
+        continue;
+      }
+      if (!matchedRecord) {
+        report.missing += 1;
+        continue;
+      }
+      if (matchedRecord.conflict) {
+        report.conflicts += 1;
+        continue;
+      }
+      const matched = matchedRecord.item || matchedRecord;
+      const uid = lineUidOf(matched);
+      if (!uid) {
+        report.missing += 1;
+        continue;
+      }
+      report.matched += 1;
+      if (currentUid && currentUid !== uid) {
+        report.conflicts += 1;
+        continue;
+      }
+      if (currentUid === uid) {
+        report.skipped += 1;
+        continue;
+      }
+      setLineUid(row, uid);
+      report.written += 1;
+    }
+    return report;
+  }
+
+  async function syncAiweUid(type) {
+    const data = loadData();
+    data.association ||= [];
+    data.vendor ||= [];
+    const aiweRows = await loadAiweRows();
+    const targets = type === "all" ? ["association", "vendor"] : [type];
+    const reports = {};
+    for (const target of targets) {
+      reports[target] = mergeUidIntoRoster(data[target] || [], aiweRows, target);
+    }
+    data.uidSyncLog ||= [];
+    data.uidSyncLog.unshift({ at: new Date().toISOString(), reports });
+    data.uidSyncLog = data.uidSyncLog.slice(0, 30);
+    saveData(data);
+    uidMapPromise = null;
+    window.dispatchEvent(new StorageEvent("storage", { key: storageKey }));
+    scheduleApply();
+    const lines = targets.map((target) => {
+      const r = reports[target];
+      return `${target === "vendor" ? "廠商" : "協會"}：匹配 ${r.matched}，寫入 ${r.written}，已存在 ${r.skipped}，衝突 ${r.conflicts}，未找到 ${r.missing}，姓名疑似 ${r.suspicious}`;
+    });
+    alert(`母站 UID 同步完成\n${lines.join("\n")}`);
   }
 
   async function applyUidEditor() {
@@ -244,6 +378,7 @@
       const table = findRosterTable();
       if (table && table.dataset.uidColumnReady === "1" && Date.now() - lastAppliedAt < 500) return;
       if (table) table.dataset.uidColumnReady = "1";
+      ensureSyncButton();
       applyUidColumn();
       applyUidEditor();
     }, 180);
@@ -252,6 +387,20 @@
 
   new MutationObserver(scheduleApply).observe(document.body, { childList: true, subtree: true });
   document.addEventListener("click", () => setTimeout(scheduleApply, 80), true);
+  document.addEventListener("click", (event) => {
+    const button = event.target?.closest?.("[data-sync-aiwe-uid]");
+    if (!button) return;
+    event.preventDefault();
+    button.disabled = true;
+    const oldText = button.textContent;
+    button.textContent = "同步中...";
+    syncAiweUid(button.dataset.syncAiweUid || activeRosterType()).catch((error) => {
+      alert(error.message || "同步母站 UID 失敗");
+    }).finally(() => {
+      button.disabled = false;
+      button.textContent = oldText;
+    });
+  }, true);
   document.addEventListener("submit", (event) => {
     const form = event.target;
     if (!(form instanceof HTMLFormElement) || form.id !== "drawer-member") return;
