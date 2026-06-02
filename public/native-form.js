@@ -177,7 +177,7 @@
   }
 
   function loginFields(fields) {
-    return fields.filter((field) => !isAutoMemberField(field));
+    return [];
   }
 
   function memberSummary(member) {

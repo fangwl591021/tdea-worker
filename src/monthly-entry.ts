@@ -870,7 +870,7 @@ function nativeLoginEnabled(form: NativeForm) {
 }
 
 function nativeMemberAutoFieldKeys() {
-  return new Set(["line_user_id", "lineuserid", "uid", "name", "phone", "mobile", "email", "company", "memberno", "gender", "ismember", "membertype"]);
+  return new Set(["line_user_id", "lineuserid", "lineid", "line_id", "lineuid", "line_uid", "uid", "name", "phone", "mobile", "email", "company", "memberno", "gender", "ismember", "membertype", "participantunit"]);
 }
 
 async function resolveLineLoginMember(env: Env, lineUserId: string): Promise<LineLoginMember | null> {
@@ -1569,7 +1569,7 @@ async function submitNativeForm(request: Request, env: Env, formId: string) {
     return json({ success: false, message: error instanceof Error ? error.message : "會員資料比對失敗" }, 400);
   }
   const finalAnswers = member ? normalizeAnswersRecord({ ...answers, ...memberAnswers(member) }) : answers;
-  const errors = validateNativeAnswers(form, finalAnswers, sessionId);
+  const errors = member ? validateNativeLoginAnswers(form, finalAnswers, sessionId) : validateNativeAnswers(form, finalAnswers, sessionId);
   if (errors.length) return json({ success: false, message: errors[0], errors }, 400);
   return createNativeRegistration(env, form, finalAnswers, member?.lineUserId || lineUserId, sessionId, member ? "line_member_claim" : "form", member || undefined);
 }
