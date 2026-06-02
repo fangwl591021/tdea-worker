@@ -2,6 +2,7 @@
   const apiBase = "https://tdeawork.fangwl591021.workers.dev";
   const storageKey = "tdea-manager-v3";
   const tokenKey = "tdea-aiwe-read-token";
+  const memberSheetCsvUrl = `${apiBase}/api/google-member-sheet`;
   let uidMapPromise = null;
   let lastAppliedAt = 0;
 
@@ -197,7 +198,16 @@
     const actions = document.querySelector(".page-actions, .actions") || document.querySelector("header .actions");
     const panelHead = Array.from(document.querySelectorAll(".panel-head")).find((node) => node.textContent.includes(type === "vendor" ? "廠商" : "協會"));
     const host = actions || panelHead;
-    if (!host || host.querySelector("[data-sync-aiwe-uid]")) return;
+    if (!host) return;
+    if (type === "association" && !host.querySelector("[data-sync-google-members]")) {
+      const sheetButton = document.createElement("button");
+      sheetButton.type = "button";
+      sheetButton.className = "btn";
+      sheetButton.dataset.syncGoogleMembers = "association";
+      sheetButton.textContent = "同步 Google 會員表";
+      host.prepend(sheetButton);
+    }
+    if (host.querySelector("[data-sync-aiwe-uid]")) return;
     const button = document.createElement("button");
     button.type = "button";
     button.className = "btn";
@@ -398,6 +408,167 @@
     alert(`母站資料同步完成\n${lines.join("\n")}`);
   }
 
+  function parseCsv(text) {
+    const rows = [];
+    let row = [];
+    let cell = "";
+    let quoted = false;
+    for (let i = 0; i < text.length; i += 1) {
+      const char = text[i];
+      const next = text[i + 1];
+      if (quoted) {
+        if (char === '"' && next === '"') {
+          cell += '"';
+          i += 1;
+        } else if (char === '"') {
+          quoted = false;
+        } else {
+          cell += char;
+        }
+      } else if (char === '"') {
+        quoted = true;
+      } else if (char === ",") {
+        row.push(cell);
+        cell = "";
+      } else if (char === "\n") {
+        row.push(cell);
+        rows.push(row);
+        row = [];
+        cell = "";
+      } else if (char !== "\r") {
+        cell += char;
+      }
+    }
+    if (cell || row.length) {
+      row.push(cell);
+      rows.push(row);
+    }
+    return rows.filter((items) => items.some((item) => clean(item)));
+  }
+
+  function normalizeHeader(value) {
+    return clean(value).replace(/\s+/g, "").replace(/[：:＊*]/g, "");
+  }
+
+  function normalizePhone(value) {
+    return clean(value).replace(/[^\d+]/g, "");
+  }
+
+  function formQualification(value) {
+    const text = clean(value);
+    if (!text) return "";
+    if (text.includes("非")) return "N";
+    if (text.includes("會員")) return "Y";
+    return text;
+  }
+
+  function buildSheetMembers(rows) {
+    const header = rows[0] || [];
+    const indexes = {};
+    header.forEach((label, index) => {
+      indexes[normalizeHeader(label)] = index;
+    });
+    const pick = (row, names) => {
+      for (const name of names) {
+        const index = indexes[normalizeHeader(name)];
+        if (index !== undefined) return clean(row[index]);
+      }
+      return "";
+    };
+    const members = [];
+    for (const row of rows.slice(1)) {
+      const memberNo = normalize(pick(row, ["會員編號", "會員編號:"]));
+      const name = clean(pick(row, ["姓名", "姓名:"]));
+      const email = displayEmail(pick(row, ["電子郵件地址", "Email"]));
+      const phone = normalizePhone(pick(row, ["手機號碼", "手機號碼:", "手機"]));
+      const qualification = formQualification(pick(row, ["會員資格", "會員資格:"]));
+      if (!memberNo && !name) continue;
+      members.push({ memberNo, name, email, phone, qualification });
+    }
+    return members;
+  }
+
+  function mergeSheetMembers(roster, sheetMembers) {
+    const byMemberNo = new Map();
+    const byName = new Map();
+    for (const item of sheetMembers) {
+      if (item.memberNo) {
+        const existing = byMemberNo.get(item.memberNo);
+        if (existing && existing.name && item.name && normalize(existing.name) !== normalize(item.name)) {
+          byMemberNo.set(item.memberNo, { conflict: true, item: existing });
+        } else if (!existing) {
+          byMemberNo.set(item.memberNo, item);
+        }
+      }
+      if (item.name) {
+        const key = normalize(item.name);
+        const existing = byName.get(key);
+        if (existing && existing.memberNo && item.memberNo && existing.memberNo !== item.memberNo) {
+          byName.set(key, { conflict: true, item: existing });
+        } else if (!existing) {
+          byName.set(key, item);
+        }
+      }
+    }
+
+    const report = { total: roster.length, matched: 0, written: 0, skipped: 0, missing: 0, conflicts: 0, nameMatched: 0 };
+    for (const row of roster) {
+      const memberNo = normalize(row.memberNo);
+      const name = normalize(row.name);
+      let matched = memberNo ? byMemberNo.get(memberNo) : null;
+      if (!matched && name) {
+        const nameMatched = byName.get(name);
+        if (nameMatched && !nameMatched.conflict) {
+          matched = nameMatched;
+          report.nameMatched += 1;
+        }
+      }
+      if (!matched) {
+        report.missing += 1;
+        continue;
+      }
+      if (matched.conflict) {
+        report.conflicts += 1;
+        continue;
+      }
+      report.matched += 1;
+      const before = JSON.stringify({ name: row.name, email: row.email, phone: row.phone, qualification: row.qualification });
+      if (!clean(row.name) && matched.name) row.name = matched.name;
+      row.email = bestProfileValue(row.email, matched.email, "email");
+      row.phone = bestProfileValue(row.phone, matched.phone, "phone");
+      if (!clean(row.qualification) && matched.qualification) row.qualification = matched.qualification;
+      const after = JSON.stringify({ name: row.name, email: row.email, phone: row.phone, qualification: row.qualification });
+      if (before === after) report.skipped += 1;
+      else {
+        row.googleSheetSyncedAt = new Date().toISOString();
+        report.written += 1;
+      }
+    }
+    return report;
+  }
+
+  async function syncGoogleMembers() {
+    const token = getToken();
+    const email = adminEmail();
+    const response = await fetch(memberSheetCsvUrl, {
+      headers: email ? { "x-admin-email": email } : token ? { "x-aiwe-token": token } : {},
+      cache: "no-store"
+    });
+    if (!response.ok) throw new Error(`Google 會員表讀取失敗 HTTP ${response.status}`);
+    const csv = await response.text();
+    const members = buildSheetMembers(parseCsv(csv));
+    const data = loadData();
+    data.association ||= [];
+    const report = mergeSheetMembers(data.association, members);
+    data.googleMemberSyncLog ||= [];
+    data.googleMemberSyncLog.unshift({ at: new Date().toISOString(), sourceRows: members.length, report });
+    data.googleMemberSyncLog = data.googleMemberSyncLog.slice(0, 30);
+    saveData(data);
+    window.dispatchEvent(new StorageEvent("storage", { key: storageKey }));
+    scheduleApply();
+    alert(`Google 會員表同步完成\n來源 ${members.length} 筆\n匹配 ${report.matched}，寫入 ${report.written}，已存在 ${report.skipped}，未找到 ${report.missing}，衝突 ${report.conflicts}，姓名輔助匹配 ${report.nameMatched}`);
+  }
+
   async function applyUidEditor() {
     const form = document.querySelector("#drawer-member");
     if (!form || form.dataset.uidEditorReady === "1") return;
@@ -517,6 +688,20 @@
     button.textContent = "同步中...";
     syncAiweUid(button.dataset.syncAiweUid || activeRosterType()).catch((error) => {
       alert(error.message || "同步母站 UID 失敗");
+    }).finally(() => {
+      button.disabled = false;
+      button.textContent = oldText;
+    });
+  }, true);
+  document.addEventListener("click", (event) => {
+    const button = event.target?.closest?.("[data-sync-google-members]");
+    if (!button) return;
+    event.preventDefault();
+    button.disabled = true;
+    const oldText = button.textContent;
+    button.textContent = "同步中...";
+    syncGoogleMembers().catch((error) => {
+      alert(error.message || "同步 Google 會員表失敗");
     }).finally(() => {
       button.disabled = false;
       button.textContent = oldText;

@@ -42,6 +42,7 @@ const lineActivityDraftListKey = "line-activity/drafts.json";
 const lineActivityLatestDraftKey = "line-activity/latest-active.json";
 const lineActivityDebugKey = "line-activity/debug.json";
 const defaultCalendarId = "7d66f2a96f192dda6cca2b04e60a6e549c7adf74f57721845d5b7e03f8b7ca89@group.calendar.google.com";
+const googleMemberSheetCsvUrl = "https://docs.google.com/spreadsheets/d/1KzXzRsAesrF0vlKh2TLUKW-ltpWrxASWt7acWV7ic8w/export?format=csv&gid=858404675";
 const workerBaseUrl = "https://tdeawork.fangwl591021.workers.dev";
 const fixedKeyword = "TDEA每月活動";
 const vendorCardKeyword = "TDEA廠商列表";
@@ -3257,6 +3258,21 @@ async function fetchCalendarEvents(request: Request) {
   return json({ success: true, calendarId, total: events.length, data: events, icsUrl });
 }
 
+async function fetchGoogleMemberSheet(request: Request, env: Env) {
+  const guard = await requireAdmin(request, env);
+  if (guard) return guard;
+  const response = await fetch(googleMemberSheetCsvUrl, { headers: { accept: "text/csv,text/plain,*/*" } });
+  const body = await response.text().catch(() => "");
+  if (!response.ok) return json({ success: false, message: `Google 會員表讀取失敗：HTTP ${response.status}` }, 502);
+  return new Response(body, {
+    headers: {
+      ...headers,
+      "content-type": "text/csv; charset=utf-8",
+      "cache-control": "no-store"
+    }
+  });
+}
+
 async function handleMonthlyWebhook(request: Request, env: Env, rawBody: string, ctx?: ExecutionContext) {
   let payload: unknown;
   try { payload = JSON.parse(rawBody); } catch (_) { return null; }
@@ -3357,6 +3373,7 @@ export default {
 	    if (request.method === "GET" && url.pathname === "/api/admin-access") return listAdminAccessApi(request, env);
 	    if ((request.method === "PUT" || request.method === "POST") && url.pathname === "/api/admin-access") return updateAdminAccessApi(request, env);
 	    if (request.method === "GET" && url.pathname === "/api/aiwe-members-public") return listAiweMembersPublicApi(request, env);
+	    if (request.method === "GET" && url.pathname === "/api/google-member-sheet") return fetchGoogleMemberSheet(request, env);
 	    if (request.method === "GET" && url.pathname === "/api/monthly-activity") return json({ success: true, data: await readMonthly(env) });
 	    if ((request.method === "PUT" || request.method === "POST") && url.pathname === "/api/monthly-activity") { const guard = await requireAdmin(request, env); if (guard) return guard; if (!env.ASSETS_BUCKET) return json({ success: false, message: "R2 bucket is not configured" }, 503); const config = await request.json().catch(() => ({})) as MonthlyConfig; await writeMonthly(env, config); return json({ success: true, data: await readMonthly(env), flex: buildMonthlyFlex(config) }); }
 	    if (request.method === "GET" && url.pathname === "/api/monthly-activity/flex") { const config = await readMonthly(env); return json({ success: true, flex: buildMonthlyFlex(config), data: config }); }
