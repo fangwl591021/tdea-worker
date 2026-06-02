@@ -118,6 +118,8 @@
   }
 
   let registrationSyncing = false;
+  let monthlyRegistrationMap = null;
+  let monthlyRegistrationMapLoadedAt = 0;
 
   function isPublicLiffMode() {
     const publicKeys = [
@@ -146,9 +148,66 @@
     return bags.some((params) => publicKeys.some((name) => params.has(name)));
   }
   function registrationCandidates(activity) {
-    return [activity?.id, activity?.activityNo, activity?.formId, activity?.nativeFormId, activity?.googleFormId, activity?.opnformFormId, activity?.name]
+    const baseKeys = [activity?.id, activity?.activityNo, activity?.formId, activity?.nativeFormId, activity?.googleFormId, activity?.opnformFormId, activity?.name];
+    const extraKeys = monthlyRegistrationKeysFor(activity);
+    return [...baseKeys, ...extraKeys]
+      .map(value => String(value || "").trim())
+      .filter(Boolean)
+      .filter((value, index, list) => list.indexOf(value) === index);
+  }
+  function extractRegisterId(value) {
+    const raw = String(value || "").trim();
+    if (!raw) return "";
+    try {
+      const url = new URL(raw, location.href);
+      const direct = url.searchParams.get("register") || "";
+      if (direct) return direct.trim();
+      const state = url.searchParams.get("liff.state") || "";
+      if (state) {
+        let decoded = state;
+        try { decoded = decodeURIComponent(state); } catch (_) {}
+        const query = decoded.startsWith("?") ? decoded.slice(1) : decoded.includes("?") ? decoded.split("?").slice(1).join("?") : decoded;
+        return (new URLSearchParams(query).get("register") || "").trim();
+      }
+    } catch (_) {}
+    return "";
+  }
+  function monthlyRegistrationKeysFor(activity) {
+    if (!monthlyRegistrationMap || !activity) return [];
+    const candidates = [activity.id, activity.activityNo, activity.name]
       .map(value => String(value || "").trim())
       .filter(Boolean);
+    const output = [];
+    candidates.forEach(key => {
+      const values = monthlyRegistrationMap.get(key) || [];
+      values.forEach(value => output.push(value));
+    });
+    return output;
+  }
+  async function ensureMonthlyRegistrationMap(force = false) {
+    if (!force && monthlyRegistrationMap && Date.now() - monthlyRegistrationMapLoadedAt < 30000) return monthlyRegistrationMap;
+    const map = new Map();
+    try {
+      const res = await fetch(api + "/api/monthly-activity", { cache: "no-store" });
+      const result = await res.json().catch(() => ({}));
+      const pages = Array.isArray(result?.data?.pages) ? result.data.pages : [];
+      pages.forEach(page => {
+        const keys = [page.id, page.activityNo, page.detailTitle, page.title, page.name]
+          .map(value => String(value || "").trim())
+          .filter(Boolean);
+        const values = [page.id, page.activityNo, page.detailTitle, extractRegisterId(page.formUrl), extractRegisterId(page.detailUrl)]
+          .map(value => String(value || "").trim())
+          .filter(Boolean);
+        keys.forEach(key => {
+          const current = map.get(key) || [];
+          values.forEach(value => { if (!current.includes(value)) current.push(value); });
+          map.set(key, current);
+        });
+      });
+    } catch (_) {}
+    monthlyRegistrationMap = map;
+    monthlyRegistrationMapLoadedAt = Date.now();
+    return map;
   }
   function autoSyncEnabled() { return localStorage.getItem(autoSyncKey) !== "N"; }
   function setAutoSyncEnabled(enabled) { localStorage.setItem(autoSyncKey, enabled ? "Y" : "N"); }
@@ -157,6 +216,7 @@
     registrationSyncing = true;
     try {
       if (showMessage || autoSyncEnabled()) await pullRemoteResponses(showMessage);
+      await ensureMonthlyRegistrationMap(true);
       const res = await fetch(api + "/api/registrations/summary", { cache: "no-store" });
       const result = await res.json().catch(() => ({}));
       const records = result?.data?.activities || {};
@@ -895,6 +955,7 @@
     const activity = state.data.activities.find(r => r.id === rowId);
     if (!activity) return;
     try {
+      await ensureMonthlyRegistrationMap(true);
       const keys = registrationCandidates(activity).map(encodeURIComponent).join(",");
       const res = await fetch(api + "/api/registrations/list?keys=" + keys, { cache: "no-store" });
       const result = await res.json().catch(() => ({}));
