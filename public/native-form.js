@@ -125,6 +125,29 @@
     return ["lineid", "lineuid", "lineuserid", "line使用者id", "line帳號"].includes(label);
   }
 
+  function isAutoLineInput(node) {
+    const raw = [
+      node?.name,
+      node?.id,
+      node?.placeholder,
+      node?.getAttribute?.("aria-label"),
+      node?.closest?.(".nf-field")?.textContent,
+      node?.closest?.("label")?.textContent
+    ].map(trim).join(" ").toLowerCase().replace(/[\s:_-]+/g, "");
+    return raw.includes("lineid") || raw.includes("lineuid") || raw.includes("lineuserid");
+  }
+
+  function disableAutoLineInputs(root = app) {
+    root.querySelectorAll?.("input,textarea,select").forEach((node) => {
+      if (!isAutoLineInput(node)) return;
+      node.required = false;
+      node.removeAttribute("required");
+      node.disabled = true;
+      const field = node.closest(".nf-field") || node.closest("label");
+      if (field) field.style.display = "none";
+    });
+  }
+
   function answerText(answers, keys) {
     for (const key of keys) {
       const value = answers[key];
@@ -294,6 +317,7 @@
         </form>` : `<div class="nf-actions"><a class="nf-btn" href="?query=1">報名查詢/取消</a></div>`}
       </div>
     </section>`);
+    disableAutoLineInputs(app);
     if (!app.querySelector("[data-native-register]")) {
       const body = app.querySelector(".nf-body");
       body?.insertAdjacentHTML("beforeend", `
@@ -304,6 +328,7 @@
           <div class="nf-actions"><button class="nf-btn primary" type="submit">送出報名</button><a class="nf-btn" href="?query=1">報名查詢/取消</a></div>
         </form>
       `);
+      disableAutoLineInputs(app);
     }
     const loginButton = app.querySelector("[data-login-register]");
     let pendingLoginSubmit = null;
@@ -415,6 +440,7 @@
     const registerForm = app.querySelector("[data-native-register]");
     registerForm?.addEventListener("submit", async (event) => {
       event.preventDefault();
+      disableAutoLineInputs(registerForm);
       const checkboxError = validateCheckboxes(registerForm);
       if (checkboxError) return alert(checkboxError);
       const submit = registerForm.querySelector("button[type='submit']");

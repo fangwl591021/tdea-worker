@@ -356,7 +356,6 @@
               { key: "name", label: "姓名", type: "text", required: true },
               { key: "phone", label: "電話", type: "text", required: true },
               { key: "participantUnit", label: "參加單位名稱", type: "radio", required: true, options: ["社團法人台灣設計菁英協會會員", "其他"] },
-              { key: "lineId", label: "LINE ID", type: "text", required: true },
               { key: "note", label: "備註", type: "paragraph", required: false }
             ]
       };
