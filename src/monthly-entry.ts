@@ -24,7 +24,8 @@ type PushLog = { id: string; createdAt: string; mode: string; target: PushTarget
 type RichMenuBounds = { x: number; y: number; width: number; height: number };
 type RichMenuArea = { id?: string; label?: string; bounds: RichMenuBounds; action: Record<string, unknown> };
 type RichMenuDeployment = { id: string; richMenuId: string; createdAt: string; name: string; chatBarText: string; areaCount: number; imageUrl?: string; setDefault: boolean; aliasId?: string; lineDefaultRichMenuId?: string; verified?: boolean };
-type RichMenuConfig = { name?: string; chatBarText?: string; selected?: boolean; size?: { width: number; height: number }; imageUrl?: string; areas?: RichMenuArea[]; lastRichMenuId?: string; updatedAt?: string; deployments?: RichMenuDeployment[] };
+type RichMenuSnapshot = { id: string; savedAt: string; name: string; chatBarText: string; areaCount: number; imageUrl?: string; config: Omit<RichMenuConfig, "snapshots" | "deployments"> };
+type RichMenuConfig = { name?: string; chatBarText?: string; selected?: boolean; size?: { width: number; height: number }; imageUrl?: string; areas?: RichMenuArea[]; lastRichMenuId?: string; updatedAt?: string; deployments?: RichMenuDeployment[]; snapshots?: RichMenuSnapshot[] };
 type LineActivityDraft = { id: string; lineUserId: string; step: string; answers: Record<string, unknown>; status: "active" | "completed" | "cancelled"; activity?: Record<string, unknown>; createdAt: string; updatedAt: string; completedAt?: string };
 type AdminAccessRecord = { memberNo: string; email?: string; lineUserId?: string; name?: string; loginAccess: boolean; updatedAt?: string; updatedBy?: string };
 type LineActivityAiResult = { intent?: string; confidence?: number; question?: string; fields?: Record<string, unknown> };
@@ -233,6 +234,7 @@ function normalizeRichMenuConfig(input: RichMenuConfig): RichMenuConfig {
     lastRichMenuId: clean(input.lastRichMenuId),
     updatedAt: input.updatedAt,
     deployments: Array.isArray(input.deployments) ? input.deployments.slice(0, 30) : [],
+    snapshots: Array.isArray(input.snapshots) ? input.snapshots.slice(0, 50) : [],
     areas: areas.slice(0, 20).map((area, index) => {
       const rawBounds = area.bounds || { x: 0, y: 0, width, height };
       const x = clampInt(rawBounds.x, 0, width - 1, 0);
@@ -366,9 +368,37 @@ async function saveRichMenuApi(request: Request, env: Env) {
   if (!env.ASSETS_BUCKET) return json({ success: false, message: "R2 bucket is not configured" }, 503);
   const input = await request.json().catch(() => ({})) as RichMenuConfig;
   const existing = await readRichMenuConfig(env);
-  const normalized = normalizeRichMenuConfig({ ...input, deployments: input.deployments || existing.deployments || [], lastRichMenuId: input.lastRichMenuId || existing.lastRichMenuId });
+  const base = normalizeRichMenuConfig({ ...input, deployments: input.deployments || existing.deployments || [], snapshots: input.snapshots || existing.snapshots || [], lastRichMenuId: input.lastRichMenuId || existing.lastRichMenuId });
+  const snapshot = richMenuSnapshot(base);
+  const normalized = normalizeRichMenuConfig({ ...base, snapshots: [snapshot, ...(existing.snapshots || [])] });
   await writeRichMenuConfig(env, normalized);
-  return json({ success: true, data: await readRichMenuConfig(env) });
+  return json({ success: true, data: await readRichMenuConfig(env), snapshot });
+}
+
+async function validateRichMenuApi(request: Request, env: Env) {
+  const guard = await requireAdmin(request, env);
+  if (guard) return guard;
+  if (!env.ASSETS_BUCKET) return json({ success: false, message: "R2 bucket is not configured" }, 503);
+  try {
+    const input = await request.json().catch(() => ({})) as RichMenuConfig;
+    const existing = await readRichMenuConfig(env);
+    const config = assertRichMenuConfig({ ...existing, ...input, areas: input.areas || existing.areas, imageUrl: input.imageUrl || existing.imageUrl });
+    const image = await fetchRichMenuImage(clean(config.imageUrl), env);
+    return json({
+      success: true,
+      message: "圖文選單健檢通過，可以發布。",
+      data: {
+        name: config.name,
+        chatBarText: config.chatBarText,
+        size: config.size,
+        areaCount: config.areas?.length || 0,
+        imageContentType: image.contentType,
+        imageBytes: image.body.byteLength
+      }
+    });
+  } catch (error) {
+    return json({ success: false, message: String((error as Error).message || error) }, 400);
+  }
 }
 
 async function deployRichMenuApi(request: Request, env: Env) {
@@ -3028,6 +3058,29 @@ function publicAiweMember(row: Record<string, unknown>) {
   };
 }
 
+function richMenuSnapshot(config: RichMenuConfig): RichMenuSnapshot {
+  const normalized = normalizeRichMenuConfig(config);
+  const snapshotConfig: Omit<RichMenuConfig, "snapshots" | "deployments"> = {
+    name: normalized.name,
+    chatBarText: normalized.chatBarText,
+    selected: normalized.selected,
+    size: normalized.size,
+    imageUrl: normalized.imageUrl,
+    areas: normalized.areas,
+    lastRichMenuId: normalized.lastRichMenuId,
+    updatedAt: normalized.updatedAt
+  };
+  return {
+    id: `RMS-${Date.now()}-${codeToken(4)}`,
+    savedAt: new Date().toISOString(),
+    name: clean(normalized.name),
+    chatBarText: clean(normalized.chatBarText),
+    areaCount: normalized.areas?.length || 0,
+    imageUrl: clean(normalized.imageUrl),
+    config: snapshotConfig
+  };
+}
+
 function normalizedMemberClaim(input: Record<string, unknown>) {
   return {
     memberNo: firstClean(input.memberNo, input.member_no, input["會員編號"], input["會員編號:"], input["會員編號: "]).toUpperCase(),
@@ -3495,6 +3548,7 @@ export default {
 	    if (request.method === "GET" && url.pathname === "/api/vendor-card-menu/flex") { const config = await readVendorCardConfig(env); return json({ success: true, flex: buildVendorCardFlex(config), data: config }); }
 	    if (request.method === "GET" && url.pathname === "/api/rich-menu") return getRichMenuApi(request, env);
 	    if ((request.method === "PUT" || request.method === "POST") && url.pathname === "/api/rich-menu") return saveRichMenuApi(request, env);
+	    if (request.method === "POST" && url.pathname === "/api/rich-menu/validate") return validateRichMenuApi(request, env);
 	    if (request.method === "POST" && url.pathname === "/api/rich-menu/deploy") return deployRichMenuApi(request, env);
 	    if (request.method === "POST" && url.pathname === "/api/native-forms/create") return createNativeForm(request, env);
 	    const nativeLoginMatch = url.pathname.match(/^\/api\/native-forms\/([^/]+)\/login-register$/);

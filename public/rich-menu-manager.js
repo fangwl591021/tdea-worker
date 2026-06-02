@@ -27,7 +27,8 @@
       size: { width: 2500, height: 1686 },
       imageUrl: "",
       areas: [],
-      deployments: []
+      deployments: [],
+      snapshots: []
     };
   }
 
@@ -40,6 +41,7 @@
     next.imageUrl = String(next.imageUrl || "").trim();
     next.areas = Array.isArray(next.areas) ? next.areas.map(normalizeArea) : [];
     next.deployments = Array.isArray(next.deployments) ? next.deployments : [];
+    next.snapshots = Array.isArray(next.snapshots) ? next.snapshots : [];
     return next;
   }
 
@@ -108,6 +110,8 @@
       .rm-placeholder{position:absolute;inset:16px;display:grid;place-items:center;background:rgba(248,250,252,.88);color:#94a3b8;font-weight:900;text-align:center;pointer-events:none;border-radius:12px}
       .rm-json-box{padding:18px 24px;border-top:1px solid #e5e7eb;background:#fff}.rm-json-box textarea{width:100%;height:170px;border:1px solid #cbd5e1;border-radius:10px;background:#0f172a;color:#e2e8f0;font:12px Consolas,monospace;padding:12px;box-sizing:border-box}
       .rm-log-body{padding:18px 24px;display:grid;gap:12px}.rm-log-item{border:1px solid #e5e7eb;border-radius:10px;background:#f8fafc;padding:12px;font-size:13px}.muted{color:#667085}.hidden{display:none!important}
+      .rm-log-title{font-size:16px;font-weight:900;margin-top:8px}.rm-mini{border:1px solid #d7dde8;background:#fff;border-radius:8px;padding:7px 10px;font-weight:800;cursor:pointer;margin-top:8px}
+      .rm-health{margin:12px 24px 0;border-radius:10px;padding:12px 14px;font-weight:800}.rm-health.ok{background:#ecfdf3;border:1px solid #abefc6;color:#067647}.rm-health.bad{background:#fff3f0;border:1px solid #fecdca;color:#b42318}
       @media(max-width:1200px){.rm-app{grid-template-columns:1fr;height:auto;min-height:100vh}.rm-left,.rm-log{border:0}.rm-canvas-wrap{min-width:0;width:100%;overflow:auto}}
     `;
     document.head.appendChild(style);
@@ -190,6 +194,22 @@
   }
 
   function bind() {
+    const saveButton = document.querySelector("[data-rm-save]");
+    if (saveButton && !document.querySelector("[data-rm-validate]")) {
+      const validateButton = document.createElement("button");
+      validateButton.type = "button";
+      validateButton.className = "rm-btn";
+      validateButton.dataset.rmValidate = "1";
+      validateButton.textContent = "選單健檢";
+      saveButton.parentElement?.insertBefore(validateButton, saveButton);
+    }
+    const logBody = document.querySelector(".rm-log-body");
+    if (logBody && !document.querySelector("#rm-health")) {
+      const health = document.createElement("div");
+      health.id = "rm-health";
+      health.className = "rm-health hidden";
+      logBody.parentElement?.insertBefore(health, logBody);
+    }
     document.querySelector("[data-rm-upload]")?.addEventListener("click", () => document.querySelector("#rm-image-upload")?.click());
     document.querySelector("#rm-image-upload")?.addEventListener("change", uploadImage);
     document.querySelector("#rm-name")?.addEventListener("input", updateOutput);
@@ -197,8 +217,12 @@
     document.querySelector("[data-rm-draw]")?.addEventListener("click", toggleDrawMode);
     document.querySelector("[data-rm-clear]")?.addEventListener("click", clearAreas);
     document.querySelector("[data-rm-copy]")?.addEventListener("click", copyJson);
+    document.querySelector("[data-rm-validate]")?.addEventListener("click", validateRemote);
     document.querySelector("[data-rm-save]")?.addEventListener("click", saveRemote);
     document.querySelector("[data-rm-deploy]")?.addEventListener("click", deploy);
+    document.querySelectorAll("[data-rm-load-snapshot]").forEach((button) => {
+      button.addEventListener("click", () => loadSnapshot(Number(button.dataset.rmLoadSnapshot)));
+    });
   }
 
   function bindCanvasEvents() {
@@ -486,6 +510,37 @@
     });
   }
 
+  function showHealth(ok, message, detail = "") {
+    const box = document.querySelector("#rm-health");
+    if (!box) return toast(message);
+    box.className = `rm-health ${ok ? "ok" : "bad"}`;
+    box.textContent = detail ? `${message} ${detail}` : message;
+  }
+
+  async function validateRemote() {
+    updateOutput();
+    const response = await fetch(api + "/api/rich-menu/validate", { method: "POST", headers: { "content-type": "application/json", "x-admin-email": adminEmail() }, body: JSON.stringify({ ...draft, areas: getCanvasAreas() }) });
+    const result = await response.json().catch(() => ({}));
+    if (!response.ok || !result.success) {
+      showHealth(false, result.message || "選單健檢未通過");
+      return toast(result.message || "選單健檢未通過");
+    }
+    const data = result.data || {};
+    showHealth(true, result.message || "選單健檢通過", `區域 ${data.areaCount || 0} 個，圖片 ${Math.round((data.imageBytes || 0) / 1024)} KB`);
+    toast("選單健檢通過");
+  }
+
+  function loadSnapshot(index) {
+    const item = draft.snapshots?.[index];
+    if (!item?.config) return toast("找不到這筆檔案紀錄");
+    if (!confirm(`載入 ${item.name || "未命名"} 的儲存檔案？目前畫面尚未儲存的修改會被覆蓋。`)) return;
+    draft = normalizeConfig({ ...item.config, deployments: draft.deployments || [], snapshots: draft.snapshots || [] });
+    localStorage.setItem(storageKey, JSON.stringify(draft));
+    render();
+    initCanvas();
+    toast("已載入檔案紀錄");
+  }
+
   async function saveRemote() {
     updateOutput();
     const response = await fetch(api + "/api/rich-menu", { method: "PUT", headers: { "content-type": "application/json", "x-admin-email": adminEmail() }, body: JSON.stringify({ ...draft, areas: getCanvasAreas() }) });
@@ -494,6 +549,23 @@
     draft = normalizeConfig(result.data);
     localStorage.setItem(storageKey, JSON.stringify(draft));
     toast("草稿已儲存");
+  }
+
+  async function saveRemote() {
+    updateOutput();
+    const response = await fetch(api + "/api/rich-menu", { method: "PUT", headers: { "content-type": "application/json", "x-admin-email": adminEmail() }, body: JSON.stringify({ ...draft, areas: getCanvasAreas() }) });
+    const result = await response.json().catch(() => ({}));
+    if (!response.ok || !result.success) return toast(result.message || "儲存失敗");
+    draft = normalizeConfig(result.data);
+    localStorage.setItem(storageKey, JSON.stringify(draft));
+    const logBody = document.querySelector(".rm-log-body");
+    if (logBody) {
+      logBody.innerHTML = logHtml();
+      document.querySelectorAll("[data-rm-load-snapshot]").forEach((button) => {
+        button.addEventListener("click", () => loadSnapshot(Number(button.dataset.rmLoadSnapshot)));
+      });
+    }
+    toast("檔案已儲存");
   }
 
   async function deploy() {
@@ -522,6 +594,21 @@
       <strong>${esc(item.name)}</strong><br>
       <span class="muted">${esc(item.richMenuId)}<br>${esc(new Date(item.createdAt).toLocaleString("zh-TW"))}</span>
     </div>`).join("");
+  }
+
+  function logHtml() {
+    const snapshots = Array.isArray(draft.snapshots) ? draft.snapshots : [];
+    const deployments = Array.isArray(draft.deployments) ? draft.deployments : [];
+    const snapshotHtml = snapshots.length ? snapshots.slice(0, 15).map((item, index) => `<div class="rm-log-item">
+      <strong>${esc(item.name || "未命名檔案")}</strong><br>
+      <span class="muted">${esc(item.id || "")}<br>${esc(new Date(item.savedAt).toLocaleString("zh-TW"))}<br>${esc(item.areaCount || 0)} 個區域</span><br>
+      <button type="button" class="rm-mini" data-rm-load-snapshot="${index}">載入此檔案</button>
+    </div>`).join("") : `<div class="muted">尚未儲存檔案。</div>`;
+    const deploymentHtml = deployments.length ? deployments.slice(0, 10).map((item) => `<div class="rm-log-item">
+      <strong>${esc(item.name)}</strong><br>
+      <span class="muted">${esc(item.richMenuId)}<br>${esc(new Date(item.createdAt).toLocaleString("zh-TW"))}</span>
+    </div>`).join("") : `<div class="muted">尚未發布。</div>`;
+    return `<div class="rm-log-title">檔案儲存紀錄</div>${snapshotHtml}<div class="rm-log-title">發布紀錄</div>${deploymentHtml}`;
   }
 
   function toast(message) {

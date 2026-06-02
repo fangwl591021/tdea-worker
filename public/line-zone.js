@@ -134,7 +134,7 @@
   }
 
   function richMenuStandaloneUrl() {
-    return "https://tdeawork.fangwl591021.workers.dev/rich-menu.html?v=rich-menu12";
+    return "https://tdeawork.fangwl591021.workers.dev/rich-menu.html?v=rich-menu13";
   }
 
   function registerRichMenu() {
