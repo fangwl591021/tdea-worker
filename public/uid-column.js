@@ -47,14 +47,31 @@
   function bestProfileValue(localValue, remoteValue, field) {
     const local = clean(localValue);
     const remote = clean(remoteValue);
-    if (!remote) return local;
     if (field === "email") {
-      if (local && !isSyntheticAiweEmail(local)) return local;
-      if (isSyntheticAiweEmail(remote) && local) return local;
-    } else if (local) {
-      return local;
+      const localEmail = (isLineUid(local) || isSyntheticAiweEmail(local)) ? "" : local;
+      const remoteEmail = (isLineUid(remote) || isSyntheticAiweEmail(remote)) ? "" : remote;
+      if (localEmail) return localEmail;
+      return remoteEmail;
     }
+    if (!remote) return local;
+    if (local) return local;
     return remote;
+  }
+
+  function displayEmail(value) {
+    const email = clean(value);
+    if (!email || isLineUid(email) || isSyntheticAiweEmail(email)) return "";
+    return email;
+  }
+
+  function bestEditorEmail(localValue, remoteValue) {
+    const local = displayEmail(localValue);
+    if (local) return local;
+    return displayEmail(remoteValue);
+  }
+
+  function bestRemoteEmail(remote) {
+    return displayEmail(emailOf(remote));
   }
 
   function mergeProfileFields(row, remote) {
@@ -210,8 +227,6 @@
     if (!headerRow || headerRow.dataset.aiweProfileHeaders === "1") return;
     const headers = [
       ["LINE UID", "aiwe-uid-head"],
-      ["母站帳號", "aiwe-member-head"],
-      ["Email", "aiwe-email-head"],
       ["手機", "aiwe-phone-head"]
     ];
     headers.slice().reverse().forEach(([label, className]) => {
@@ -223,8 +238,6 @@
     for (const row of table.querySelectorAll("tbody tr")) {
       [
         makeProfileCell("aiwe-phone-cell"),
-        makeProfileCell("aiwe-email-cell"),
-        makeProfileCell("aiwe-member-cell"),
         makeProfileCell("aiwe-uid-cell")
       ].forEach((td) => row.insertBefore(td, row.children[2] || null));
     }
@@ -270,7 +283,7 @@
       const emailCell = row.querySelector(".aiwe-email-cell");
       const phoneCell = row.querySelector(".aiwe-phone-cell");
       if (memberCell) memberCell.textContent = clean(localRow?.aiweMemberNo || aiweMemberNoOf(remote));
-      if (emailCell) emailCell.textContent = clean(localRow?.email || emailOf(remote));
+      if (emailCell) emailCell.textContent = displayEmail(localRow?.email) || bestRemoteEmail(remote);
       if (phoneCell) phoneCell.textContent = clean(localRow?.phone || phoneOf(remote));
     }
 
@@ -396,14 +409,18 @@
     const rows = Array.isArray(data[type]) ? data[type] : [];
     const current = rows.find((row) => clean(row.id) === id) || rows.find((row) => normalize(row.memberNo) === memberNo) || {};
     let value = getLineUid(current);
+    let remote = null;
     if (!value && memberNo) {
       const uidMap = await loadUidMap();
-      const remote = uidMap.get(memberNo);
+      remote = uidMap.get(memberNo);
       value = clean(remote?.lineUserId || remote?.uid || remote?.LINE_user_id);
       if (value && current) {
         setLineUid(current, value);
         saveData(data);
       }
+    } else if (memberNo) {
+      const uidMap = await loadUidMap();
+      remote = uidMap.get(memberNo);
     }
     const memberField = form.querySelector('input[name="memberNo"]')?.closest(".field");
     const wrapper = document.createElement("div");
@@ -413,9 +430,9 @@
     wrapper.style.gap = "14px";
     wrapper.innerHTML = `
       <div class="field"><label>LINE UID</label><input name="lineUserId" value="${escapeHtml(value)}" placeholder="例如：Ub68b9724664b889e790c789ece72f717"></div>
-      <div class="field"><label>母站帳號</label><input name="aiweMemberNo" value="${escapeHtml(current.aiweMemberNo || "")}" placeholder="母站會員帳號"></div>
-      <div class="field"><label>Email</label><input name="email" value="${escapeHtml(current.email || "")}" placeholder="會員 Email"></div>
-      <div class="field"><label>手機</label><input name="phone" value="${escapeHtml(current.phone || "")}" placeholder="手機"></div>`;
+      <div class="field"><label>母站帳號</label><input name="aiweMemberNo" value="${escapeHtml(current.aiweMemberNo || aiweMemberNoOf(remote) || "")}" placeholder="母站會員帳號"></div>
+      <div class="field"><label>Email</label><input name="email" value="${escapeHtml(bestEditorEmail(current.email, emailOf(remote)))}" placeholder="會員 Email"></div>
+      <div class="field"><label>手機</label><input name="phone" value="${escapeHtml(current.phone || phoneOf(remote) || "")}" placeholder="手機"></div>`;
     if (memberField?.nextSibling) form.insertBefore(wrapper, memberField.nextSibling);
     else form.insertBefore(wrapper, form.firstChild);
   }
