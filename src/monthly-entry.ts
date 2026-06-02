@@ -898,6 +898,72 @@ function memberAnswers(member: LineLoginMember) {
   });
 }
 
+function nativeAnswerText(answers: Record<string, unknown>, keys: string[]) {
+  for (const key of keys) {
+    const value = answers[key];
+    if (Array.isArray(value)) {
+      const text = value.map(clean).filter(Boolean).join(",");
+      if (text) return text;
+    } else {
+      const text = clean(value);
+      if (text) return text;
+    }
+  }
+  return "";
+}
+
+function nativeAnswerClaimsMember(answers: Record<string, unknown>) {
+  const text = nativeAnswerText(answers, ["isMember", "memberType", "memberRole", "qualification", "會員資格", "是否為會員", "身分"]).toLowerCase();
+  if (!text) return false;
+  if (text.includes("非會員")) return false;
+  return ["會員", "廠商", "vendor", "member", "yes", "true", "y", "1", "是"].some((item) => text.includes(item));
+}
+
+function nativeClaimedMemberNo(answers: Record<string, unknown>) {
+  return nativeAnswerText(answers, ["memberNo", "member_no", "memberNumber", "會員編號", "會員證號"]).toUpperCase();
+}
+
+function nativeClaimedMemberName(answers: Record<string, unknown>) {
+  return nativeAnswerText(answers, ["name", "memberName", "姓名", "會員姓名", "公司名稱", "公司/單位"]);
+}
+
+function validLineUid(value: unknown) {
+  return /^U[0-9a-f]{32}$/i.test(clean(value));
+}
+
+function aiweRowDisplayName(row: Record<string, unknown>) {
+  const rosterType = clean(row.rosterType) === "vendor" ? "vendor" : "association";
+  return rosterType === "vendor"
+    ? firstClean(row.rosterName, row.companyName, row.name, row.display_name)
+    : firstClean(row.rosterName, row.name, row.display_name, row.user_nicename, row.companyName);
+}
+
+async function resolveAndBindNativeRegistrationMember(env: Env, lineUserId: string, answers: Record<string, unknown>): Promise<LineLoginMember | null> {
+  const uid = clean(lineUserId);
+  if (!uid || !nativeAnswerClaimsMember(answers)) return null;
+  const alreadyBound = await resolveLineLoginMember(env, uid);
+  if (alreadyBound) return alreadyBound;
+
+  const memberNo = nativeClaimedMemberNo(answers);
+  const memberName = nativeClaimedMemberName(answers);
+  if (!memberNo || !memberName) throw new Error("會員/廠商會員尚未綁定 LINE UID，請填寫姓名與會員編號完成綁定。");
+
+  const rows = await readAiweMembers(env);
+  const matched = rows.filter((row) => rowMatchesMemberNo(row, memberNo));
+  if (!matched.length) throw new Error("查無此會員編號，請確認會員編號是否正確。");
+
+  const targetName = clean(memberName);
+  const exact = matched.find((row) => clean(aiweRowDisplayName(row)) === targetName);
+  if (!exact) throw new Error("會員編號與姓名不符合名冊，請確認後再送出。");
+
+  const currentUid = memberLineUid(exact);
+  if (validLineUid(currentUid) && currentUid.toLowerCase() !== uid.toLowerCase()) throw new Error("此會員編號已綁定其他 LINE 帳號，請聯絡協會確認。");
+
+  for (const row of matched) setAiweRowLineUid(row, uid);
+  await writeAiweMembers(env, rows);
+  return resolveLineLoginMember(env, uid);
+}
+
 async function readNativeForm(env: Env, formId: string): Promise<NativeForm | null> {
   if (!env.ASSETS_BUCKET || !formId) return null;
   const object = await env.ASSETS_BUCKET.get(nativeFormKey(formId));
@@ -1466,9 +1532,16 @@ async function submitNativeForm(request: Request, env: Env, formId: string) {
   const lineUserId = firstClean(input.lineUserId, rawAnswers.LINE_user_id, rawAnswers.lineUserId, rawAnswers.line_user_id, rawAnswers.uid, rawAnswers.UID);
   if (lineUserId) answers.LINE_user_id = lineUserId;
   const sessionId = clean(input.sessionId || "default");
-  const errors = validateNativeAnswers(form, rawAnswers, sessionId);
+  let member: LineLoginMember | null = null;
+  try {
+    member = await resolveAndBindNativeRegistrationMember(env, lineUserId, answers);
+  } catch (error) {
+    return json({ success: false, message: error instanceof Error ? error.message : "會員資料比對失敗" }, 400);
+  }
+  const finalAnswers = member ? normalizeAnswersRecord({ ...answers, ...memberAnswers(member) }) : answers;
+  const errors = validateNativeAnswers(form, finalAnswers, sessionId);
   if (errors.length) return json({ success: false, message: errors[0], errors }, 400);
-  return createNativeRegistration(env, form, answers, lineUserId, sessionId, "form");
+  return createNativeRegistration(env, form, finalAnswers, member?.lineUserId || lineUserId, sessionId, member ? "line_member_claim" : "form", member || undefined);
 }
 
 async function createNativeRegistration(env: Env, form: NativeForm, answers: Record<string, unknown>, lineUserId: string, sessionId: string, source: string, member?: LineLoginMember) {
@@ -2953,6 +3026,46 @@ function publicAiweMember(row: Record<string, unknown>) {
     email: firstClean(row.email, row.user_email),
     qualification: firstClean(row.qualification, row.memberQualification, row.status)
   };
+}
+
+function normalizedMemberClaim(input: Record<string, unknown>) {
+  return {
+    memberNo: firstClean(input.memberNo, input.member_no, input["會員編號"], input["會員編號:"], input["會員編號: "]).toUpperCase(),
+    name: firstClean(input.name, input.memberName, input["姓名"], input["姓名:"])
+  };
+}
+
+function isMemberAnswer(value: unknown) {
+  const text = clean(Array.isArray(value) ? value.join(",") : value).toLowerCase();
+  return ["y", "yes", "true", "1", "會員", "是", "準會員"].some((item) => text.includes(item));
+}
+
+function answersClaimMember(answers: Record<string, unknown>) {
+  return isMemberAnswer(firstClean(answers.isMember, answers.memberType, answers["是否為會員"], answers["會員資格"]));
+}
+
+async function resolveAndBindClaimedMember(env: Env, lineUserId: string, answers: Record<string, unknown>): Promise<LineLoginMember | null> {
+  const uid = clean(lineUserId);
+  if (!uid || !answersClaimMember(answers)) return null;
+  const claim = normalizedMemberClaim(answers);
+  if (!claim.memberNo || !claim.name) return null;
+  const rows = await readAiweMembers(env);
+  const matched = rows.filter((row) => rowMatchesMemberNo(row, claim.memberNo));
+  if (!matched.length) return null;
+  const nameKey = clean(claim.name);
+  const exact = matched.find((row) => {
+    const rosterType = clean(row.rosterType) === "vendor" ? "vendor" : "association";
+    const rowName = rosterType === "vendor"
+      ? firstClean(row.rosterName, row.companyName, row.name, row.display_name)
+      : firstClean(row.rosterName, row.name, row.display_name, row.user_nicename);
+    return clean(rowName) === nameKey;
+  });
+  if (!exact) return null;
+  const currentUid = memberLineUid(exact);
+  if (currentUid && currentUid.toLowerCase() !== uid.toLowerCase()) throw new Error("此會員編號已綁定其他 LINE 帳號，請聯絡協會確認。");
+  for (const row of matched) setAiweRowLineUid(row, uid);
+  await writeAiweMembers(env, rows);
+  return resolveLineLoginMember(env, uid);
 }
 
 async function listAiweMembersPublicApi(request: Request, env: Env) {

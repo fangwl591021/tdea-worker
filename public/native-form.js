@@ -116,6 +116,34 @@
     return answers;
   }
 
+  function answerText(answers, keys) {
+    for (const key of keys) {
+      const value = answers[key];
+      if (Array.isArray(value)) {
+        const text = value.map(trim).filter(Boolean).join(",");
+        if (text) return text;
+      } else {
+        const text = trim(value);
+        if (text) return text;
+      }
+    }
+    return "";
+  }
+
+  function claimIsMember(answers) {
+    const text = answerText(answers, ["isMember", "memberType", "memberRole", "qualification", "會員資格", "是否為會員", "身分"]).toLowerCase();
+    if (!text || text.includes("非會員")) return false;
+    return ["會員", "廠商", "vendor", "member", "yes", "true", "y", "1", "是"].some((item) => text.includes(item));
+  }
+
+  function missingMemberClaimIdentity(answers) {
+    if (!claimIsMember(answers)) return "";
+    const name = answerText(answers, ["name", "memberName", "姓名", "會員姓名", "公司名稱", "公司/單位"]);
+    const memberNo = answerText(answers, ["memberNo", "member_no", "memberNumber", "會員編號", "會員證號"]);
+    if (!name || !memberNo) return "會員/廠商會員尚未綁定 LINE UID，請填寫姓名與會員編號。";
+    return "";
+  }
+
   function loginFields(fields) {
     return fields.filter((field) => !autoMemberKeys.has(trim(field.key).toLowerCase()));
   }
@@ -242,7 +270,7 @@
     const fields = Array.isArray(form.fields) ? form.fields : [];
     const image = activity.posterUrl || activity.imageUrl || "";
     const mode = registrationMode(form);
-    const showFullForm = mode !== "member_login";
+    const showFullForm = mode === "form";
     renderShell(`<section class="nf-card">
       ${image ? `<img class="nf-hero" src="${esc(image)}" alt="${esc(activity.name || "")}">` : ""}
       <div class="nf-body">
@@ -257,7 +285,83 @@
         </form>` : `<div class="nf-actions"><a class="nf-btn" href="?query=1">報名查詢/取消</a></div>`}
       </div>
     </section>`);
+    if (!app.querySelector("[data-native-register]")) {
+      const body = app.querySelector(".nf-body");
+      body?.insertAdjacentHTML("beforeend", `
+        <div class="nf-alert" data-register-fallback-message style="display:none"></div>
+        <form class="nf-form" data-native-register style="display:none">
+          ${sessionFieldHtml(sessions)}
+          ${fields.map(fieldHtml).join("")}
+          <div class="nf-actions"><button class="nf-btn primary" type="submit">送出報名</button><a class="nf-btn" href="?query=1">報名查詢/取消</a></div>
+        </form>
+      `);
+    }
     const loginButton = app.querySelector("[data-login-register]");
+    let pendingLoginSubmit = null;
+    function revealFallbackForm(message) {
+      pendingLoginSubmit = null;
+      const fallback = app.querySelector("[data-register-fallback-message]");
+      const registerForm = app.querySelector("[data-native-register]");
+      if (fallback) {
+        fallback.style.display = "";
+        fallback.textContent = message || "LINE UID 尚未綁定名冊，請填寫報名資料。若您是會員或廠商會員，請務必填寫姓名與會員編號，送出後會自動綁定。";
+      }
+      if (registerForm) registerForm.style.display = "";
+    }
+
+    async function runLineMemberRegistration(event) {
+      event?.preventDefault?.();
+      event?.stopImmediatePropagation?.();
+      if (pendingLoginSubmit) return pendingLoginSubmit(event);
+      const loginBox = app.querySelector("[data-login-register-box]");
+      if (loginBox?.reportValidity && !loginBox.reportValidity()) return;
+      const checkboxError = loginBox ? validateCheckboxes(loginBox) : "";
+      if (checkboxError) return alert(checkboxError);
+      loginButton.disabled = true;
+      loginButton.textContent = "確認 LINE 身分中...";
+      const uid = await loadLiff({ login: true });
+      if (!uid) {
+        loginButton.disabled = false;
+        loginButton.textContent = "重新確認 LINE 身分";
+        revealFallbackForm("無法取得 LINE UID。若目前不是在 LINE LIFF 內開啟，請填寫完整報名資料。");
+        return;
+      }
+      const memberResponse = await fetch(`${api}/api/native-forms/${encodeURIComponent(id)}/login-member?lineUserId=${encodeURIComponent(uid)}`, { cache: "no-store" });
+      const memberResult = await memberResponse.json().catch(() => ({}));
+      if (!memberResponse.ok || !memberResult.success) {
+        loginButton.disabled = false;
+        loginButton.textContent = "重新確認 LINE 身分";
+        revealFallbackForm(memberResult.message || "此 LINE UID 尚未綁定名冊，請填寫報名資料。若您是會員或廠商會員，請填寫姓名與會員編號，送出後會自動綁定。");
+        return;
+      }
+      const member = memberResult.data || {};
+      const memberArea = app.querySelector("[data-login-member-area]");
+      if (memberArea) memberArea.innerHTML = memberSummary(member);
+      const registerForm = app.querySelector("[data-native-register]");
+      if (registerForm) registerForm.style.display = "none";
+      const fallback = app.querySelector("[data-register-fallback-message]");
+      if (fallback) fallback.style.display = "none";
+      loginButton.disabled = false;
+      loginButton.textContent = "確認快速報名";
+      pendingLoginSubmit = async (clickEvent) => {
+        clickEvent.preventDefault();
+        const sessionId = loginBox?.querySelector("[name='sessionId']")?.value || sessions[0]?.id || "default";
+        const answers = loginBox ? collectAnswers(loginBox, loginFields(fields)) : {};
+        if (!confirm(`確認以 ${member.name || ""} 報名？\n會員編號：${member.memberNo || "-"}`)) return;
+        loginButton.disabled = true;
+        loginButton.textContent = "送出中...";
+        const submitResponse = await fetch(`${api}/api/native-forms/${encodeURIComponent(id)}/login-register`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ lineUserId: uid, sessionId, answers }) });
+        const submitResult = await submitResponse.json().catch(() => ({}));
+        if (!submitResponse.ok || !submitResult.success) {
+          loginButton.disabled = false;
+          loginButton.textContent = "確認快速報名";
+          return alert(submitResult.message || "快速報名失敗");
+        }
+        renderReceipt(submitResult);
+      };
+    }
+    loginButton?.addEventListener("click", runLineMemberRegistration, { capture: true });
+    if (loginButton && (mode === "member_login" || mode === "mixed")) setTimeout(() => loginButton.click(), 50);
     loginButton?.addEventListener("click", async () => {
       const loginBox = app.querySelector("[data-login-register-box]");
       if (loginBox?.reportValidity && !loginBox.reportValidity()) return;
@@ -307,8 +411,15 @@
       const submit = registerForm.querySelector("button[type='submit']");
       submit.disabled = true;
       submit.textContent = "送出中...";
-      const uid = await loadLiff();
-      const payload = { sessionId: registerForm.elements.sessionId?.value || "default", lineUserId: uid || "", answers: collectAnswers(registerForm, fields) };
+      const uid = await loadLiff(mode === "form" ? {} : { login: true });
+      const answers = collectAnswers(registerForm, fields);
+      const claimError = missingMemberClaimIdentity(answers);
+      if (claimError) {
+        submit.disabled = false;
+        submit.textContent = "送出報名";
+        return alert(claimError);
+      }
+      const payload = { sessionId: registerForm.elements.sessionId?.value || "default", lineUserId: uid || "", answers };
       const submitResponse = await fetch(`${api}/api/native-forms/${encodeURIComponent(id)}`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(payload) });
       const submitResult = await submitResponse.json().catch(() => ({}));
       if (!submitResponse.ok || !submitResult.success) {
