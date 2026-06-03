@@ -1,4 +1,4 @@
-import baseEntry from "./roster-sync-entry4";
+﻿import baseEntry from "./roster-sync-entry4";
 
 type Env = { ADMIN_EMAILS?: string; ASSETS_BUCKET?: R2Bucket; LINE_CHANNEL_SECRET?: string; LINE_CHANNEL_ACCESS_TOKEN?: string; FORWARD_WEBHOOK_URL?: string; GOOGLE_FORMS_SCRIPT_URL?: string; GOOGLE_FORMS_SHARED_SECRET?: string; OPNFORM_API_BASE?: string; OPNFORM_PUBLIC_BASE?: string; OPNFORM_API_TOKEN?: string; OPNFORM_WORKSPACE_ID?: string; OPNFORM_WEBHOOK_SECRET?: string; WETW_POINT_API_KEY?: string; WETW_SHOP_ID?: string; WETW_POINT_TYPE?: string; TDEA_POINT_EXTERNAL_SYNC?: string; TDEA_ADMIN_LINE_USER_IDS?: string; OPENAI_API_KEY?: string; OPENAI_MODEL?: string };
 type LineEvent = { type?: string; replyToken?: string; message?: { type?: string; id?: string; text?: string }; postback?: { data?: string }; source?: { type?: string; userId?: string; groupId?: string; roomId?: string } };
@@ -148,7 +148,7 @@ async function updateAdminAccessApi(request: Request, env: Env) {
 
 async function readMonthly(env: Env): Promise<MonthlyConfig> {
   const object = env.ASSETS_BUCKET ? await env.ASSETS_BUCKET.get(monthlyKey) : null;
-  if (!object) return { enabled: false, keyword: fixedKeyword, month: "", altText: "TDEA 每月活動", detailBaseUrl: defaultLiffBase, pages: [] };
+  if (!object) return { enabled: false, keyword: fixedKeyword, month: "", altText: "TDEA 瘥?瘣餃?", detailBaseUrl: defaultLiffBase, pages: [] };
   const data = await object.json().catch(() => ({}));
   return normalizeConfig(data as MonthlyConfig);
 }
@@ -166,8 +166,8 @@ function normalizeVendorCardConfig(config: VendorCardConfig): VendorCardConfig {
   return {
     enabled: Boolean(config.enabled),
     keyword: vendorCardKeyword,
-    altText: clean(config.altText || "TDEA 廠商列表") || "TDEA 廠商列表",
-    title: clean(config.title || "TDEA 廠商列表") || "TDEA 廠商列表",
+    altText: clean(config.altText || "TDEA 撱??”") || "TDEA 撱??”",
+    title: clean(config.title || "TDEA 撱??”") || "TDEA 撱??”",
     updatedAt: config.updatedAt,
     items: items.slice(0, 40).map((item, index) => {
       const name = clean(item.name || item.label || item.actionText);
@@ -186,7 +186,7 @@ function normalizeVendorCardConfig(config: VendorCardConfig): VendorCardConfig {
 
 async function readVendorCardConfig(env: Env): Promise<VendorCardConfig> {
   const object = env.ASSETS_BUCKET ? await env.ASSETS_BUCKET.get(vendorCardKey) : null;
-  if (!object) return { enabled: false, keyword: vendorCardKeyword, altText: "TDEA 廠商列表", title: "TDEA 廠商列表", items: [] };
+  if (!object) return { enabled: false, keyword: vendorCardKeyword, altText: "TDEA 撱??”", title: "TDEA 撱??”", items: [] };
   const data = await object.json().catch(() => ({}));
   return normalizeVendorCardConfig(data as VendorCardConfig);
 }
@@ -227,7 +227,7 @@ function normalizeRichMenuConfig(input: RichMenuConfig): RichMenuConfig {
   const areas = Array.isArray(input.areas) ? input.areas : [];
   return {
     name: clean(input.name || "TDEA Rich Menu").slice(0, 300) || "TDEA Rich Menu",
-    chatBarText: clean(input.chatBarText || "選單").slice(0, 14) || "選單",
+    chatBarText: clean(input.chatBarText || "?詨").slice(0, 14) || "?詨",
     selected: input.selected !== false,
     size: { width, height },
     imageUrl: clean(input.imageUrl),
@@ -243,7 +243,7 @@ function normalizeRichMenuConfig(input: RichMenuConfig): RichMenuConfig {
       const maxHeight = height - y;
       return {
         id: clean(area.id) || crypto.randomUUID(),
-        label: clean(area.label || `區域 ${index + 1}`),
+        label: clean(area.label || `???${index + 1}`),
         bounds: {
           x,
           y,
@@ -258,7 +258,7 @@ function normalizeRichMenuConfig(input: RichMenuConfig): RichMenuConfig {
 
 async function readRichMenuConfig(env: Env): Promise<RichMenuConfig> {
   const object = env.ASSETS_BUCKET ? await env.ASSETS_BUCKET.get(richMenuKey) : null;
-  if (!object) return normalizeRichMenuConfig({ name: "TDEA 圖文選單", chatBarText: "選單", selected: true, size: { width: 2500, height: 1686 }, areas: [], deployments: [] });
+  if (!object) return normalizeRichMenuConfig({ name: "TDEA ???詨", chatBarText: "?詨", selected: true, size: { width: 2500, height: 1686 }, areas: [], deployments: [] });
   const data = await object.json().catch(() => ({}));
   return normalizeRichMenuConfig(data as RichMenuConfig);
 }
@@ -273,17 +273,17 @@ async function writeRichMenuConfig(env: Env, config: RichMenuConfig) {
 
 function assertRichMenuConfig(config: RichMenuConfig) {
   const normalized = normalizeRichMenuConfig(config);
-  if (!normalized.name) throw new Error("請輸入選單名稱");
+  if (!normalized.name) throw new Error("請輸入圖文選單名稱");
   if (!normalized.chatBarText) throw new Error("請輸入選單列文字");
-  if (!normalized.imageUrl) throw new Error("請上傳或填入圖文選單底圖");
+  if (!normalized.imageUrl) throw new Error("請先上傳或填入圖文選單底圖");
   if (!normalized.areas?.length) throw new Error("請至少建立一個點擊區域");
   for (const [index, area] of normalized.areas.entries()) {
     const action = asRecord(area.action);
     const type = clean(action.type);
-    if (type === "uri" && !clean(action.uri)) throw new Error(`區域 ${index + 1} 缺少網址`);
-    if (type === "message" && !clean(action.text)) throw new Error(`區域 ${index + 1} 缺少送出文字`);
-    if (type === "postback" && !clean(action.data)) throw new Error(`區域 ${index + 1} 缺少 Postback data`);
-    if (type === "richmenuswitch" && (!clean(action.richMenuAliasId) || !clean(action.data))) throw new Error(`區域 ${index + 1} 缺少 rich menu switch 參數`);
+    if (type === "uri" && !clean(action.uri)) throw new Error(`???${index + 1} 蝻箏?蝬脣?`);
+    if (type === "message" && !clean(action.text)) throw new Error(`???${index + 1} 蝻箏????`);
+    if (type === "postback" && !clean(action.data)) throw new Error(`???${index + 1} 蝻箏? Postback data`);
+    if (type === "richmenuswitch" && (!clean(action.richMenuAliasId) || !clean(action.data))) throw new Error(`???${index + 1} 蝻箏? rich menu switch ?`);
   }
   return normalized;
 }
@@ -307,15 +307,15 @@ async function fetchRichMenuImage(urlValue: string, env: Env) {
     if (!env.ASSETS_BUCKET) throw new Error("R2 bucket is not configured");
     const key = decodeURIComponent(parsed.pathname.replace(/^\/api\/uploads\//, ""));
     const object = await env.ASSETS_BUCKET.get(key);
-    if (!object) throw new Error(`底圖讀取失敗：404 (${key})`);
+    if (!object) throw new Error(`摨?霈?仃??404 (${key})`);
     const contentType = (object.httpMetadata?.contentType || "image/jpeg").split(";")[0].trim().toLowerCase();
-    if (!["image/jpeg", "image/png"].includes(contentType)) throw new Error("LINE 圖文選單底圖只支援 JPG 或 PNG");
+    if (!["image/jpeg", "image/png"].includes(contentType)) throw new Error("LINE ???詨摨??芣??JPG ??PNG");
     return { contentType, body: await object.arrayBuffer() };
   }
   const response = await fetch(url);
-  if (!response.ok) throw new Error(`底圖讀取失敗：${response.status}`);
+  if (!response.ok) throw new Error(`摨?霈?仃??${response.status}`);
   const contentType = (response.headers.get("content-type") || "").split(";")[0].trim().toLowerCase();
-  if (!["image/jpeg", "image/png"].includes(contentType)) throw new Error("LINE 圖文選單底圖只支援 JPG 或 PNG");
+  if (!["image/jpeg", "image/png"].includes(contentType)) throw new Error("LINE ???詨摨??芣??JPG ??PNG");
   return { contentType, body: await response.arrayBuffer() };
 }
 
@@ -386,7 +386,7 @@ async function validateRichMenuApi(request: Request, env: Env) {
     const image = await fetchRichMenuImage(clean(config.imageUrl), env);
     return json({
       success: true,
-      message: "圖文選單健檢通過，可以發布。",
+      message: "圖文選單檢查通過，可以發布到 LINE。",
       data: {
         name: config.name,
         chatBarText: config.chatBarText,
@@ -417,7 +417,7 @@ async function deployRichMenuApi(request: Request, env: Env) {
       body: JSON.stringify(menuObject)
     }) as Record<string, unknown>;
     const richMenuId = clean(created.richMenuId);
-    if (!richMenuId) throw new Error("LINE 沒有回傳 richMenuId");
+    if (!richMenuId) throw new Error("LINE 瘝?? richMenuId");
     await lineRichMenuRequest(env, `https://api-data.line.me/v2/bot/richmenu/${encodeURIComponent(richMenuId)}/content`, {
       method: "POST",
       headers: { "content-type": image.contentType },
@@ -445,7 +445,14 @@ async function deployRichMenuApi(request: Request, env: Env) {
     };
     const next = normalizeRichMenuConfig({ ...config, lastRichMenuId: richMenuId, deployments: [deployment, ...(existing.deployments || [])] });
     await writeRichMenuConfig(env, next);
-    return json({ success: verified, data: next, deployment, alias: aliasResult, lineDefaultRichMenuId, message: verified ? "LINE 圖文選單已發布並確認為預設" : "已建立圖文選單，但 LINE 預設選單驗證未通過" }, verified ? 200 : 409);
+    return json({
+      success: verified,
+      data: next,
+      deployment,
+      alias: aliasResult,
+      lineDefaultRichMenuId,
+      message: verified ? "LINE 圖文選單已發布並設為預設。" : "圖文選單已建立，但尚未確認為 LINE 預設選單。"
+    }, verified ? 200 : 409);
   } catch (error) {
     return json({ success: false, message: String((error as Error).message || error) }, 400);
   }
@@ -827,7 +834,7 @@ function normalizeNativeFields(settings: Record<string, unknown>): NativeField[]
     const choice = ["select", "dropdown"].includes(type) ? "dropdown" : ["radio", "choice"].includes(type) ? "radio" : ["checkbox", "checkboxes", "multi_select"].includes(type) ? "checkbox" : type === "paragraph" ? "paragraph" : type === "email" ? "email" : "text";
     return {
       key: clean(field.key) || `field_${index + 1}`,
-      label: clean(field.label) || `欄位 ${index + 1}`,
+      label: clean(field.label) || `甈? ${index + 1}`,
       type: choice,
       required: Boolean(field.required),
       options: normalizeOptions(field.options).map((option) => clean(option.name)).filter(Boolean)
@@ -839,7 +846,7 @@ function normalizeNativeSessions(settings: Record<string, unknown>, activity: Re
   const rows = Array.isArray(settings.sessions) ? settings.sessions as Array<Record<string, unknown>> : [];
   const sessions = rows.map((row, index) => ({
     id: clean(row.id) || `session_${index + 1}`,
-    name: clean(row.name) || `梯次 ${index + 1}`,
+    name: clean(row.name) || `璇舀活 ${index + 1}`,
     startTime: clean(row.startTime || row.time),
     endTime: clean(row.endTime),
     capacity: Number(row.capacity || 0) || 0,
@@ -848,7 +855,7 @@ function normalizeNativeSessions(settings: Record<string, unknown>, activity: Re
   if (sessions.length) return sessions;
   return [{
     id: "default",
-    name: clean(activity.courseTime) || "一般報名",
+    name: clean(activity.courseTime) || "一般場次",
     startTime: clean(activity.courseTime),
     endTime: "",
     capacity: Number(activity.capacity || 0) || 0,
@@ -943,18 +950,18 @@ function nativeAnswerText(answers: Record<string, unknown>, keys: string[]) {
 }
 
 function nativeAnswerClaimsMember(answers: Record<string, unknown>) {
-  const text = nativeAnswerText(answers, ["isMember", "memberType", "memberRole", "qualification", "會員資格", "是否為會員", "身分"]).toLowerCase();
+  const text = nativeAnswerText(answers, ["isMember", "memberType", "memberRole", "qualification", "memberNo", "participantUnit"]).toLowerCase();
   if (!text) return false;
-  if (text.includes("非會員")) return false;
+  if (text.includes("非會員") || text.includes("其他")) return false;
   return ["會員", "廠商", "vendor", "member", "yes", "true", "y", "1", "是"].some((item) => text.includes(item));
 }
 
 function nativeClaimedMemberNo(answers: Record<string, unknown>) {
-  return nativeAnswerText(answers, ["memberNo", "member_no", "memberNumber", "會員編號", "會員證號"]).toUpperCase();
+  return nativeAnswerText(answers, ["memberNo", "member_no", "memberNumber"]).toUpperCase();
 }
 
 function nativeClaimedMemberName(answers: Record<string, unknown>) {
-  return nativeAnswerText(answers, ["name", "memberName", "姓名", "會員姓名", "公司名稱", "公司/單位"]);
+  return nativeAnswerText(answers, ["name", "memberName"]);
 }
 
 function validLineUid(value: unknown) {
@@ -976,7 +983,7 @@ async function resolveAndBindNativeRegistrationMember(env: Env, lineUserId: stri
 
   const memberNo = nativeClaimedMemberNo(answers);
   const memberName = nativeClaimedMemberName(answers);
-  if (!memberNo || !memberName) throw new Error("會員/廠商會員尚未綁定 LINE UID，請填寫姓名與會員編號完成綁定。");
+  if (!memberNo || !memberName) throw new Error("會員或廠商會員尚未綁定 LINE UID，請填寫姓名與會員編號完成比對。");
 
   const rows = await readAiweMembers(env);
   const matched = rows.filter((row) => rowMatchesMemberNo(row, memberNo));
@@ -984,10 +991,10 @@ async function resolveAndBindNativeRegistrationMember(env: Env, lineUserId: stri
 
   const targetName = clean(memberName);
   const exact = matched.find((row) => clean(aiweRowDisplayName(row)) === targetName);
-  if (!exact) throw new Error("會員編號與姓名不符合名冊，請確認後再送出。");
+  if (!exact) throw new Error("會員編號與姓名不一致，請確認後再送出。");
 
   const currentUid = memberLineUid(exact);
-  if (validLineUid(currentUid) && currentUid.toLowerCase() !== uid.toLowerCase()) throw new Error("此會員編號已綁定其他 LINE 帳號，請聯絡協會確認。");
+  if (validLineUid(currentUid) && currentUid.toLowerCase() !== uid.toLowerCase()) throw new Error("此會員編號已綁定其他 LINE 帳號，請聯絡協會處理。");
 
   for (const row of matched) setAiweRowLineUid(row, uid);
   await writeAiweMembers(env, rows);
@@ -1082,14 +1089,14 @@ function parseMotherPointKeyword(text: string) {
   const raw = clean(text);
   const compact = raw.replace(/\s+/g, "");
   if (!compact) return null;
-  const aliases = ["TDEA點數", "TDEA查點", "TDEA點數查詢", "TDEA紅利"];
+  const aliases = ["TDEA點數", "TDEA點數查詢"];
   if (aliases.some((alias) => normalizeKeyword(compact) === normalizeKeyword(alias))) {
     return { uid: "" };
   }
   for (const alias of aliases) {
     const prefix = normalizeKeyword(alias);
     const normalized = normalizeKeyword(compact);
-    if (normalized.startsWith(prefix + "+") || normalized.startsWith(prefix + "＋") || normalized.startsWith(prefix + ":") || normalized.startsWith(prefix + "：")) {
+    if (normalized.startsWith(prefix + "+") || normalized.startsWith(prefix + "：") || normalized.startsWith(prefix + ":") || normalized.startsWith(prefix + "，")) {
       return { uid: compact.slice(alias.length + 1).trim() };
     }
   }
@@ -1105,10 +1112,10 @@ function formatMotherPointReply(result: Record<string, unknown>, label: string) 
   const dataList = Array.isArray(data.list) ? data.list.map(asRecord) : [];
   const list = flatList.length ? flatList : dataList;
   if (!list.length) return `${label}目前查不到點數紀錄。`;
-  const balance = result.balance ?? list[0].point_balance ?? "未提供";
+  const balance = result.balance ?? list[0].point_balance ?? "未知";
   const rows = list.slice(0, 3).map((item) => {
     const createdAt = clean(item.created_at);
-    const eventName = clean(item.event_name) || "點數異動";
+    const eventName = clean(item.event_name) || "點數紀錄";
     const points = item.get_point ?? 0;
     return `${createdAt} ${eventName} ${points} 點`.trim();
   }).join("\n");
@@ -1123,7 +1130,7 @@ async function handleMotherPointEvents(events: Array<{ event: LineEvent; query: 
       return replyToLine(event.replyToken, [{ type: "text", text: "查詢點數需要 LINE UID，請輸入：TDEA點數+UID" }], env);
     }
     const result = await queryPointBalance(env, uid) as Record<string, unknown>;
-    const label = query.uid ? `${uid} ` : "你的";
+    const label = query.uid ? `${uid} ` : "你 ";
     return replyToLine(event.replyToken, [{ type: "text", text: formatMotherPointReply(result, label) }], env);
   }));
   return json({ success: true, mode: "mother-point-keyword", matched: ["TDEA點數"], forwarded: false, lineReplies });
@@ -1154,7 +1161,7 @@ async function appendPointLedger(env: Env, entry: PointLog) {
 async function updateLocalPoints(env: Env, lineUserId: string, amount: number, reason: string, options: { source?: string; referenceId?: string; skipExternalSync?: boolean } = {}) {
   if (!env.ASSETS_BUCKET) return { success: false, message: "R2 bucket is not configured" };
   const numericAmount = Number(amount || 0);
-  if (!lineUserId || !numericAmount) return { success: false, message: "缺少會員 UID 或點數異動數量" };
+  if (!lineUserId || !numericAmount) return { success: false, message: "缺少 LINE UID 或點數異動值" };
   const account = await readPointAccount(env, lineUserId);
   const nextBalance = numberValue(account.balance) + numericAmount;
   const createdTs = Date.now();
@@ -1188,11 +1195,11 @@ async function getLegacySyncRecord(env: Env, lineUserId: string) {
 
 async function importLegacyPointsOnce(env: Env, lineUserId: string, force = false) {
   if (!env.ASSETS_BUCKET) return { success: false, reason: "missing_r2", imported: 0, message: "R2 bucket is not configured" };
-  if (!lineUserId) return { success: false, reason: "missing_uid", imported: 0, message: "缺少會員 UID" };
+  if (!lineUserId) return { success: false, reason: "missing_uid", imported: 0, message: "蝻箏?? UID" };
   const synced = await getLegacySyncRecord(env, lineUserId);
   if (synced?.importedAt && !force) return { success: false, reason: "already_synced", imported: 0, ...synced };
   const legacy = await queryPointBalance(env, lineUserId) as Record<string, unknown>;
-  if (legacy.success === false) return { success: false, reason: clean(legacy.code) || "legacy_query_failed", imported: 0, message: clean(legacy.message) || "母站點數查詢失敗", raw: legacy };
+  if (legacy.success === false) return { success: false, reason: clean(legacy.code) || "legacy_query_failed", imported: 0, message: clean(legacy.message) || "瘥?暺?亥岷憭望?", raw: legacy };
   const balance = Math.max(0, Number(legacy.balance || 0));
   if (balance <= 0) {
     const importedAt = new Date().toISOString();
@@ -1200,7 +1207,7 @@ async function importLegacyPointsOnce(env: Env, lineUserId: string, force = fals
     await env.ASSETS_BUCKET.put(pointLegacySyncKey(lineUserId), JSON.stringify(record, null, 2), { httpMetadata: { contentType: "application/json; charset=utf-8", cacheControl: "no-store" } });
     return { success: false, reason: "no_legacy_points", imported: 0, balance: 0, importedAt };
   }
-  const update = await updateLocalPoints(env, lineUserId, balance, "母站點數補登", { source: "legacy_import", skipExternalSync: true });
+  const update = await updateLocalPoints(env, lineUserId, balance, "瘥?暺鋆", { source: "legacy_import", skipExternalSync: true });
   const importedAt = new Date().toISOString();
   const record = { imported: balance, importedAt, source: "wetw-point/query-user-point-list", raw: legacy };
   await env.ASSETS_BUCKET.put(pointLegacySyncKey(lineUserId), JSON.stringify(record, null, 2), { httpMetadata: { contentType: "application/json; charset=utf-8", cacheControl: "no-store" } });
@@ -1224,13 +1231,13 @@ async function syncCheckinPoints(env: Env, entry: RegistrationEntry) {
   const lineUserId = firstClean(entry.lineUserId, answers.LINE_user_id, answers.lineUserId, answers.line_user_id, answers.uid, answers.UID);
   if (!lineUserId) return [{ success: false, code: "missing_line_user_id", message: "registration has no LINE user id" }];
 
-  const eventName = firstClean(activity.name, activity.activityNo, "TDEA 活動簽到");
+  const eventName = firstClean(activity.name, activity.activityNo, "TDEA 瘣餃?蝪賢");
   const eventContent = firstClean(activity.courseTime, activity.activityNo, entry.id);
   const checkinPoints = numberValue(activity.checkinPoints || activity.checkinPointAmount);
   const feePoints = numberValue(activity.feePoints || activity.feePointAmount);
   const jobs: Array<{ label: string; points: number }> = [];
-  if (checkinPoints > 0) jobs.push({ label: "簽到贈點", points: checkinPoints });
-  if (feePoints > 0) jobs.push({ label: "費用扣抵", points: -Math.abs(feePoints) });
+  if (checkinPoints > 0) jobs.push({ label: "蝪賢韐?", points: checkinPoints });
+  if (feePoints > 0) jobs.push({ label: "鞎餌??", points: -Math.abs(feePoints) });
   if (!jobs.length) return [];
 
   const results = [];
@@ -1304,21 +1311,21 @@ async function createRedeemRequest(request: Request, env: Env) {
   if (guard) return guard;
   if (!env.ASSETS_BUCKET) return json({ success: false, message: "R2 bucket is not configured" }, 503);
   const input = await request.json().catch(() => ({})) as Record<string, unknown>;
-  const vendorName = firstClean(input.vendorName, input.vendor, "合作店家");
+  const vendorName = firstClean(input.vendorName, input.vendor, "??摨振");
   const now = new Date();
   const mode = (["fixed", "manual", "rate"].includes(clean(input.mode)) ? clean(input.mode) : "fixed") as RedeemMode;
   const points = Math.abs(numberValue(input.points));
   const maxPoints = Math.abs(numberValue(input.maxPoints));
   const pointRate = Math.abs(numberValue(input.pointRate));
-  if (mode === "fixed" && !points) return json({ success: false, message: "固定點數模式請輸入每次扣抵點數" }, 400);
-  if (mode === "rate" && !pointRate) return json({ success: false, message: "金額換算模式請輸入換算比例" }, 400);
+  if (mode === "fixed" && !points) return json({ success: false, message: "固定扣點模式請輸入每次扣抵點數" }, 400);
+  if (mode === "rate" && !pointRate) return json({ success: false, message: "比例扣點模式請輸入點數換算比例" }, 400);
   const startsAtInput = clean(input.startsAt);
   const expiresAtInput = clean(input.expiresAt);
   const ttl = Math.min(Math.max(numberValue(input.ttlMinutes) || 60, 1), 1440);
   const startsAt = startsAtInput ? new Date(startsAtInput) : now;
   const expiresAt = expiresAtInput ? new Date(expiresAtInput) : new Date(startsAt.getTime() + ttl * 60 * 1000);
-  if (Number.isNaN(startsAt.getTime()) || Number.isNaN(expiresAt.getTime())) return json({ success: false, message: "授權起訖日期格式錯誤" }, 400);
-  if (expiresAt.getTime() <= startsAt.getTime()) return json({ success: false, message: "授權結束時間必須晚於開始時間" }, 400);
+  if (Number.isNaN(startsAt.getTime()) || Number.isNaN(expiresAt.getTime())) return json({ success: false, message: "起訖時間格式錯誤" }, 400);
+  if (expiresAt.getTime() <= startsAt.getTime()) return json({ success: false, message: "結束時間必須晚於開始時間" }, 400);
   const token = `${codeToken(6)}${crypto.randomUUID().replace(/-/g, "").slice(0, 10)}`;
   const redeem: RedeemRequest = {
     id: `REDEEM-${Date.now()}-${codeToken(4)}`,
@@ -1350,7 +1357,7 @@ async function listRedeemRequests(request: Request, env: Env) {
 
 async function getRedeemRequest(request: Request, env: Env, token: string) {
   const redeem = await readRedeem(env, token);
-  if (!redeem) return json({ success: false, message: "折抵碼不存在" }, 404);
+  if (!redeem) return json({ success: false, message: "找不到此折抵授權" }, 404);
   const url = new URL(request.url);
   const lineUserId = clean(url.searchParams.get("lineUserId"));
   let balanceInfo: Record<string, unknown> = {};
@@ -1364,18 +1371,18 @@ async function getRedeemRequest(request: Request, env: Env, token: string) {
 
 async function confirmRedeemRequest(request: Request, env: Env, token: string) {
   const redeem = await readRedeem(env, token);
-  if (!redeem) return json({ success: false, message: "折抵碼不存在" }, 404);
-  if (!["active", "pending"].includes(redeem.status)) return json({ success: false, message: redeem.status === "closed" ? "此店家授權已關閉" : "此店家授權已失效" }, 409);
+  if (!redeem) return json({ success: false, message: "找不到此折抵授權" }, 404);
+  if (!["active", "pending"].includes(redeem.status)) return json({ success: false, message: redeem.status === "closed" ? "此折抵授權已關閉" : "此折抵授權不可使用" }, 409);
   const nowMs = Date.now();
-  if (redeem.startsAt && nowMs < new Date(redeem.startsAt).getTime()) return json({ success: false, message: "此店家授權尚未開始" }, 409);
+  if (redeem.startsAt && nowMs < new Date(redeem.startsAt).getTime()) return json({ success: false, message: "此折抵授權尚未開始" }, 409);
   if (nowMs > new Date(redeem.expiresAt).getTime()) {
     redeem.status = "expired";
     await writeRedeem(env, redeem);
-    return json({ success: false, message: "此店家授權已過期" }, 409);
+    return json({ success: false, message: "此折抵授權已過期" }, 409);
   }
   const input = await request.json().catch(() => ({})) as Record<string, unknown>;
   const lineUserId = clean(input.lineUserId);
-  if (!lineUserId) return json({ success: false, message: "請先掃描會員 QR Code" }, 400);
+  if (!lineUserId) return json({ success: false, message: "請掃描會員 QR Code" }, 400);
   const mode = redeem.mode || "fixed";
   const amount = Math.abs(numberValue(input.amount));
   let points = Math.abs(numberValue(input.points));
@@ -1385,13 +1392,13 @@ async function confirmRedeemRequest(request: Request, env: Env, token: string) {
     points = Math.floor(amount * Math.abs(numberValue(redeem.pointRate)));
   }
   if (!points) return json({ success: false, message: "請輸入扣抵點數" }, 400);
-  if (redeem.maxPoints && points > redeem.maxPoints) return json({ success: false, message: `超過本授權單次可扣上限 ${redeem.maxPoints} 點` }, 409);
+  if (redeem.maxPoints && points > redeem.maxPoints) return json({ success: false, message: `超過此授權單次可扣抵上限 ${redeem.maxPoints} 點` }, 409);
   const account = await getUnifiedPointAccount(env, lineUserId, { autoImport: true }) as Record<string, unknown>;
   const pointBalance = Number(account.balance || 0);
   if (pointBalance < points) return json({ success: false, message: `點數不足，目前可用 ${pointBalance} 點`, data: { balance: pointBalance, required: points } }, 409);
-  const reason = firstClean(clean(input.note), redeem.note, amount ? `${redeem.vendorName} 消費金額 ${amount}` : `${redeem.vendorName} 扣抵 ${points} 點`);
+  const reason = firstClean(clean(input.note), redeem.note, amount ? `${redeem.vendorName} 消費折抵 ${amount}` : `${redeem.vendorName} 扣抵 ${points} 點`);
   const result = await updateLocalPoints(env, lineUserId, -Math.abs(points), reason, { source: "vendor_redeem", referenceId: redeem.id }) as Record<string, unknown>;
-  if (result.success !== true) return json({ success: false, message: clean(result.message) || "扣點失敗", data: result }, 400);
+  if (result.success !== true) return json({ success: false, message: clean(result.message) || "???憭望?", data: result }, 400);
   const createdAt = new Date().toISOString();
   const transaction: RedeemTransaction = {
     id: `TX-${Date.now()}-${codeToken(4)}`,
@@ -1426,7 +1433,7 @@ async function syncLegacyPointApi(request: Request, env: Env) {
   if (guard) return guard;
   const input = await request.json().catch(() => ({})) as Record<string, unknown>;
   const lineUserId = firstClean(input.lineUserId, input.uid, input.LINE_user_id);
-  if (!lineUserId) return json({ success: false, message: "缺少會員 UID" }, 400);
+  if (!lineUserId) return json({ success: false, message: "蝻箏?? UID" }, 400);
   const force = Boolean(input.force);
   return json({ success: true, data: await importLegacyPointsOnce(env, lineUserId, force) });
 }
@@ -1506,19 +1513,19 @@ async function getNativeForm(request: Request, env: Env, formId: string) {
 async function getNativeLoginMember(request: Request, env: Env, formId: string) {
   const form = await readNativeForm(env, formId);
   if (!form) return json({ success: false, message: "找不到報名表" }, 404);
-  if (!nativeLoginEnabled(form)) return json({ success: false, message: "此活動尚未啟用 LINE Login 快速報名" }, 400);
+  if (!nativeLoginEnabled(form)) return json({ success: false, message: "此報名表未啟用 LINE Login 報名" }, 400);
   const url = new URL(request.url);
   const lineUserId = firstClean(url.searchParams.get("lineUserId"), url.searchParams.get("uid"), url.searchParams.get("LINE_user_id"));
   if (!lineUserId) return json({ success: false, message: "缺少 LINE UID" }, 400);
   const member = await resolveLineLoginMember(env, lineUserId);
-  if (!member) return json({ success: false, code: "member_not_found", message: "這個 LINE 帳號尚未綁定協會會員或廠商會員。" }, 404);
+  if (!member) return json({ success: false, code: "member_not_found", message: "此 LINE 帳號尚未綁定會員或廠商會員資料" }, 404);
   return json({ success: true, data: publicLineLoginMember(member) });
 }
 
 function validateNativeAnswers(form: NativeForm, answers: Record<string, unknown>, sessionId: string) {
   const errors: string[] = [];
   const session = form.sessions.find((item) => item.id === sessionId);
-  if (!session) errors.push("請選擇有效梯次");
+  if (!session) errors.push("請選擇有效場次");
   for (const field of form.fields) {
     const value = answers[field.key];
     const hasValue = Array.isArray(value) ? value.length > 0 : clean(value) !== "";
@@ -1535,7 +1542,7 @@ function validateNativeAnswers(form: NativeForm, answers: Record<string, unknown
 function validateNativeLoginAnswers(form: NativeForm, answers: Record<string, unknown>, sessionId: string) {
   const errors: string[] = [];
   const session = form.sessions.find((item) => item.id === sessionId);
-  if (!session) errors.push("請選擇有效梯次");
+  if (!session) errors.push("請選擇有效場次");
   const autoKeys = nativeMemberAutoFieldKeys();
   for (const field of form.fields) {
     const key = clean(field.key).toLowerCase();
@@ -1555,7 +1562,7 @@ function validateNativeLoginAnswers(form: NativeForm, answers: Record<string, un
 async function submitNativeForm(request: Request, env: Env, formId: string) {
   if (!env.ASSETS_BUCKET) return json({ success: false, message: "R2 bucket is not configured" }, 503);
   const form = await readNativeForm(env, formId);
-  if (!form) return json({ success: false, message: "找不到報名表" }, 404);
+  if (!form) return json({ success: false, message: "?曆??啣?”" }, 404);
   const input = await request.json().catch(() => ({})) as Record<string, unknown>;
   const rawAnswers = asRecord(input.answers);
   const answers = normalizeAnswersRecord(rawAnswers);
@@ -1566,7 +1573,7 @@ async function submitNativeForm(request: Request, env: Env, formId: string) {
   try {
     member = await resolveAndBindNativeRegistrationMember(env, lineUserId, answers);
   } catch (error) {
-    return json({ success: false, message: error instanceof Error ? error.message : "會員資料比對失敗" }, 400);
+    return json({ success: false, message: error instanceof Error ? error.message : "?鞈?瘥?憭望?" }, 400);
   }
   const finalAnswers = member ? normalizeAnswersRecord({ ...answers, ...memberAnswers(member) }) : answers;
   const errors = member ? validateNativeLoginAnswers(form, finalAnswers, sessionId) : validateNativeAnswers(form, finalAnswers, sessionId);
@@ -1597,7 +1604,7 @@ async function createNativeRegistration(env: Env, form: NativeForm, answers: Rec
   const sessionCount = active.filter((item) => clean(item.sessionId || "default") === sessionId).length;
   const sessionCapacity = Number(session?.capacity || 0);
   const totalCapacity = Number(form.activity.capacity || 0);
-  if (sessionCapacity > 0 && sessionCount >= sessionCapacity) return json({ success: false, message: "此梯次已額滿" }, 409);
+  if (sessionCapacity > 0 && sessionCount >= sessionCapacity) return json({ success: false, message: "此場次已額滿" }, 409);
   if (totalCapacity > 0 && active.length >= totalCapacity) return json({ success: false, message: "此活動已額滿" }, 409);
 
   const registrationId = `REG-${Date.now()}-${codeToken(4)}`;
@@ -1638,15 +1645,15 @@ async function submitNativeLoginRegistration(request: Request, env: Env, formId:
   if (!env.ASSETS_BUCKET) return json({ success: false, message: "R2 bucket is not configured" }, 503);
   const form = await readNativeForm(env, formId);
   if (!form) return json({ success: false, message: "找不到報名表" }, 404);
-  if (!nativeLoginEnabled(form)) return json({ success: false, message: "此活動尚未啟用 LINE Login 快速報名" }, 400);
+  if (!nativeLoginEnabled(form)) return json({ success: false, message: "此報名表未啟用 LINE Login 報名" }, 400);
   const input = await request.json().catch(() => ({})) as Record<string, unknown>;
   const lineUserId = firstClean(input.lineUserId, input.uid, input.LINE_user_id);
-  if (!lineUserId) return json({ success: false, message: "請先透過 LINE Login 取得會員身分" }, 400);
+  if (!lineUserId) return json({ success: false, message: "請透過 LINE Login 取得會員身份" }, 400);
   const member = await resolveLineLoginMember(env, lineUserId);
-  if (!member) return json({ success: false, code: "member_not_found", message: "這個 LINE 帳號尚未綁定協會會員或廠商會員，請改用一般報名或聯絡協會協助綁定。" }, 403);
+  if (!member) return json({ success: false, code: "member_not_found", message: "此 LINE 帳號尚未綁定會員或廠商會員資料，請先完成會員報到。" }, 403);
   const sessionId = clean(input.sessionId || "default");
   const session = form.sessions.find((item) => item.id === sessionId);
-  if (!session) return json({ success: false, message: "請選擇有效梯次" }, 400);
+  if (!session) return json({ success: false, message: "請選擇有效場次" }, 400);
   const userAnswers = normalizeAnswersRecord(asRecord(input.answers));
   const answers = normalizeAnswersRecord({ ...userAnswers, ...memberAnswers(member) });
   const errors = validateNativeLoginAnswers(form, answers, sessionId);
@@ -1748,9 +1755,9 @@ function opnFormIntroProperties(activity: Record<string, unknown>, settings: Rec
   const posterUrl = firstClean(activity.posterUrl, activity.imageUrl, activity.coverUrl, settings.posterUrl, settings.imageUrl, settings.coverUrl);
   const detailText = firstClean(activity.detailText, settings.detailText, settings.description);
   const blocks: Record<string, unknown>[] = [];
-  if (posterUrl) blocks.push({ id: "tdea_activity_poster", type: "nf-image", name: "活動海報", image_block: posterUrl, align: "center", width: "full" });
-  if (detailText) blocks.push({ id: "tdea_activity_description", type: "nf-text", name: "活動說明", content: `<p>${esc(detailText).replace(/\r?\n/g, "<br>")}</p>` });
-  blocks.push({ id: "tdea_activity_divider", type: "nf-divider", name: "報名資料" });
+  if (posterUrl) blocks.push({ id: "tdea_activity_poster", type: "nf-image", name: "瘣餃?瘚瑕", image_block: posterUrl, align: "center", width: "full" });
+  if (detailText) blocks.push({ id: "tdea_activity_description", type: "nf-text", name: "瘣餃?隤芣?", content: `<p>${esc(detailText).replace(/\r?\n/g, "<br>")}</p>` });
+  blocks.push({ id: "tdea_activity_divider", type: "nf-divider", name: "?勗?鞈?" });
   return blocks;
 }
 
@@ -1762,7 +1769,7 @@ function opnFormProperties(activity: Record<string, unknown>, settings: Record<s
     const property: Record<string, unknown> = {
       id: clean(field.key) || `field_${index + 1}`,
       type,
-      name: clean(field.label) || `欄位 ${index + 1}`,
+      name: clean(field.label) || `甈? ${index + 1}`,
       required: Boolean(field.required),
       width: "full"
     };
@@ -1829,9 +1836,9 @@ async function createOpnForm(request: Request, env: Env) {
     redirect_url: firstClean(settings.redirectUrl, activity.redirectUrl, defaultLiffCloseUrl),
     transparent_background: false,
     submit_button_text: "送出報名",
-    submitted_text: "報名已送出，謝謝您。",
+    submitted_text: "報名已送出，請關閉視窗。",
     re_fillable: false,
-    re_fill_button_text: "再次填寫",
+    re_fill_button_text: "重新填寫",
     confetti_on_submission: false,
     show_progress_bar: true,
     auto_save: true,
@@ -2011,7 +2018,7 @@ function normalizeConfig(config: MonthlyConfig): MonthlyConfig {
     enabled: Boolean(config.enabled),
     keyword: fixedKeyword,
     month: String(config.month || "").trim(),
-    altText: String(config.altText || "TDEA 每月活動").trim() || "TDEA 每月活動",
+    altText: String(config.altText || "TDEA 瘥?瘣餃?").trim() || "TDEA 瘥?瘣餃?",
     detailBaseUrl: String(config.detailBaseUrl || defaultLiffBase).trim(),
     updatedAt: config.updatedAt,
     pages: pages.slice(0, 12).map((page, index) => ({
@@ -2020,7 +2027,7 @@ function normalizeConfig(config: MonthlyConfig): MonthlyConfig {
       imageUrl: String(page.imageUrl || "").trim(),
       galleryUrls: cleanUrls(page.galleryUrls),
       formImageUrl: String(page.formImageUrl || "").trim(),
-      detailTitle: String(page.detailTitle || "詳細說明").trim() || "詳細說明",
+      detailTitle: String(page.detailTitle || "閰喟敦隤芣?").trim() || "閰喟敦隤芣?",
       detailText: String(page.detailText || "").trim(),
       detailUrl: String(page.detailUrl || "").trim(),
       formUrl: String(page.formUrl || "").trim(),
@@ -2046,7 +2053,7 @@ function detailUrlForPage(page: MonthlyPage, config: MonthlyConfig) {
 
 function buildMonthlyFlex(config: MonthlyConfig) {
   const normalized = normalizeConfig(config);
-  return { type: "flex", altText: normalized.altText || "TDEA 每月活動", contents: { type: "carousel", contents: (normalized.pages || []).map((page) => buildMonthlyBubble(page, normalized)) } };
+  return { type: "flex", altText: normalized.altText || "TDEA 瘥?瘣餃?", contents: { type: "carousel", contents: (normalized.pages || []).map((page) => buildMonthlyBubble(page, normalized)) } };
 }
 
 function buildMonthlyBubble(page: MonthlyPage, config: MonthlyConfig) {
@@ -2057,12 +2064,12 @@ function buildMonthlyBubble(page: MonthlyPage, config: MonthlyConfig) {
     type: "bubble",
     size: "kilo",
     body: { type: "box", layout: "vertical", paddingAll: "0px", contents: [
-      { type: "image", url: page.imageUrl || "https://developers-resource.landpress.line.me/fx/img/01_1_cafe.png", size: "full", aspectMode: "cover", aspectRatio: "2:3", gravity: "top", action: { type: "uri", label: "報名", uri: formUri } },
-      { type: "box", layout: "vertical", position: "absolute", cornerRadius: "20px", offsetTop: "18px", offsetStart: "18px", backgroundColor: "#ff334b", height: "25px", width: "53px", action: { type: "uri", label: "分享", uri: shareUri }, contents: [{ type: "text", text: "分享", color: "#ffffff", align: "center", size: "xs", offsetTop: "3px", action: { type: "uri", label: "分享", uri: shareUri } }] }
+      { type: "image", url: page.imageUrl || "https://developers-resource.landpress.line.me/fx/img/01_1_cafe.png", size: "full", aspectMode: "cover", aspectRatio: "2:3", gravity: "top", action: { type: "uri", label: "?勗?", uri: formUri } },
+      { type: "box", layout: "vertical", position: "absolute", cornerRadius: "20px", offsetTop: "18px", offsetStart: "18px", backgroundColor: "#ff334b", height: "25px", width: "53px", action: { type: "uri", label: "?澈", uri: shareUri }, contents: [{ type: "text", text: "?澈", color: "#ffffff", align: "center", size: "xs", offsetTop: "3px", action: { type: "uri", label: "?澈", uri: shareUri } }] }
     ] },
     footer: { type: "box", layout: "horizontal", contents: [
-      { type: "button", height: "sm", style: "primary", action: { type: "uri", label: "詳細說明", uri: detailUri } },
-      { type: "button", height: "sm", style: "primary", margin: "md", action: { type: "uri", label: "點我報名", uri: formUri } }
+      { type: "button", height: "sm", style: "primary", action: { type: "uri", label: "閰喟敦隤芣?", uri: detailUri } },
+      { type: "button", height: "sm", style: "primary", margin: "md", action: { type: "uri", label: "暺??勗?", uri: formUri } }
     ] }
   };
 }
@@ -2088,7 +2095,7 @@ function monthlySliderHtml(page: MonthlyPage) {
   const images = monthlyPageImages(page);
   if (!images.length) return "";
   if (images.length === 1) return `<img src="${esc(images[0])}" alt="">`;
-  return `<div class="slider" data-slider><div class="track">${images.map((url) => `<div class="slide"><img src="${esc(url)}" alt=""></div>`).join("")}</div><div class="slider-nav"><button type="button" data-prev>‹</button><button type="button" data-next>›</button></div><div class="dots">${images.map((_, index) => `<button type="button" data-dot="${index}" class="${index === 0 ? "active" : ""}"></button>`).join("")}</div></div><script>(()=>{const root=document.querySelector("[data-slider]");if(!root)return;const track=root.querySelector(".track");const dots=[...root.querySelectorAll("[data-dot]")];let i=0,t=null;const go=n=>{i=(n+dots.length)%dots.length;track.style.transform="translateX(-"+(i*100)+"%)";dots.forEach((d,di)=>d.classList.toggle("active",di===i));};const restart=()=>{if(t)clearInterval(t);t=setInterval(()=>go(i+1),3000);};root.querySelector("[data-prev]").onclick=()=>{go(i-1);restart();};root.querySelector("[data-next]").onclick=()=>{go(i+1);restart();};dots.forEach(d=>d.onclick=()=>{go(Number(d.dataset.dot||0));restart();});restart();})();</script>`;
+  return `<div class="slider" data-slider><div class="track">${images.map((url) => `<div class="slide"><img src="${esc(url)}" alt=""></div>`).join("")}</div><div class="slider-nav"><button type="button" data-prev>??/button><button type="button" data-next>??/button></div><div class="dots">${images.map((_, index) => `<button type="button" data-dot="${index}" class="${index === 0 ? "active" : ""}"></button>`).join("")}</div></div><script>(()=>{const root=document.querySelector("[data-slider]");if(!root)return;const track=root.querySelector(".track");const dots=[...root.querySelectorAll("[data-dot]")];let i=0,t=null;const go=n=>{i=(n+dots.length)%dots.length;track.style.transform="translateX(-"+(i*100)+"%)";dots.forEach((d,di)=>d.classList.toggle("active",di===i));};const restart=()=>{if(t)clearInterval(t);t=setInterval(()=>go(i+1),3000);};root.querySelector("[data-prev]").onclick=()=>{go(i-1);restart();};root.querySelector("[data-next]").onclick=()=>{go(i+1);restart();};dots.forEach(d=>d.onclick=()=>{go(Number(d.dataset.dot||0));restart();});restart();})();</script>`;
 }
 
 function buildVendorCardFlex(config: VendorCardConfig) {
@@ -2131,7 +2138,7 @@ function buildVendorCardFlex(config: VendorCardConfig) {
         spacing: "md",
         contents: rows.length ? rows : [
           { type: "text", text: normalized.title || "TDEA 廠商列表", weight: "bold", size: "lg", align: "center" },
-          { type: "text", text: "目前尚未設定廠商名片。", wrap: true, align: "center", color: "#666666" }
+          { type: "text", text: "尚未設定廠商名片", wrap: true, align: "center", color: "#666666" }
         ]
       }
     }
@@ -2184,7 +2191,7 @@ function isLineActivityStart(text: string) {
 }
 
 function isLineActivityCancel(text: string) {
-  return ["取消", "取消上稿", "TDEA取消建立"].some((keyword) => normalizeKeyword(text) === normalizeKeyword(keyword));
+  return ["??", "??銝阮", "TDEA??撱箇?"].some((keyword) => normalizeKeyword(text) === normalizeKeyword(keyword));
 }
 
 function canUseLineActivityMaker(lineUserId: string, env: Env) {
@@ -2304,19 +2311,19 @@ function lineActivityQuestion(step: string): Record<string, unknown> {
   const quick = (items: string[]) => ({
     items: items.slice(0, 13).map((label) => ({ type: "action", action: { type: "message", label, text: label } }))
   });
-  if (step === "posterUrl") return { type: "text", text: "開始建立活動。\n請先上傳活動海報圖片。\n\n收到圖片後，下一步會先選活動類型。" };
-  if (step === "eventInfo") return { type: "text", text: "請一次貼上活動資訊。\n可包含：活動名稱、活動說明、活動開始時間、活動結束時間、報名開始時間、報名截止時間。\n\n我會自動整理成活動草稿。" };
-  if (step === "name") return { type: "text", text: "請輸入活動名稱。\n也可以直接貼上完整活動文案，我會協助整理缺少的欄位。", quickReply: quick(["取消"]) };
+  if (step === "posterUrl") return { type: "text", text: "請先上傳活動海報圖片，或貼上海報圖片網址。上傳完成後再選擇活動類型。" };
+  if (step === "eventInfo") return { type: "text", text: "請貼上活動文案。可以一次包含活動名稱、時間、報名截止、名額、點數與報名方式，系統會整理成草稿。" };
+  if (step === "name") return { type: "text", text: "請輸入活動名稱。", quickReply: quick(["取消"]) };
   if (step === "type") return { type: "text", text: "請選擇活動類型。", quickReply: quick(["講座類", "教學類", "聯誼類", "企業參訪", "年度會議"]) };
-  if (step === "courseTime") return { type: "text", text: "請提供活動時間。", quickReply: quick(["今天下午", "明天下午", "下週", "自訂時間"]) };
-  if (step === "deadline") return { type: "text", text: "請選擇報名截止。", quickReply: quick(["活動前一天", "活動前三天", "活動前一週", "自訂日期"]) };
-  if (step === "capacity") return { type: "text", text: "請選擇名額上限。", quickReply: quick(["不限", "20", "30", "50", "100"]) };
+  if (step === "courseTime") return { type: "text", text: "請輸入活動時間。", quickReply: quick(["明天下午", "下週下午", "今天", "手動輸入"]) };
+  if (step === "deadline") return { type: "text", text: "請選擇報名截止。", quickReply: quick(["活動前一天", "活動前三天", "活動前一週", "手動輸入"]) };
+  if (step === "capacity") return { type: "text", text: "請選擇名額。", quickReply: quick(["不限", "20", "30", "50", "100"]) };
   if (step === "checkinPoints") return { type: "text", text: "請選擇簽到贈點。", quickReply: quick(["0", "50", "100", "200", "500"]) };
   if (step === "feePoints") return { type: "text", text: "請選擇報名扣點。", quickReply: quick(["0", "50", "100", "200", "500"]) };
-  if (step === "registrationMode") return { type: "text", text: "請選擇報名方式。", quickReply: quick(["LINE會員快報", "一般表單", "混合模式"]) };
-  if (step === "status") return { type: "text", text: "請選擇活動狀態。", quickReply: quick(["下架", "上架"]) };
-  if (step === "confirm") return { type: "text", text: "請確認是否建立草稿。", quickReply: quick(["確認建立", "重新開始", "取消"]) };
-  return { type: "text", text: "請繼續輸入活動資料。" };
+  if (step === "registrationMode") return { type: "text", text: "請選擇報名方式。", quickReply: quick(["會員/廠商登入報名", "開放填表報名", "會員優先，非會員填表"]) };
+  if (step === "status") return { type: "text", text: "請選擇活動狀態。", quickReply: quick(["上架", "下架"]) };
+  if (step === "confirm") return { type: "text", text: "請確認是否建立活動草稿。", quickReply: quick(["建立草稿", "重新整理", "取消"]) };
+  return { type: "text", text: "請回覆活動資料。" };
 }
 
 function nextLineActivityStep(step: string) {
@@ -2326,8 +2333,8 @@ function nextLineActivityStep(step: string) {
 
 function lineActivityDraftTemplate(draft: LineActivityDraft): Record<string, unknown> {
   const answers = draft.answers || {};
-  const selectedType = firstClean(answers.type, "請保留已選類型或改成：講座類 / 教學類 / 聯誼類 / 企業參訪 / 年度會議");
-  const templateMode = selectedType.includes("參訪") ? "模式1：廠商參訪 / 聯合參訪" : firstClean(answers.templateMode, "一般活動");
+  const selectedType = firstClean(answers.type, "講座類 / 教學類 / 聯誼類 / 企業參訪 / 年度會議");
+  const templateMode = selectedType.includes("企業參訪") ? "模式1：常見活動報名" : firstClean(answers.templateMode, "一般活動");
   const name = firstClean(answers.name);
   const detailText = firstClean(answers.detailText);
   const courseTime = firstClean(answers.courseTime);
@@ -2337,22 +2344,22 @@ function lineActivityDraftTemplate(draft: LineActivityDraft): Record<string, unk
   const capacity = firstClean(answers.capacity, "0");
   const checkinPoints = firstClean(answers.checkinPoints, "0");
   const feePoints = firstClean(answers.feePoints, "0");
-  const registrationMode = firstClean(answers.registrationMode, "LINE會員快報");
-  const status = firstClean(answers.status, "上架");
+  const registrationMode = firstClean(answers.registrationMode, "會員/廠商登入報名");
+  const status = firstClean(answers.status, "下架");
   return {
     type: "text",
     text: [
-      "請直接修改下方草稿，完成後整段貼回聊天室。",
+      "以下是活動草稿，請確認後回覆「建立草稿」。",
       "",
-      `活動模式：${templateMode}`,
-      `活動名稱：${name}`,
+      `表單類型：${templateMode}`,
+      `活動名稱：${name || "未填"}`,
       `活動類型：${selectedType}`,
       "活動說明：",
-      detailText || "請填寫活動介紹、地點、費用、注意事項。",
+      detailText || "未填",
       "",
-      `活動時間：${courseTime || "例如 2026/06/04 14:00-16:00"}`,
-      `報名開始：${registrationStart || "可留空"}`,
-      `報名截止：${deadline || registrationEnd || "例如 2026/06/03"}`,
+      `活動時間：${courseTime || "未填"}`,
+      `報名開始：${registrationStart || "立即"}`,
+      `報名截止：${deadline || registrationEnd || "未填"}`,
       `名額：${capacity}`,
       `簽到贈點：${checkinPoints}`,
       `報名扣點：${feePoints}`,
@@ -2375,11 +2382,9 @@ function lineActivityStepKey(step: string) {
 }
 
 function lineActivityRegistrationMode(value: string) {
-  if (/line|login/i.test(value) || value.includes("會員")) return "member_login";
-  if (value.includes("混合")) return "mixed";
-  if (value.includes("表單")) return "form";
-  if (value.includes("快報")) return "member_login";
-  if (value.includes("混合")) return "mixed";
+  if (/line|login/i.test(value) || value.includes("會員/廠商")) return "member_login";
+  if (value.includes("會員優先")) return "mixed";
+  if (value.includes("開放") || value.includes("填表")) return "form";
   return "form";
 }
 
@@ -2407,27 +2412,17 @@ function normalizeLineActivityField(key: string, value: unknown) {
   }
   if (key === "registrationMode") {
     const normalized = normalizeKeyword(text);
-    if (normalized.includes("LINE") || normalized.includes("LOGIN") || text.includes("會員")) return "LINE會員快報";
-    if (text.includes("混合") || text.includes("表單")) return "混合表單";
-    return "一般表單";
+    if (normalized.includes("LINE") || normalized.includes("LOGIN") || text.includes("會員/廠商")) return "會員/廠商登入報名";
+    if (text.includes("會員優先")) return "會員優先，非會員填表";
+    return "開放填表報名";
   }
   if (key === "status") {
     if (text.includes("下架") || text.toLowerCase() === "off") return "下架";
     return "上架";
   }
   if (key === "templateMode") {
-    if (text.includes("模式1") || text.includes("模式 1") || text.includes("參訪")) return "mode1_vendor_visit";
+    if (text.includes("模式1") || text.includes("企業參訪")) return "mode1_vendor_visit";
     return "custom";
-  }
-  if (key === "registrationMode") {
-    const normalized = normalizeKeyword(text);
-    if (normalized.includes("LINE") || normalized.includes("LOGIN") || text.includes("會員")) return "LINE會員快報";
-    if (text.includes("混合")) return "混合模式";
-    return "一般表單";
-  }
-  if (key === "status") {
-    if (text.includes("下架") || text.toLowerCase() === "off") return "下架";
-    return "上架";
   }
   return text;
 }
@@ -2452,15 +2447,15 @@ function mergeLineActivityAiFields(draft: LineActivityDraft, fields?: Record<str
 
 function applyLineActivityTextHeuristics(draft: LineActivityDraft, text: string) {
   const changed: string[] = [];
-  if (!lineActivityAnswerFilled(draft.answers, "feePoints") && /(不扣點|免扣點|無扣點|不用扣點|沒有扣點|不扣抵|免費)/.test(text)) {
+  if (!lineActivityAnswerFilled(draft.answers, "feePoints") && /(不扣點|免扣點|免費|無費用|不用點數)/.test(text)) {
     draft.answers.feePoints = 0;
     changed.push("feePoints");
   }
-  if (!lineActivityAnswerFilled(draft.answers, "checkinPoints") && /(不贈點|免贈點|無贈點|沒有贈點|簽到不贈點)/.test(text)) {
+  if (!lineActivityAnswerFilled(draft.answers, "checkinPoints") && /(不贈點|免贈點|無贈點|簽到不給點|簽到沒有點數)/.test(text)) {
     draft.answers.checkinPoints = 0;
     changed.push("checkinPoints");
   }
-  if (!lineActivityAnswerFilled(draft.answers, "capacity") && /(不限名額|無名額限制|不限人數|不限制人數)/.test(text)) {
+  if (!lineActivityAnswerFilled(draft.answers, "capacity") && /(不限人數|無名額限制|不限制人數|名額不限)/.test(text)) {
     draft.answers.capacity = 0;
     changed.push("capacity");
   }
@@ -2475,9 +2470,9 @@ function shouldUseLineActivityAi(text: string, draft: LineActivityDraft) {
 
 function manualLineActivityAnswerValue(step: string, text: string) {
   const key = lineActivityStepKey(step);
-  if (key === "deadline" && ["自訂日期", "自訂"].includes(text)) return undefined;
-  if (key === "courseTime" && ["自訂時間", "自訂"].includes(text)) return undefined;
-  if (key === "capacity" && ["不限", "不限名額", "不限人數"].includes(text)) return 0;
+  if (key === "deadline" && ["手動輸入", "手動"].includes(text)) return undefined;
+  if (key === "courseTime" && ["手動輸入", "手動"].includes(text)) return undefined;
+  if (key === "capacity" && ["不限", "不限名額"].includes(text)) return 0;
   if (key === "deadline") return text;
   if (["capacity", "checkinPoints", "feePoints"].includes(key)) {
     const numeric = Number(text.replace(/[^\d.-]/g, ""));
@@ -2520,7 +2515,7 @@ function displayLineActivityDeadline(draft: LineActivityDraft) {
 }
 
 const lineActivityDraftFieldLabels = [
-  "活動模式",
+  "表單類型",
   "活動名稱",
   "活動類型",
   "活動說明",
@@ -2570,7 +2565,7 @@ function applyLineActivityEventInfoFallback(draft: LineActivityDraft, text: stri
   const changed: string[] = [];
   const lines = text.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
   setLineActivityDraftFieldFromLabel(draft, changed, "name", extractLineActivityLabeledValue(text, ["活動名稱"]));
-  setLineActivityDraftFieldFromLabel(draft, changed, "templateMode", extractLineActivityLabeledValue(text, ["活動模式"]));
+  setLineActivityDraftFieldFromLabel(draft, changed, "templateMode", extractLineActivityLabeledValue(text, ["表單類型"]));
   setLineActivityDraftFieldFromLabel(draft, changed, "type", extractLineActivityLabeledValue(text, ["活動類型"]));
   setLineActivityDraftFieldFromLabel(draft, changed, "detailText", extractLineActivityLabeledValue(text, ["活動說明"], true));
   setLineActivityDraftFieldFromLabel(draft, changed, "courseTime", extractLineActivityLabeledValue(text, ["活動時間"]));
@@ -2584,7 +2579,7 @@ function applyLineActivityEventInfoFallback(draft: LineActivityDraft, text: stri
   setLineActivityDraftFieldFromLabel(draft, changed, "registrationMode", extractLineActivityLabeledValue(text, ["報名方式"]));
   setLineActivityDraftFieldFromLabel(draft, changed, "status", extractLineActivityLabeledValue(text, ["狀態"]));
   if (!lineActivityAnswerFilled(draft.answers, "name") && lines[0]) {
-    draft.answers.name = lines[0].replace(/^(活動名稱|名稱)[:：]\s*/, "");
+    draft.answers.name = lines[0].replace(/^(活動名稱)[:：\s]*/, "");
     changed.push("name");
   }
   if (!lineActivityAnswerFilled(draft.answers, "detailText") && text.trim()) {
@@ -2592,16 +2587,16 @@ function applyLineActivityEventInfoFallback(draft: LineActivityDraft, text: stri
     changed.push("detailText");
   }
   if (!lineActivityAnswerFilled(draft.answers, "courseTime")) {
-    const timeLine = lines.find((line) => /(活動時間|時間|開始|結束|\d{4}[/-]\d{1,2}[/-]\d{1,2})/.test(line));
+    const timeLine = lines.find((line) => /(活動時間|時間|\d{4}[/-]\d{1,2}[/-]\d{1,2})/.test(line));
     if (timeLine) {
-      draft.answers.courseTime = timeLine.replace(/^(活動時間|時間)[:：]\s*/, "");
+      draft.answers.courseTime = timeLine.replace(/^(活動時間|時間)[:：\s]*/, "");
       changed.push("courseTime");
     }
   }
   if (!lineActivityAnswerFilled(draft.answers, "deadline")) {
-    const deadlineLine = lines.find((line) => /(報名截止|截止|截止時間)/.test(line));
+    const deadlineLine = lines.find((line) => /(報名截止|截止)/.test(line));
     if (deadlineLine) {
-      draft.answers.deadline = deadlineLine.replace(/^(報名截止|截止|截止時間)[:：]\s*/, "");
+      draft.answers.deadline = deadlineLine.replace(/^(報名截止|截止)[:：\s]*/, "");
       changed.push("deadline");
     }
   }
@@ -2609,9 +2604,9 @@ function applyLineActivityEventInfoFallback(draft: LineActivityDraft, text: stri
 }
 
 function lineActivityFreeTextQuestion(step: string): Record<string, unknown> {
-  if (step === "eventInfo") return { type: "text", text: "請把聊天室草稿補完整後整段貼回。至少需要：活動名稱、活動說明、活動時間。" };
+  if (step === "eventInfo") return { type: "text", text: "請貼上完整活動文案，包含活動名稱、時間、報名截止、名額與報名方式。" };
   if (step === "courseTime") return { type: "text", text: "請輸入活動時間，例如：2026/06/04 14:00-16:00" };
-  if (step === "deadline") return { type: "text", text: "請輸入報名截止日，例如：2026/06/03" };
+  if (step === "deadline") return { type: "text", text: "請輸入報名截止日期，例如：2026/06/03" };
   return lineActivityQuestion(step);
 }
 
@@ -2646,16 +2641,13 @@ async function extractLineActivityWithOpenAI(text: string, draft: LineActivityDr
             {
               type: "input_text",
               text: [
-                "你只處理 TDEA 活動建立流程的欄位抽取，不提供一般聊天回覆。",
-                "請從使用者訊息抽取活動草稿欄位；不知道就回空字串，不能編造。",
-                "活動類型可保留原文，例如講座類、教學類、聯誼類、企業參訪、年度會議。",
-                "如果活動是廠商參訪、聯合參訪、品牌參訪或產業交流，templateMode 請輸出 mode1_vendor_visit，否則輸出 custom。",
-                "請抽取活動說明到 detailText；detailText 必須保留可給會員閱讀的完整說明，不要只放標題。",
-                "courseTime 可保留完整活動時間文字，例如 2026/06/04 14:00-16:00。",
-                "deadline 是報名截止時間；registrationStart 是報名開始時間；registrationEnd 是報名結束時間。",
-                "registrationMode 請輸出 LINE會員快報、一般表單或混合模式。",
-                "status 請輸出 上架 或 下架。",
-                "intent 只能是 activity_create、confirm、cancel、irrelevant。"
+                "你是 TDEA 活動建立助手，只協助從訊息中抽取活動設定。",
+                "只能輸出符合 schema 的 JSON，不要輸出說明文字。",
+                "可抽取欄位：templateMode, name, type, detailText, courseTime, deadline, registrationStart, registrationEnd, capacity, checkinPoints, feePoints, registrationMode, status。",
+                "活動類型請盡量正規化為：講座類、教學類、聯誼類、企業參訪、年度會議。",
+                "registrationMode 請使用：會員/廠商登入報名、開放填表報名、會員優先，非會員填表。",
+                "status 請使用：上架 或 下架。",
+                "intent 請使用 activity_create、confirm、cancel、irrelevant。"
               ].join("\n")
             }
           ]
@@ -2727,7 +2719,7 @@ function buildLineActivityFromDraft(draft: LineActivityDraft) {
   const id = `LINE-${now.getTime()}-${codeToken(4)}`;
   const name = firstClean(answers.name, "LINE 建立活動");
   const type = firstClean(answers.type, "講座類");
-  const templateMode = firstClean(answers.templateMode) || (type.includes("參訪") ? "mode1_vendor_visit" : "custom");
+  const templateMode = firstClean(answers.templateMode) || (type.includes("企業參訪") ? "mode1_vendor_visit" : "custom");
   return {
     id,
     activityNo: `ACT-${now.toISOString().slice(0, 10).replace(/-/g, "")}-${codeToken(3)}`,
@@ -2743,7 +2735,7 @@ function buildLineActivityFromDraft(draft: LineActivityDraft) {
     capacity: Number(answers.capacity || 0),
     checkinPoints: Number(answers.checkinPoints || 0),
     feePoints: Number(answers.feePoints || 0),
-    registrationMode: lineActivityRegistrationMode(firstClean(answers.registrationMode, "一般表單")),
+    registrationMode: lineActivityRegistrationMode(firstClean(answers.registrationMode, "開放填表報名")),
     reg: 0,
     check: 0,
     status: firstClean(answers.status, "下架"),
@@ -2776,9 +2768,9 @@ function lineActivityConfirmMessage(draft: LineActivityDraft): Record<string, un
       `報名方式：${firstClean(answers.registrationMode)}`,
       `狀態：${firstClean(answers.status)}`,
       "",
-      "輸入或點選「確認建立」後會建立後台草稿。"
+      "請選擇是否建立草稿。"
     ].join("\n"),
-    quickReply: quick(["確認建立", "重新開始", "取消"])
+    quickReply: quick(["建立草稿", "重新整理", "取消"])
   };
 }
 
@@ -2810,10 +2802,10 @@ async function handleLineActivityMakerEvent(event: LineEvent, env: Env, ctx?: Ex
     if (!starts && !draft) return null;
     if (!canUseLineActivityMaker(lineUserId, env)) {
       queueLineActivityDebug(ctx, env, { stage: "blocked", text, lineUserId, reason: "not_allowed" });
-      return { type: "text", text: "此 LINE 帳號尚未開通活動上稿權限。" };
+      return { type: "text", text: "此 LINE 帳號沒有建立活動權限。" };
     }
-    if (!env.ASSETS_BUCKET) return { type: "text", text: "活動上稿暫不可用：R2 尚未設定。" };
-    if (starts || (draft && normalizeKeyword(text) === normalizeKeyword("重新開始"))) {
+    if (!env.ASSETS_BUCKET) return { type: "text", text: "活動建立功能暫不可用：R2 尚未設定。" };
+    if (starts || (draft && normalizeKeyword(text) === normalizeKeyword("重新整理"))) {
       draft = { id: crypto.randomUUID(), lineUserId, step: "posterUrl", answers: {}, status: "active", createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() };
       queueLineActivityDebug(ctx, env, { stage: "start_before_write", text, lineUserId, draftId: draft.id });
       queueLineActivityDraftWrite(ctx, env, draft, { text, lineUserId, draftId: draft.id });
@@ -2823,7 +2815,7 @@ async function handleLineActivityMakerEvent(event: LineEvent, env: Env, ctx?: Ex
     if (!draft) return null;
     if (isImage) {
       const messageId = clean(event.message?.id);
-      if (!messageId) return { type: "text", text: "圖片沒有取得 message id，請重新上傳一次。" };
+      if (!messageId) return { type: "text", text: "圖片沒有 message id，請重新上傳一次。" };
       const imageUrl = await saveLineActivityImageFromLine(env, draft, messageId);
       draft.answers.posterUrl = imageUrl;
       if (draft.step === "posterUrl") draft.step = lineActivityMissingStep(draft);
@@ -2835,13 +2827,13 @@ async function handleLineActivityMakerEvent(event: LineEvent, env: Env, ctx?: Ex
       draft.status = "cancelled";
       await writeLineActivityDraft(env, draft);
       await writeLineActivityDebug(env, { stage: "cancelled", text, lineUserId, draftId: draft.id });
-      return { type: "text", text: "已取消本次活動上稿。" };
+      return { type: "text", text: "已取消建立活動流程。" };
     }
     if (["capacity", "checkinPoints", "feePoints", "registrationMode", "status", "name", "courseTime", "deadline"].includes(draft.step)) {
       draft.step = "eventInfo";
     }
     if (draft.step === "confirm") {
-      if (normalizeKeyword(text) !== normalizeKeyword("確認建立")) return lineActivityConfirmMessage(draft);
+      if (normalizeKeyword(text) !== normalizeKeyword("建立草稿")) return lineActivityConfirmMessage(draft);
       const activity = buildLineActivityFromDraft(draft);
       draft.status = "completed";
       draft.activity = activity;
@@ -2867,7 +2859,7 @@ async function handleLineActivityMakerEvent(event: LineEvent, env: Env, ctx?: Ex
           draft.status = "cancelled";
           await writeLineActivityDraft(env, draft);
           await writeLineActivityDebug(env, { stage: "ai_cancelled", text, lineUserId, draftId: draft.id, ai });
-          return { type: "text", text: "已取消本次活動上稿。" };
+          return { type: "text", text: "已取消建立活動流程。" };
         }
         changed = mergeLineActivityAiFields(draft, ai?.fields);
         if (draft.step === "eventInfo") changed.push(...applyLineActivityEventInfoFallback(draft, text));
@@ -2892,7 +2884,7 @@ async function handleLineActivityMakerEvent(event: LineEvent, env: Env, ctx?: Ex
     return draft.step === "confirm" ? lineActivityConfirmMessage(draft) : lineActivityPromptForDraft(draft);
   } catch (error) {
     await writeLineActivityDebug(env, { stage: "fatal", text, lineUserId, message: error instanceof Error ? error.message : String(error) });
-    return { type: "text", text: `活動建立流程發生錯誤：${error instanceof Error ? error.message : String(error)}` };
+    return { type: "text", text: `建立活動時發生錯誤：${error instanceof Error ? error.message : String(error)}` };
   }
 }
 
@@ -2919,7 +2911,7 @@ async function handleLineActivityMaker(request: Request, env: Env, rawBody: stri
     const draft = !starts ? await readLineActivityDraft(env, lineUserId) || await readLatestLineActivityDraft(env) : null;
     if (!starts && draft && event.source?.userId) {
       handled += 1;
-      if (clean(env.OPENAI_API_KEY) && shouldUseLineActivityAi(text, draft) && event.replyToken) messages.push({ event, message: { type: "text", text: "整理中，稍後回覆整理結果..." } });
+      if (clean(env.OPENAI_API_KEY) && shouldUseLineActivityAi(text, draft) && event.replyToken) messages.push({ event, message: { type: "text", text: "?渡?銝哨?蝔????渡?蝯?..." } });
       const task = (async () => {
         const finalMessage = await handleLineActivityMakerEvent(event, env, ctx);
         if (!finalMessage) return;
@@ -3017,7 +3009,7 @@ async function testLineActivityAi(request: Request, env: Env) {
   if (guard) return guard;
   const url = new URL(request.url);
   const input = request.method === "POST" ? await request.json().catch(() => ({})) as Record<string, unknown> : {};
-  const text = firstClean(input.text, url.searchParams.get("text"), "端午團聚，2026/06/10 14:00-17:00，報名到 2026/06/05，名額30，聯誼類，上架，簽到贈點100，不扣點，LINE會員快報");
+  const text = firstClean(input.text, url.searchParams.get("text"), "蝡臬???嚗?026/06/10 14:00-17:00嚗? 2026/06/05嚗?憿?0嚗隤潮?嚗??塚?蝪賢韐?100嚗????嚗INE?敹怠");
   const draft: LineActivityDraft = { id: "ai-check", lineUserId: "ai-check", step: "name", answers: {}, status: "active", createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() };
   try {
     const result = await extractLineActivityWithOpenAI(text, draft, env);
@@ -3083,14 +3075,14 @@ function richMenuSnapshot(config: RichMenuConfig): RichMenuSnapshot {
 
 function normalizedMemberClaim(input: Record<string, unknown>) {
   return {
-    memberNo: firstClean(input.memberNo, input.member_no, input["會員編號"], input["會員編號:"], input["會員編號: "]).toUpperCase(),
-    name: firstClean(input.name, input.memberName, input["姓名"], input["姓名:"])
+    memberNo: firstClean(input.memberNo, input.member_no, input["會員編號"], input["會員編號:"], input["會員編號："]).toUpperCase(),
+    name: firstClean(input.name, input.memberName, input["姓名"], input["姓名:"], input["姓名："])
   };
 }
 
 function isMemberAnswer(value: unknown) {
   const text = clean(Array.isArray(value) ? value.join(",") : value).toLowerCase();
-  return ["y", "yes", "true", "1", "會員", "是", "準會員"].some((item) => text.includes(item));
+  return ["y", "yes", "true", "1", "會員", "是", "協會會員", "廠商會員"].some((item) => text.includes(item.toLowerCase()));
 }
 
 function answersClaimMember(answers: Record<string, unknown>) {
@@ -3115,7 +3107,7 @@ async function resolveAndBindClaimedMember(env: Env, lineUserId: string, answers
   });
   if (!exact) return null;
   const currentUid = memberLineUid(exact);
-  if (currentUid && currentUid.toLowerCase() !== uid.toLowerCase()) throw new Error("此會員編號已綁定其他 LINE 帳號，請聯絡協會確認。");
+  if (currentUid && currentUid.toLowerCase() !== uid.toLowerCase()) throw new Error("此會員編號已綁定其他 LINE UID，請由後台確認後再變更。");
   for (const row of matched) setAiweRowLineUid(row, uid);
   await writeAiweMembers(env, rows);
   return resolveLineLoginMember(env, uid);
@@ -3133,7 +3125,7 @@ function parseUidBindKeyword(text: string) {
   const normalized = normalizeKeyword(raw);
   if (normalized === uidBindKeyword) return { active: true, memberNo: "" };
   if (!normalized.startsWith(uidBindKeyword)) return { active: false, memberNo: "" };
-  const suffix = raw.replace(/^UID\s*[:：+＋-]?\s*/i, "").trim();
+  const suffix = raw.replace(/^UID\s*[:：]?\s*/i, "").trim();
   return suffix ? { active: true, memberNo: clean(suffix).toUpperCase() } : { active: false, memberNo: "" };
 }
 
@@ -3176,21 +3168,21 @@ async function bindLineUidEvents(events: LineEvent[], env: Env) {
     const lineUserId = clean(event.source?.userId);
     const parsed = parseUidBindKeyword(extractTriggerText(event));
     if (!lineUserId) {
-      const message = { type: "text", text: "無法取得 LINE UID，請確認是在一對一 LINE 聊天中輸入。" };
+      const message = { type: "text", text: "系統尚未取得你的 LINE UID，請從 LINE 官方帳號聊天室重新觸發會員報到。" };
       replies.push(event.replyToken ? await replyToLine(event.replyToken, [message], env) : { ok: false, status: 400, message: "Missing replyToken" });
       results.push({ success: false, message: message.text });
       continue;
     }
     const inferred = parsed.memberNo ? { memberNo: parsed.memberNo, reason: "input" } : inferUidBindMemberNo(rows, lineUserId, env);
     if (!inferred.memberNo) {
-      const message = { type: "text", text: `已取得你的 LINE UID：${lineUserId}\n但無法唯一判定會員編號，請輸入 UID+會員編號，例如：UID+Z1160215。` };
+      const message = { type: "text", text: `已取得你的 LINE UID：${lineUserId}\n但無法自動判斷會員編號，請輸入 UID+會員編號，例如：UID+Z1160215。` };
       replies.push(event.replyToken ? await replyToLine(event.replyToken, [message], env) : { ok: false, status: 400, message: "Missing replyToken" });
       results.push({ success: false, lineUserId, message: "missing-member-no" });
       continue;
     }
     const matched = rows.filter((row) => rowMatchesMemberNo(row, inferred.memberNo));
     if (!matched.length) {
-      const message = { type: "text", text: `已取得你的 LINE UID：${lineUserId}\n但找不到會員編號 ${inferred.memberNo}，請確認名冊編號。` };
+      const message = { type: "text", text: `已取得你的 LINE UID：${lineUserId}\n但查無會員編號 ${inferred.memberNo}，請確認會員編號是否正確。` };
       replies.push(event.replyToken ? await replyToLine(event.replyToken, [message], env) : { ok: false, status: 400, message: "Missing replyToken" });
       results.push({ success: false, lineUserId, memberNo: inferred.memberNo, message: "member-not-found" });
       continue;
@@ -3211,6 +3203,37 @@ function lineUidFromText(value: unknown) {
 
 function memberLineUid(row: Record<string, unknown>) {
   return firstClean(row.lineUserId, row.LINE_user_id, row.uid, row.user_login, row.email, lineUidFromText(JSON.stringify(row)));
+}
+
+function explicitMemberLineUid(row: Record<string, unknown>) {
+  return firstClean(row.lineUserId, row.LINE_user_id, row.uid);
+}
+
+function quickReply(items: string[]) {
+  return {
+    items: items.slice(0, 13).map((label) => ({
+      type: "action",
+      action: { type: "message", label, text: label }
+    }))
+  };
+}
+
+async function monthlyMemberStatusPrompt(event: LineEvent, env: Env): Promise<Record<string, unknown> | null> {
+  const lineUserId = clean(event.source?.userId);
+  if (!lineUserId) return {
+    type: "text",
+    text: "系統尚未取得你的 LINE UID。若你是會員，請先點「會員報到」完成綁定。",
+    quickReply: quickReply(["會員報到", fixedKeyword])
+  };
+  const rows = await readAiweMembers(env);
+  const lowerUid = lineUserId.toLowerCase();
+  const matched = rows.find((row) => explicitMemberLineUid(row).toLowerCase() === lowerUid);
+  if (matched) return null;
+  return {
+    type: "text",
+    text: "若你是 TDEA 會員或廠商會員，請先點「會員報到」完成 LINE 綁定。完成後以後活動就能快速報名。",
+    quickReply: quickReply(["會員報到", fixedKeyword, queryKeyword])
+  };
 }
 
 function manualLineUids(value: unknown) {
@@ -3243,7 +3266,7 @@ async function resolvePushRecipients(env: Env, target: PushTarget) {
 function buildPushMessages(input: Record<string, unknown>) {
   const messageType = clean(input.messageType || "text");
   if (messageType === "flex") {
-    const altText = firstClean(input.altText, input.title, "TDEA 推播訊息");
+    const altText = firstClean(input.altText, input.title, "TDEA 訊息");
     const raw = firstClean(input.flexJson, input.contents);
     const parsed = raw ? JSON.parse(raw) : asRecord(input.flexContents || input.contents);
     const contents = parsed.type === "flex" ? parsed.contents : parsed;
@@ -3252,7 +3275,7 @@ function buildPushMessages(input: Record<string, unknown>) {
   }
   const title = clean(input.title);
   const text = clean(input.text || input.body);
-  if (!text) throw new Error("請輸入推播文字");
+  if (!text) throw new Error("請輸入推播文字內容");
   return [{ type: "text", text: title ? `${title}\n\n${text}` : text }];
 }
 
@@ -3321,7 +3344,7 @@ async function sendPushApi(request: Request, env: Env) {
     if (resolved.mode === "broadcast") {
       responses.push(await sendLineApi(env, "broadcast", { messages, notificationDisabled: Boolean(input.notificationDisabled) }));
     } else {
-      if (!resolved.recipients.length) return json({ success: false, message: "此分眾沒有可推播的 LINE UID" }, 400);
+      if (!resolved.recipients.length) return json({ success: false, message: "沒有可推播的 LINE UID" }, 400);
       for (let index = 0; index < resolved.recipients.length; index += 500) {
         responses.push(await sendLineApi(env, "multicast", { to: resolved.recipients.slice(index, index + 500), messages, notificationDisabled: Boolean(input.notificationDisabled) }));
       }
@@ -3340,7 +3363,7 @@ async function sendPushApi(request: Request, env: Env) {
     responses
   };
   await appendPushLog(env, log);
-  return json({ success: !failed.length, data: log, message: dryRun ? "已完成試算，尚未送出" : failed.length ? "部分或全部推播失敗" : "推播已送出" }, failed.length ? 502 : 200);
+  return json({ success: !failed.length, data: log, message: dryRun ? "測試推播已完成" : failed.length ? "部分推播失敗" : "推播已送出" }, failed.length ? 502 : 200);
 }
 
 function unfoldIcs(text: string) {
@@ -3417,7 +3440,7 @@ async function fetchCalendarEvents(request: Request) {
   const icsUrl = `https://calendar.google.com/calendar/ical/${encodeURIComponent(calendarId)}/public/basic.ics`;
   const response = await fetch(icsUrl, { headers: { accept: "text/calendar,text/plain,*/*" } });
   const textBody = await response.text().catch(() => "");
-  if (!response.ok) return json({ success: false, message: `Google Calendar 讀取失敗：HTTP ${response.status}。請確認日曆已設為公開。`, calendarId }, 502);
+  if (!response.ok) return json({ success: false, message: `Google Calendar 讀取失敗：HTTP ${response.status}，請確認日曆已公開。`, calendarId }, 502);
   let events = parseIcsEvents(textBody).sort((a, b) => String(a.start).localeCompare(String(b.start)));
   if (from && !Number.isNaN(from.getTime())) events = events.filter((event) => new Date(event.start).getTime() >= from.getTime());
   if (to && !Number.isNaN(to.getTime())) events = events.filter((event) => new Date(event.start).getTime() <= to.getTime());
@@ -3429,7 +3452,7 @@ async function fetchGoogleMemberSheet(request: Request, env: Env) {
   if (guard) return guard;
   const response = await fetch(googleMemberSheetCsvUrl, { headers: { accept: "text/csv,text/plain,*/*" } });
   const body = await response.text().catch(() => "");
-  if (!response.ok) return json({ success: false, message: `Google 會員表讀取失敗：HTTP ${response.status}` }, 502);
+  if (!response.ok) return json({ success: false, message: `Google 會員資料讀取失敗：HTTP ${response.status}` }, 502);
   return new Response(body, {
     headers: {
       ...headers,
@@ -3466,7 +3489,7 @@ async function handleMonthlyWebhook(request: Request, env: Env, rawBody: string,
       altText: "TDEA 活動查詢",
       template: {
         type: "buttons",
-        text: "請點下方按鈕開啟活動報名查詢與取消頁。",
+        text: "請點下方按鈕查詢或取消活動報名。",
         actions: [{ type: "uri", label: "開啟活動查詢", uri: queryUrl }]
       }
     };
@@ -3480,7 +3503,7 @@ async function handleMonthlyWebhook(request: Request, env: Env, rawBody: string,
       altText: "TDEA 會員 QR",
       template: {
         type: "buttons",
-        text: "請點下方按鈕開啟個人會員 QR，給合作店家掃描扣點。",
+        text: "請點下方按鈕開啟會員 QR，供報到或核銷使用。",
         actions: [{ type: "uri", label: "開啟會員 QR", uri: memberQrUrl }]
       }
     };
@@ -3495,7 +3518,7 @@ async function handleMonthlyWebhook(request: Request, env: Env, rawBody: string,
       template: {
         type: "buttons",
         title: "TDEA 行事曆",
-        text: "查看協會 Google 行事曆與年度活動安排。",
+        text: "請點下方按鈕開啟 TDEA Google 行事曆。",
         actions: [{ type: "uri", label: "開啟行事曆", uri: calendarUrl }]
       }
     };
@@ -3507,14 +3530,19 @@ async function handleMonthlyWebhook(request: Request, env: Env, rawBody: string,
     const items = config.items || [];
     const message = config.enabled && items.some((item) => item.enabled !== false && clean(item.imageUrl))
       ? buildVendorCardFlex(config) as Record<string, unknown>
-      : { type: "text", text: "TDEA廠商列表尚未發布，請稍後再試。" };
+      : { type: "text", text: "TDEA 廠商列表尚未啟用，請稍後再試。" };
     const lineReplies = await Promise.all(vendorCardEvents.map((event) => event.replyToken ? replyToLine(event.replyToken, [message], env) : Promise.resolve({ ok: false, status: 400, message: "Missing replyToken" })));
     return json({ success: true, mode: "vendor-card-menu", matched: [vendorCardKeyword], forwarded: false, lineReplies });
   }
   const config = await readMonthly(env);
   const pages = config.pages || [];
-  const message = config.enabled && pages.length ? buildMonthlyFlex(config) as Record<string, unknown> : { type: "text", text: "TDEA每月活動尚未發布，請稍後再試。" };
-  const lineReplies = await Promise.all(events.map((event) => event.replyToken ? replyToLine(event.replyToken, [message], env) : Promise.resolve({ ok: false, status: 400, message: "Missing replyToken" })));
+  const message = config.enabled && pages.length ? buildMonthlyFlex(config) as Record<string, unknown> : { type: "text", text: "TDEA 每月活動尚未啟用，請稍後再試。" };
+  const lineReplies = await Promise.all(events.map(async (event) => {
+    if (!event.replyToken) return { ok: false, status: 400, message: "Missing replyToken" };
+    const prompt = await monthlyMemberStatusPrompt(event, env);
+    const messages = prompt ? [message, prompt] : [message];
+    return replyToLine(event.replyToken, messages, env);
+  }));
   return json({ success: true, mode: "monthly-activity", matched: [fixedKeyword], forwarded: false, lineReplies });
 }
 
@@ -3522,7 +3550,7 @@ async function monthlyDetail(env: Env, id: string) {
   const config = await readMonthly(env);
   const page = (config.pages || []).find((item) => String(item.id) === id || String(item.activityNo) === id);
   if (!page) return new Response("Not found", { status: 404, headers: { "content-type": "text/plain; charset=utf-8" } });
-  const html = `<!doctype html><html lang="zh-Hant"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${esc(page.detailTitle || "詳細說明")}</title><style>body{margin:0;background:#f4f6f8;color:#111827;font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI","Noto Sans TC",sans-serif}.wrap{max-width:720px;margin:0 auto;padding:22px}.card{background:#fff;border-radius:14px;padding:22px;box-shadow:0 14px 36px rgba(15,23,42,.08)}img{width:100%;border-radius:10px;margin-bottom:16px}.meta{display:inline-flex;margin:0 0 12px;padding:5px 10px;border-radius:999px;background:#eafff1;color:#027a48;font-size:13px;font-weight:800}h1{font-size:24px;margin:0 0 12px}.text{white-space:pre-wrap;line-height:1.7;color:#344054}.btn{display:block;margin-top:18px;padding:13px 16px;border-radius:10px;background:#06c755;color:#fff;text-align:center;text-decoration:none;font-weight:800}</style></head><body><main class="wrap"><section class="card">${page.imageUrl ? `<img src="${esc(page.imageUrl)}" alt="">` : ""}${page.activityNo ? `<div class="meta">${esc(page.activityNo)}</div>` : ""}<h1>${esc(page.detailTitle || "詳細說明")}</h1><div class="text">${esc(page.detailText || "尚未填寫詳細說明。")}</div>${page.formUrl ? `<a class="btn" href="${esc(page.formUrl)}">點我報名</a>` : ""}</section></main></body></html>`;
+  const html = `<!doctype html><html lang="zh-Hant"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${esc(page.detailTitle || "活動詳細說明")}</title><style>body{margin:0;background:#f4f6f8;color:#111827;font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI","Noto Sans TC",sans-serif}.wrap{max-width:720px;margin:0 auto;padding:22px}.card{background:#fff;border-radius:14px;padding:22px;box-shadow:0 14px 36px rgba(15,23,42,.08)}img{width:100%;border-radius:10px;margin-bottom:16px}.meta{display:inline-flex;margin:0 0 12px;padding:5px 10px;border-radius:999px;background:#eafff1;color:#027a48;font-size:13px;font-weight:800}h1{font-size:24px;margin:0 0 12px}.text{white-space:pre-wrap;line-height:1.7;color:#344054}.btn{display:block;margin-top:18px;padding:13px 16px;border-radius:10px;background:#06c755;color:#fff;text-align:center;text-decoration:none;font-weight:800}</style></head><body><main class="wrap"><section class="card">${page.imageUrl ? `<img src="${esc(page.imageUrl)}" alt="">` : ""}${page.activityNo ? `<div class="meta">${esc(page.activityNo)}</div>` : ""}<h1>${esc(page.detailTitle || "活動詳細說明")}</h1><div class="text">${esc(page.detailText || "目前沒有詳細說明。")}</div>${page.formUrl ? `<a class="btn" href="${esc(page.formUrl)}">前往報名</a>` : ""}</section></main></body></html>`;
   return new Response(html, { headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" } });
 }
 
