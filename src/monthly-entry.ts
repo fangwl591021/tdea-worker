@@ -3121,6 +3121,70 @@ async function listAiweMembersPublicApi(request: Request, env: Env) {
   return json({ success: true, data: rows.map(publicAiweMember), total: rows.length });
 }
 
+function normalizeRosterSyncMember(input: Record<string, unknown>, fallbackType = "association") {
+  const rosterType = clean(input.rosterType || fallbackType) === "vendor" ? "vendor" : "association";
+  const memberNo = firstClean(input.rosterMemberNo, input.memberNo, input.member_no, input.user_login).toUpperCase();
+  const name = rosterType === "vendor"
+    ? firstClean(input.rosterName, input.companyName, input.company, input.name)
+    : firstClean(input.rosterName, input.name, input.display_name);
+  return {
+    ...input,
+    rosterType,
+    rosterMemberNo: memberNo,
+    memberNo,
+    rosterName: name,
+    name,
+    companyName: firstClean(input.companyName, input.company, rosterType === "vendor" ? name : ""),
+    phone: firstClean(input.phone, input.mobile, input.tel),
+    email: firstClean(input.email, input.user_email),
+    qualification: firstClean(input.qualification, input.memberQualification, input.status, "Y"),
+    lineUserId: firstClean(input.lineUserId, input.LINE_user_id, input.uid),
+    updatedAt: new Date().toISOString()
+  };
+}
+
+function upsertAiweMemberRows(rows: Array<Record<string, unknown>>, incoming: Array<Record<string, unknown>>) {
+  let inserted = 0;
+  let updated = 0;
+  for (const raw of incoming) {
+    const next = normalizeRosterSyncMember(raw, clean(raw.rosterType) || "association");
+    const memberNo = clean(next.rosterMemberNo || next.memberNo).toUpperCase();
+    if (!memberNo && !clean(next.rosterName || next.name)) continue;
+    const type = clean(next.rosterType) === "vendor" ? "vendor" : "association";
+    const row = rows.find((item) => {
+      const itemType = clean(item.rosterType) === "vendor" ? "vendor" : "association";
+      return itemType === type && rowMatchesMemberNo(item, memberNo);
+    });
+    if (row) {
+      for (const [key, value] of Object.entries(next)) {
+        if (["lineUserId", "LINE_user_id", "uid"].includes(key) && !clean(value)) continue;
+        if (clean(value) || !clean(row[key])) row[key] = value;
+      }
+      updated += 1;
+    } else {
+      rows.unshift({ id: `crm-${type}-${memberNo || crypto.randomUUID()}`, ...next, createdAt: new Date().toISOString() });
+      inserted += 1;
+    }
+  }
+  return { inserted, updated };
+}
+
+async function importAiweMembersApi(request: Request, env: Env) {
+  const guard = await requireAdmin(request, env);
+  if (guard) return guard;
+  if (!env.ASSETS_BUCKET) return json({ success: false, message: "R2 bucket is not configured" }, 503);
+  const input = await request.json().catch(() => ({})) as Record<string, unknown>;
+  const list = Array.isArray(input.members)
+    ? input.members.map(asRecord)
+    : Array.isArray(input.data)
+      ? input.data.map(asRecord)
+      : [asRecord(input.member || input)];
+  const rows = await readAiweMembers(env);
+  const report = upsertAiweMemberRows(rows, list);
+  await writeAiweMembers(env, rows);
+  return json({ success: true, ...report, total: rows.length });
+}
+
 function parseUidBindKeyword(text: string) {
   const raw = clean(text);
   const normalized = normalizeKeyword(raw);
@@ -3142,6 +3206,22 @@ function aiweMemberNo(row: Record<string, unknown>) {
 function rowMatchesMemberNo(row: Record<string, unknown>, memberNo: string) {
   const target = clean(memberNo).toUpperCase();
   return Boolean(target) && [row.rosterMemberNo, row.memberNo, row.user_login].some((value) => clean(value).toUpperCase() === target);
+}
+
+function selectAiweBindRows(rows: Array<Record<string, unknown>>, memberNo: string) {
+  const target = clean(memberNo).toUpperCase();
+  if (!target) return [];
+  const bothExact = rows.filter((row) =>
+    clean(row.rosterMemberNo).toUpperCase() === target &&
+    clean(row.memberNo).toUpperCase() === target
+  );
+  if (bothExact.length) return bothExact.slice(0, 1);
+  const rosterExact = rows.filter((row) => clean(row.rosterMemberNo).toUpperCase() === target);
+  if (rosterExact.length) return rosterExact.slice(0, 1);
+  const memberExact = rows.filter((row) => clean(row.memberNo).toUpperCase() === target);
+  if (memberExact.length) return memberExact.slice(0, 1);
+  const loginExact = rows.filter((row) => clean(row.user_login).toUpperCase() === target);
+  return loginExact.slice(0, 1);
 }
 
 function setAiweRowLineUid(row: Record<string, unknown>, lineUserId: string) {
@@ -3188,7 +3268,7 @@ async function bindLineUidEvents(events: LineEvent[], env: Env) {
       results.push({ success: false, lineUserId, message: "missing-member-no" });
       continue;
     }
-    const matched = rows.filter((row) => rowMatchesMemberNo(row, inferred.memberNo));
+    const matched = selectAiweBindRows(rows, inferred.memberNo);
     if (!matched.length) {
       const message = { type: "text", text: `已取得你的 LINE UID：${lineUserId}\n但查無會員編號 ${inferred.memberNo}，請確認會員編號是否正確。` };
       replies.push(event.replyToken ? await replyToLine(event.replyToken, [message], env) : { ok: false, status: 400, message: "Missing replyToken" });
@@ -3575,6 +3655,7 @@ export default {
 	    if (request.method === "GET" && url.pathname === "/api/admin-access") return listAdminAccessApi(request, env);
 	    if ((request.method === "PUT" || request.method === "POST") && url.pathname === "/api/admin-access") return updateAdminAccessApi(request, env);
 	    if (request.method === "GET" && url.pathname === "/api/aiwe-members-public") return listAiweMembersPublicApi(request, env);
+	    if (request.method === "POST" && url.pathname === "/api/aiwe-members/import") return importAiweMembersApi(request, env);
 	    if (request.method === "GET" && url.pathname === "/api/google-member-sheet") return fetchGoogleMemberSheet(request, env);
 	    if (request.method === "GET" && url.pathname === "/api/monthly-activity") return json({ success: true, data: await readMonthly(env) });
 	    if ((request.method === "PUT" || request.method === "POST") && url.pathname === "/api/monthly-activity") { const guard = await requireAdmin(request, env); if (guard) return guard; if (!env.ASSETS_BUCKET) return json({ success: false, message: "R2 bucket is not configured" }, 503); const config = await request.json().catch(() => ({})) as MonthlyConfig; await writeMonthly(env, config); return json({ success: true, data: await readMonthly(env), flex: buildMonthlyFlex(config) }); }

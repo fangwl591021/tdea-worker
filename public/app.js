@@ -68,6 +68,27 @@
     return `<a class="link" href="${esc(url)}" target="_blank" rel="noopener noreferrer">${esc(url)}</a>`;
   }
   function save() { localStorage.setItem(key, JSON.stringify(state.data)); }
+  function adminHeaders(extra = {}) {
+    const email = localStorage.getItem("tdea-admin-email") || sessionStorage.getItem("tdea-admin-email") || "";
+    return { ...extra, ...(email ? { "x-admin-email": email } : {}) };
+  }
+  async function syncRosterMemberToWorker(type, item) {
+    if (!item || (type !== "association" && type !== "vendor")) return;
+    try {
+      const member = {
+        ...item,
+        rosterType: type,
+        rosterMemberNo: item.memberNo || item.rosterMemberNo || "",
+        rosterName: type === "vendor" ? (item.companyName || item.name || "") : (item.name || item.companyName || ""),
+        lineUserId: item.lineUserId || item.LINE_user_id || item.uid || ""
+      };
+      await fetch(api + "/api/aiwe-members/import", {
+        method: "POST",
+        headers: adminHeaders({ "content-type": "application/json" }),
+        body: JSON.stringify({ source: "crm-editor", members: [member] })
+      });
+    } catch (_) {}
+  }
   function deletedActivityKeys() {
     if (!Array.isArray(state.data.deletedActivityKeys)) state.data.deletedActivityKeys = [];
     return state.data.deletedActivityKeys;
@@ -856,7 +877,7 @@
     });
     const af = document.querySelector("#activity-form"); if (af) af.onsubmit = e => { e.preventDefault(); const d = Object.fromEntries(new FormData(af)); const templateMode = d.templateMode || "custom"; const registrationMode = d.registrationMode || (templateMode === "mode1_vendor_visit" ? "member_login" : "form"); state.data.activities.unshift({ id: uid(), name: d.name.trim(), templateMode, type: d.type, typeLabel: formTypeLabel(d), courseTime: d.courseTime, deadline: d.deadline, capacity: Number(d.capacity || 0), checkinPoints: Number(d.checkinPoints || 0), feePoints: Number(d.feePoints || 0), registrationMode, detailText: d.detailText || "", reg: 0, check: 0, status: d.status, formUrl: "" }); save(); state.view = "dashboard"; render(); toast("活動已建立"); };
     const ea = document.querySelector("#drawer-activity"); if (ea) ea.onsubmit = e => { e.preventDefault(); const d = Object.fromEntries(new FormData(ea)); const x = state.data.activities.find(r => r.id === d.id); if (x) Object.assign(x, { name: d.name, templateMode: d.templateMode || x.templateMode || "custom", type: d.type, typeLabel: formTypeLabel(d), courseTime: d.courseTime, deadline: d.deadline, capacity: Number(d.capacity || 0), checkinPoints: Number(d.checkinPoints || 0), feePoints: Number(d.feePoints || 0), registrationMode: d.registrationMode || "form", reg: Number(d.reg || 0), check: Number(d.check || 0), status: d.status, formUrl: d.formUrl }); state.drawer = ""; save(); render(); toast("活動已儲存"); };
-    const mf = document.querySelector("#drawer-member"); if (mf) mf.onsubmit = e => { e.preventDefault(); const type = mf.dataset.type; const d = Object.fromEntries(new FormData(mf)); const rows = state.data[type]; const old = rows.find(r => r.id === d.id); const item = { ...d, id: d.id || uid() }; old ? Object.assign(old, item) : rows.unshift(item); state.drawer = ""; save(); render(); toast("名冊已儲存"); };
+    const mf = document.querySelector("#drawer-member"); if (mf) mf.onsubmit = e => { e.preventDefault(); const type = mf.dataset.type; const d = Object.fromEntries(new FormData(mf)); const rows = state.data[type]; const old = rows.find(r => r.id === d.id); const item = { ...d, id: d.id || uid() }; old ? Object.assign(old, item) : rows.unshift(item); state.drawer = ""; save(); syncRosterMemberToWorker(type, item); render(); toast("名冊已儲存"); };
     const im = document.querySelector("#import-form"); if (im) im.onsubmit = e => { e.preventDefault(); const d = Object.fromEntries(new FormData(im)); const count = importRows(im.dataset.type, d.csv || ""); state.drawer = ""; render(); toast(`已導入 ${count} 筆資料`); };
     const loadRoster = document.querySelector("[data-load-roster]"); if (loadRoster) loadRoster.onclick = () => loadRosterSeed(true);
     const worker = document.querySelector("[data-worker]"); if (worker) worker.onclick = async () => { try { const r = await fetch(api + "/api/activities"); const j = await r.json(); toast(j.success ? "Worker API 連線正常" : "Worker API 回應異常"); } catch (_) { toast("Worker API 無法連線"); } };
