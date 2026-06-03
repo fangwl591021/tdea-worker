@@ -51,6 +51,7 @@ const queryKeyword = "TDEA活動查詢";
 const memberQrKeyword = "TDEA會員QR";
 const calendarKeyword = "TDEA行事曆";
 const uidBindKeyword = "UID";
+const memberCheckinKeyword = "會員報到";
 const lineActivityCreateKeyword = "TDEA建立活動";
 const lineActivityCreateAliases = ["TDEA新增活動", "TDEA活動上稿", "TDEA製作活動"];
 const defaultLiffBase = "https://liff.line.me/2005868456-2jmxqyFU?monthlyDetail={id}";
@@ -3124,8 +3125,13 @@ function parseUidBindKeyword(text: string) {
   const raw = clean(text);
   const normalized = normalizeKeyword(raw);
   if (normalized === uidBindKeyword) return { active: true, memberNo: "" };
-  if (!normalized.startsWith(uidBindKeyword)) return { active: false, memberNo: "" };
-  const suffix = raw.replace(/^UID\s*[:：]?\s*/i, "").trim();
+  if (normalized === normalizeKeyword(memberCheckinKeyword)) return { active: true, memberNo: "" };
+  const isUidBind = normalized.startsWith(uidBindKeyword);
+  const isMemberCheckin = normalized.startsWith(normalizeKeyword(memberCheckinKeyword));
+  if (!isUidBind && !isMemberCheckin) return { active: false, memberNo: "" };
+  const suffix = isMemberCheckin
+    ? raw.replace(/^會員報到\s*[+＋:：]?\s*/i, "").trim()
+    : raw.replace(/^UID\s*[+＋:：]?\s*/i, "").trim();
   return suffix ? { active: true, memberNo: clean(suffix).toUpperCase() } : { active: false, memberNo: "" };
 }
 
@@ -3175,7 +3181,7 @@ async function bindLineUidEvents(events: LineEvent[], env: Env) {
     }
     const inferred = parsed.memberNo ? { memberNo: parsed.memberNo, reason: "input" } : inferUidBindMemberNo(rows, lineUserId, env);
     if (!inferred.memberNo) {
-      const message = { type: "text", text: `已取得你的 LINE UID：${lineUserId}\n但無法自動判斷會員編號，請輸入 UID+會員編號，例如：UID+Z1160215。` };
+      const message = { type: "text", text: `已取得你的 LINE UID：${lineUserId}\n請輸入「會員報到+會員編號」完成綁定，例如：會員報到+Z1160603。` };
       replies.push(event.replyToken ? await replyToLine(event.replyToken, [message], env) : { ok: false, status: 400, message: "Missing replyToken" });
       results.push({ success: false, lineUserId, message: "missing-member-no" });
       continue;
