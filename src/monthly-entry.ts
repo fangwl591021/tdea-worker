@@ -3179,7 +3179,11 @@ async function bindLineUidEvents(events: LineEvent[], env: Env) {
         ? inferUidBindMemberNo(rows, lineUserId, env)
         : { memberNo: "", reason: "" };
     if (!inferred.memberNo) {
-      const message = { type: "text", text: `已取得你的 LINE UID：${lineUserId}\n請輸入「會員報到+會員編號」完成綁定，例如：會員報到+Z1160603。` };
+      const message = {
+        type: "text",
+        text: "請輸入會員編號完成 LINE 綁定。\n格式：會員報到+會員編號\n範例：會員報到+Z1160603",
+        quickReply: quickReply(["會員報到+Z1160603", fixedKeyword])
+      };
       replies.push(event.replyToken ? await replyToLine(event.replyToken, [message], env) : { ok: false, status: 400, message: "Missing replyToken" });
       results.push({ success: false, lineUserId, message: "missing-member-no" });
       continue;
