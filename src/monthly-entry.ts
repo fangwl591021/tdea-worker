@@ -21,6 +21,8 @@ type RedeemTransaction = { id: string; lineUserId: string; amount?: number; poin
 type RedeemRequest = { id: string; token: string; vendorId?: string; vendorName: string; amount?: number; points: number; maxPoints?: number; pointRate?: number; mode?: RedeemMode; note?: string; status: "active" | "pending" | "used" | "expired" | "closed"; createdAt: string; startsAt?: string; expiresAt: string; usedAt?: string; lineUserId?: string; pointBalance?: number; pointResult?: unknown; transactions?: RedeemTransaction[] };
 type PushTarget = { kind?: string; memberNoPrefix?: string; rosterType?: string; qualification?: string; manualUids?: string };
 type PushLog = { id: string; createdAt: string; mode: string; target: PushTarget; count: number; messageType: string; title?: string; dryRun?: boolean; responses?: unknown[]; error?: string };
+type PersonalMessageAttachment = { name: string; url: string; type?: string; size?: number };
+type PersonalMessageRecord = { id: string; createdAt: string; updatedAt?: string; recipientMemberNo?: string; recipientLineUserId?: string; recipientName?: string; sender?: string; subject: string; body: string; attachments?: PersonalMessageAttachment[]; status: "active" | "deleted"; readAt?: string };
 type RichMenuBounds = { x: number; y: number; width: number; height: number };
 type RichMenuArea = { id?: string; label?: string; bounds: RichMenuBounds; action: Record<string, unknown> };
 type RichMenuDeployment = { id: string; richMenuId: string; createdAt: string; name: string; chatBarText: string; areaCount: number; imageUrl?: string; setDefault: boolean; aliasId?: string; lineDefaultRichMenuId?: string; verified?: boolean };
@@ -36,6 +38,7 @@ const registrationSummaryKey = "registrations/summary.json";
 const redeemListKey = "redeem/records.json";
 const pointLedgerKey = "points/ledger.json";
 const pushLogKey = "push/logs.json";
+const personalMessagesKey = "personal-messages/messages.json";
 const richMenuKey = "line/rich-menu.json";
 const adminAccessKey = "line/admin-access.json";
 const aiweMembersKey = "aiwe/members.json";
@@ -50,6 +53,7 @@ const vendorCardKeyword = "TDEA廠商列表";
 const queryKeyword = "TDEA活動查詢";
 const memberQrKeyword = "TDEA會員QR";
 const calendarKeyword = "TDEA行事曆";
+const personalMessageKeyword = "TDEA個人訊息";
 const uidBindKeyword = "UID";
 const memberCheckinKeyword = "會員報到";
 const lineActivityCreateKeyword = "TDEA建立活動";
@@ -2155,6 +2159,161 @@ async function replyToLine(replyToken: string, messages: Array<Record<string, un
 async function pushToLine(to: string, messages: Array<Record<string, unknown>>, env: Env) { const token = env.LINE_CHANNEL_ACCESS_TOKEN?.trim(); if (!token) return { ok: false, status: 503, message: "LINE token is not configured" }; const response = await fetch("https://api.line.me/v2/bot/message/push", { method: "POST", headers: { authorization: `Bearer ${token}`, "content-type": "application/json" }, body: JSON.stringify({ to, messages }) }); return { ok: response.ok, status: response.status, body: await response.text().catch(() => "") }; }
 function rebuildRequest(request: Request, rawBody: string) { return new Request(request.url, { method: request.method, headers: request.headers, body: rawBody }); }
 
+function personalMessagesUrl() {
+  return `${publicLiffUrl}?personalMessages=1`;
+}
+
+async function readPersonalMessages(env: Env): Promise<PersonalMessageRecord[]> {
+  if (!env.ASSETS_BUCKET) return [];
+  const object = await env.ASSETS_BUCKET.get(personalMessagesKey);
+  const rows = object ? await object.json().catch(() => []) : [];
+  return Array.isArray(rows)
+    ? rows.map((row) => normalizePersonalMessage(asRecord(row))).filter(Boolean) as PersonalMessageRecord[]
+    : [];
+}
+
+async function writePersonalMessages(env: Env, rows: PersonalMessageRecord[]) {
+  if (!env.ASSETS_BUCKET) return false;
+  await env.ASSETS_BUCKET.put(personalMessagesKey, JSON.stringify(rows.slice(0, 1000), null, 2), {
+    httpMetadata: { contentType: "application/json; charset=utf-8", cacheControl: "no-store" }
+  });
+  return true;
+}
+
+function normalizePersonalMessage(input: Record<string, unknown>): PersonalMessageRecord | null {
+  const subject = firstClean(input.subject, input.title, "TDEA 個人訊息");
+  const body = firstClean(input.body, input.message, input.content);
+  const attachments = Array.isArray(input.attachments)
+    ? input.attachments.map(asRecord).map((item) => ({
+        name: firstClean(item.name, item.filename, "附件"),
+        url: firstClean(item.url, item.href),
+        type: firstClean(item.type, item.contentType),
+        size: numberValue(item.size)
+      })).filter((item) => clean(item.url))
+    : [];
+  if (!body && !attachments.length) return null;
+  return {
+    id: firstClean(input.id, `pm-${Date.now()}-${codeToken(5)}`),
+    createdAt: firstClean(input.createdAt, new Date().toISOString()),
+    updatedAt: firstClean(input.updatedAt),
+    recipientMemberNo: firstClean(input.recipientMemberNo, input.memberNo, input.rosterMemberNo).toUpperCase(),
+    recipientLineUserId: firstClean(input.recipientLineUserId, input.lineUserId, input.uid, input.LINE_user_id),
+    recipientName: firstClean(input.recipientName, input.name),
+    sender: firstClean(input.sender, input.senderEmail, input.adminEmail),
+    subject,
+    body,
+    attachments,
+    status: clean(input.status) === "deleted" ? "deleted" : "active",
+    readAt: firstClean(input.readAt)
+  };
+}
+
+async function resolvePersonalMessageRecipient(env: Env, input: Record<string, unknown>) {
+  const memberNo = firstClean(input.recipientMemberNo, input.memberNo, input.rosterMemberNo).toUpperCase();
+  const lineUserId = firstClean(input.recipientLineUserId, input.lineUserId, input.uid, input.LINE_user_id);
+  const name = firstClean(input.recipientName, input.name);
+  const rows = await readAiweMembers(env);
+  const matched = rows.find((row) =>
+    (memberNo && rowMatchesMemberNo(row, memberNo)) ||
+    (lineUserId && memberLineUid(row).toLowerCase() === lineUserId.toLowerCase())
+  );
+  if (!matched) return { memberNo, lineUserId, name };
+  return {
+    memberNo: memberNo || aiweMemberNo(matched),
+    lineUserId: lineUserId || memberLineUid(matched),
+    name: name || publicAiweMember(matched).rosterName
+  };
+}
+
+async function listPersonalMessagesApi(request: Request, env: Env) {
+  const url = new URL(request.url);
+  const lineUserId = clean(url.searchParams.get("lineUserId"));
+  if (!lineUserId) return json({ success: false, message: "Missing lineUserId" }, 400);
+  const rows = await readAiweMembers(env);
+  const lowerUid = lineUserId.toLowerCase();
+  const matchedMembers = rows.filter((row) => memberLineUid(row).toLowerCase() === lowerUid);
+  const memberNos = new Set(matchedMembers.map(aiweMemberNo).filter(Boolean));
+  const messages = (await readPersonalMessages(env)).filter((item) => {
+    if (item.status !== "active") return false;
+    if (clean(item.recipientLineUserId).toLowerCase() === lowerUid) return true;
+    return Boolean(item.recipientMemberNo && memberNos.has(clean(item.recipientMemberNo).toUpperCase()));
+  });
+  return json({ success: true, member: matchedMembers[0] ? publicAiweMember(matchedMembers[0]) : { lineUserId }, data: messages });
+}
+
+async function listPersonalMessagesAdminApi(request: Request, env: Env) {
+  const guard = await requireAdmin(request, env);
+  if (guard) return guard;
+  const url = new URL(request.url);
+  const memberNo = clean(url.searchParams.get("memberNo")).toUpperCase();
+  const lineUserId = clean(url.searchParams.get("lineUserId")).toLowerCase();
+  const messages = (await readPersonalMessages(env)).filter((item) => {
+    if (memberNo && clean(item.recipientMemberNo).toUpperCase() !== memberNo) return false;
+    if (lineUserId && clean(item.recipientLineUserId).toLowerCase() !== lineUserId) return false;
+    return item.status !== "deleted";
+  });
+  return json({ success: true, data: messages });
+}
+
+async function createPersonalMessageApi(request: Request, env: Env) {
+  const guard = await requireAdmin(request, env);
+  if (guard) return guard;
+  if (!env.ASSETS_BUCKET) return json({ success: false, message: "R2 bucket is not configured" }, 503);
+  const input = await request.json().catch(() => ({})) as Record<string, unknown>;
+  const resolved = await resolvePersonalMessageRecipient(env, input);
+  const normalized = normalizePersonalMessage({
+    ...input,
+    recipientMemberNo: resolved.memberNo,
+    recipientLineUserId: resolved.lineUserId,
+    recipientName: resolved.name,
+    sender: adminEmailFromRequest(request) || firstClean(input.sender)
+  });
+  if (!normalized) return json({ success: false, message: "請輸入訊息內容或上傳附件。" }, 400);
+  if (!normalized.recipientMemberNo && !normalized.recipientLineUserId) return json({ success: false, message: "缺少收件人會員編號或 LINE UID。" }, 400);
+  const rows = await readPersonalMessages(env);
+  rows.unshift(normalized);
+  await writePersonalMessages(env, rows);
+  const notice = {
+    type: "template",
+    altText: "TDEA 個人訊息",
+    template: {
+      type: "buttons",
+      title: "TDEA 個人訊息",
+      text: `你有一則新訊息：${normalized.subject}`.slice(0, 160),
+      actions: [{ type: "uri", label: "查看訊息", uri: personalMessagesUrl() }]
+    }
+  };
+  const pushResult = normalized.recipientLineUserId ? await pushToLine(normalized.recipientLineUserId, [notice], env) : null;
+  return json({ success: true, data: normalized, messageUrl: personalMessagesUrl(), pushResult });
+}
+
+function safeUploadFileName(value: string) {
+  return clean(value).replace(/[\\/:*?"<>|#%{}]/g, "_").slice(0, 120) || "file";
+}
+
+async function uploadPersonalMessageFileApi(request: Request, env: Env) {
+  const guard = await requireAdmin(request, env);
+  if (guard) return guard;
+  if (!env.ASSETS_BUCKET) return json({ success: false, message: "R2 bucket is not configured" }, 503);
+  const form = await request.formData().catch(() => null);
+  const file = form?.get("file");
+  if (!(file instanceof File)) return json({ success: false, message: "Missing file" }, 400);
+  const memberNo = safeUploadFileName(clean(form?.get("memberNo") || "unknown").toUpperCase());
+  const key = `personal-messages/files/${memberNo}/${Date.now()}-${crypto.randomUUID()}-${safeUploadFileName(file.name)}`;
+  await env.ASSETS_BUCKET.put(key, await file.arrayBuffer(), {
+    httpMetadata: { contentType: file.type || "application/octet-stream", cacheControl: "public, max-age=31536000" }
+  });
+  return json({
+    success: true,
+    data: {
+      name: file.name || "附件",
+      url: `${workerBaseUrl}/api/uploads/${key.split("/").map(encodeURIComponent).join("/")}`,
+      type: file.type || "application/octet-stream",
+      size: file.size
+    }
+  });
+}
+
 async function forwardToMotherWebhook(request: Request, env: Env, rawBody: string) {
   const target = clean(env.FORWARD_WEBHOOK_URL);
   if (!target) return json({ success: false, forwarded: false, message: "FORWARD_WEBHOOK_URL is not configured" }, 503);
@@ -3559,13 +3718,14 @@ async function handleMonthlyWebhook(request: Request, env: Env, rawBody: string,
   const queryEvents = allEvents.filter((event) => normalizeKeyword(extractTriggerText(event)) === normalizeKeyword(queryKeyword));
   const memberQrEvents = allEvents.filter((event) => normalizeKeyword(extractTriggerText(event)) === normalizeKeyword(memberQrKeyword));
   const calendarEvents = allEvents.filter((event) => normalizeKeyword(extractTriggerText(event)) === normalizeKeyword(calendarKeyword));
+  const personalMessageEvents = allEvents.filter((event) => normalizeKeyword(extractTriggerText(event)) === normalizeKeyword(personalMessageKeyword));
   const uidBindEvents = allEvents.filter((event) => parseUidBindKeyword(extractTriggerText(event)).active);
   const vendorCardEvents = allEvents.filter((event) => normalizeKeyword(extractTriggerText(event)) === normalizeKeyword(vendorCardKeyword));
   const pointEvents = allEvents
     .map((event) => ({ event, query: parseMotherPointKeyword(extractTriggerText(event)) }))
     .filter((match): match is { event: LineEvent; query: { uid: string } } => Boolean(match.query));
   const events = allEvents.filter((event) => normalizeKeyword(extractTriggerText(event)) === normalizeKeyword(fixedKeyword));
-  if (!queryEvents.length && !memberQrEvents.length && !calendarEvents.length && !uidBindEvents.length && !vendorCardEvents.length && !pointEvents.length && !events.length) return null;
+  if (!queryEvents.length && !memberQrEvents.length && !calendarEvents.length && !personalMessageEvents.length && !uidBindEvents.length && !vendorCardEvents.length && !pointEvents.length && !events.length) return null;
   const signature = request.headers.get("x-line-signature");
   if (!await verifyLineSignature(rawBody, signature, env.LINE_CHANNEL_SECRET)) return new Response("Invalid Signature", { status: 403, headers });
   if (uidBindEvents.length) return bindLineUidEvents(uidBindEvents, env);
@@ -3613,6 +3773,21 @@ async function handleMonthlyWebhook(request: Request, env: Env, rawBody: string,
     const lineReplies = await Promise.all(calendarEvents.map((event) => event.replyToken ? replyToLine(event.replyToken, [calendarMessage], env) : Promise.resolve({ ok: false, status: 400, message: "Missing replyToken" })));
     return json({ success: true, mode: "calendar", matched: [calendarKeyword], forwarded: false, lineReplies });
   }
+  if (personalMessageEvents.length) {
+    const messageUrl = personalMessagesUrl();
+    const personalMessage = {
+      type: "template",
+      altText: "TDEA 個人訊息",
+      template: {
+        type: "buttons",
+        title: "TDEA 個人訊息",
+        text: "請點下方按鈕查看協會傳給你的個人訊息與附件。",
+        actions: [{ type: "uri", label: "查看個人訊息", uri: messageUrl }]
+      }
+    };
+    const lineReplies = await Promise.all(personalMessageEvents.map((event) => event.replyToken ? replyToLine(event.replyToken, [personalMessage], env) : Promise.resolve({ ok: false, status: 400, message: "Missing replyToken" })));
+    return json({ success: true, mode: "personal-message", matched: [personalMessageKeyword], forwarded: false, lineReplies });
+  }
   if (vendorCardEvents.length) {
     const config = await readVendorCardConfig(env);
     const items = config.items || [];
@@ -3657,6 +3832,10 @@ export default {
 	    if (request.method === "GET" && url.pathname === "/api/aiwe-members-public") return listAiweMembersPublicApi(request, env);
 	    if (request.method === "POST" && url.pathname === "/api/aiwe-members/import") return importAiweMembersApi(request, env);
 	    if (request.method === "GET" && url.pathname === "/api/google-member-sheet") return fetchGoogleMemberSheet(request, env);
+	    if (request.method === "GET" && url.pathname === "/api/personal-messages") return listPersonalMessagesApi(request, env);
+	    if (request.method === "GET" && url.pathname === "/api/personal-messages/admin") return listPersonalMessagesAdminApi(request, env);
+	    if (request.method === "POST" && url.pathname === "/api/personal-messages") return createPersonalMessageApi(request, env);
+	    if (request.method === "POST" && url.pathname === "/api/personal-messages/upload") return uploadPersonalMessageFileApi(request, env);
 	    if (request.method === "GET" && url.pathname === "/api/monthly-activity") return json({ success: true, data: await readMonthly(env) });
 	    if ((request.method === "PUT" || request.method === "POST") && url.pathname === "/api/monthly-activity") { const guard = await requireAdmin(request, env); if (guard) return guard; if (!env.ASSETS_BUCKET) return json({ success: false, message: "R2 bucket is not configured" }, 503); const config = await request.json().catch(() => ({})) as MonthlyConfig; await writeMonthly(env, config); return json({ success: true, data: await readMonthly(env), flex: buildMonthlyFlex(config) }); }
 	    if (request.method === "GET" && url.pathname === "/api/monthly-activity/flex") { const config = await readMonthly(env); return json({ success: true, flex: buildMonthlyFlex(config), data: config }); }

@@ -152,6 +152,7 @@
       "redeem",
       "redeemSession",
       "monthlyDetail",
+      "personalMessages",
       "close"
     ];
     const bags = [new URLSearchParams(location.search)];
