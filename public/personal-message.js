@@ -28,7 +28,6 @@
       sessionStorage.getItem("tdea-admin-email") ||
       localStorage.getItem("adminEmail") ||
       sessionStorage.getItem("adminEmail") ||
-      prompt("請輸入管理者 Email") ||
       "";
   }
 
@@ -153,6 +152,7 @@
       button.disabled = true;
       button.textContent = "送出中...";
       try {
+        if (!adminEmail().trim()) throw new Error("尚未登入管理者，請先完成後台管理者驗證。");
         const files = Array.from(form.elements.files.files || []);
         const attachments = [];
         for (const file of files) {
