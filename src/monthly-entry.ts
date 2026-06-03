@@ -3156,12 +3156,6 @@ function inferUidBindMemberNo(rows: Array<Record<string, unknown>>, lineUserId: 
   const uidMatched = rows.filter((row) => memberLineUid(row).toLowerCase() === lowerUid);
   const uidMemberNos = Array.from(new Set(uidMatched.map(aiweMemberNo).filter(Boolean)));
   if (uidMemberNos.length === 1) return { memberNo: uidMemberNos[0], reason: "uid" };
-
-  const adminEmails = staticAdminEmails(env);
-  const emailMatched = rows.filter((row) => adminEmails.includes(clean(row.email).toLowerCase()));
-  const emailMemberNos = Array.from(new Set(emailMatched.map(aiweMemberNo).filter(Boolean)));
-  if (emailMemberNos.length === 1) return { memberNo: emailMemberNos[0], reason: "admin-email" };
-
   return { memberNo: "", reason: "" };
 }
 
@@ -3179,7 +3173,11 @@ async function bindLineUidEvents(events: LineEvent[], env: Env) {
       results.push({ success: false, message: message.text });
       continue;
     }
-    const inferred = parsed.memberNo ? { memberNo: parsed.memberNo, reason: "input" } : inferUidBindMemberNo(rows, lineUserId, env);
+    const inferred = parsed.memberNo
+      ? { memberNo: parsed.memberNo, reason: "input" }
+      : normalizeKeyword(extractTriggerText(event)) === uidBindKeyword
+        ? inferUidBindMemberNo(rows, lineUserId, env)
+        : { memberNo: "", reason: "" };
     if (!inferred.memberNo) {
       const message = { type: "text", text: `已取得你的 LINE UID：${lineUserId}\n請輸入「會員報到+會員編號」完成綁定，例如：會員報到+Z1160603。` };
       replies.push(event.replyToken ? await replyToLine(event.replyToken, [message], env) : { ok: false, status: 400, message: "Missing replyToken" });
