@@ -155,7 +155,8 @@
 
     for (const row of bodyRows) {
       if (isNonRosterDomRow(row)) {
-        row.remove();
+        row.hidden = true;
+        row.dataset.nonRosterHidden = "1";
         continue;
       }
       const memberNo = normalize(row.children[0]?.textContent);

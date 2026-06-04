@@ -376,7 +376,8 @@
 
     for (const row of table.querySelectorAll("tbody tr")) {
       if (isNonRosterDomRow(row)) {
-        row.remove();
+        row.hidden = true;
+        row.dataset.nonRosterHidden = "1";
         continue;
       }
       const memberNo = normalize(row.children[0]?.textContent);

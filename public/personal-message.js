@@ -207,7 +207,8 @@
       if (!hasOperation || !hasMemberNo) return;
       table.querySelectorAll("tbody tr").forEach((row) => {
         if (isNonRosterDomRow(row)) {
-          row.remove();
+          row.hidden = true;
+          row.dataset.nonRosterHidden = "1";
           return;
         }
         if (row.dataset.pmReady) return;
