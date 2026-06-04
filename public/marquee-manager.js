@@ -22,7 +22,7 @@
       title: "TDEA 跑馬燈",
       imageUrl: "",
       left: blankButton("左側簽到"),
-      right: blankButton("右側簽到")
+      right: { ...blankButton("查詢點數"), eventName: "TDEA 跑馬燈 查詢點數", eventContent: "查詢母站點數", points: 1 }
     };
   }
 
@@ -109,6 +109,16 @@
 
   function buttonFields(side, button) {
     const title = side === "left" ? "左側按鈕" : "右側按鈕";
+    if (side === "right") {
+      return `
+        <div class="marquee-button-card">
+          <h3 style="margin:0">${title}</h3>
+          <label style="display:inline-flex;gap:8px;align-items:center;font-weight:800"><input type="checkbox" data-marquee-button="${side}" data-field="enabled" ${button.enabled !== false ? "checked" : ""}> 啟用</label>
+          <div class="field"><label>按鈕文字</label><input data-marquee-button="${side}" data-field="label" value="${esc(button.label || "查詢點數")}"></div>
+          <div class="muted">右側按鈕固定用途：查詢母站點數，不寫入贈點。</div>
+        </div>
+      `;
+    }
     return `
       <div class="marquee-button-card">
         <h3 style="margin:0">${title}</h3>
@@ -151,12 +161,12 @@
           <div class="marquee-square">${config.imageUrl ? `<img src="${esc(config.imageUrl)}" alt="">` : "<span>尚未上傳圖片</span>"}</div>
           <div class="marquee-preview-buttons">
             <button type="button">${esc(config.left?.label || "左側簽到")}</button>
-            <button type="button">${esc(config.right?.label || "右側簽到")}</button>
+            <button type="button">${esc(config.right?.label || "查詢點數")}</button>
           </div>
         </aside>
         <section class="panel" style="grid-column:1/-1">
           <div class="panel-head"><h2 class="panel-title">按鈕贈點設定</h2></div>
-          <div class="marquee-form"><div class="marquee-button-grid">${buttonFields("left", config.left || blankButton("左側簽到"))}${buttonFields("right", config.right || blankButton("右側簽到"))}</div></div>
+          <div class="marquee-form"><div class="marquee-button-grid">${buttonFields("left", config.left || blankButton("左側簽到"))}${buttonFields("right", config.right || blankButton("查詢點數"))}</div></div>
         </section>
       </div>
       <div class="toast" id="marquee-toast"></div>

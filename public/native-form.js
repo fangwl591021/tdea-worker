@@ -589,32 +589,36 @@
       <h1 class="nf-title">${esc(config.title || "TDEA 跑馬燈")}</h1>
       <div class="nf-marquee-square">${config.imageUrl ? `<img src="${esc(config.imageUrl)}" alt="">` : "<span>尚未設定圖片</span>"}</div>
       <div class="nf-marquee-buttons">
-        <button class="nf-btn primary" data-marquee-side="left" ${left.enabled === false ? "disabled" : ""}>${esc(left.label || "左側簽到")}</button>
-        <button class="nf-btn primary" data-marquee-side="right" ${right.enabled === false ? "disabled" : ""}>${esc(right.label || "右側簽到")}</button>
+        <button class="nf-btn primary" data-marquee-action="reward" ${left.enabled === false ? "disabled" : ""}>${esc(left.label || "左側簽到")}</button>
+        <button class="nf-btn primary" data-marquee-action="points" ${right.enabled === false ? "disabled" : ""}>${esc(right.label || "查詢點數")}</button>
       </div>
       <div class="nf-ok" data-marquee-result hidden></div>
     </div></section>`);
-    app.querySelectorAll("[data-marquee-side]").forEach((button) => {
+    app.querySelectorAll("[data-marquee-action]").forEach((button) => {
       button.addEventListener("click", async () => {
-        const side = button.dataset.marqueeSide;
+        const action = button.dataset.marqueeAction;
         const label = button.textContent;
         button.disabled = true;
         button.textContent = "送出中...";
-        const rewardResponse = await fetch(`${api}/api/marquee/reward`, {
+        const endpoint = action === "points" ? "/api/marquee/points" : "/api/marquee/reward";
+        const actionResponse = await fetch(`${api}${endpoint}`, {
           method: "POST",
           headers: { "content-type": "application/json" },
-          body: JSON.stringify({ lineUserId: uid, side })
+          body: JSON.stringify({ lineUserId: uid })
         });
-        const rewardResult = await rewardResponse.json().catch(() => ({}));
+        const actionResult = await actionResponse.json().catch(() => ({}));
         button.disabled = false;
         button.textContent = label;
-        if (!rewardResponse.ok || !rewardResult.success) return alert(rewardResult.message || "贈點失敗");
+        if (!actionResponse.ok || !actionResult.success) return alert(actionResult.message || (action === "points" ? "點數查詢失敗" : "贈點失敗"));
         const resultNode = app.querySelector("[data-marquee-result]");
+        const message = action === "points"
+          ? `目前點數餘額：${actionResult.balance ?? 0}`
+          : `已完成簽到贈點：+${actionResult.points || 1}`;
         if (resultNode) {
           resultNode.hidden = false;
-          resultNode.textContent = `已完成簽到贈點：+${rewardResult.points || 1}`;
+          resultNode.textContent = message;
         }
-        alert(`已完成簽到贈點：+${rewardResult.points || 1}`);
+        alert(message);
       });
     });
   }

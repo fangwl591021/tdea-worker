@@ -221,6 +221,8 @@ function normalizeMarqueeButton(input: MarqueeButtonConfig | undefined, fallback
 
 function normalizeMarqueeConfig(config: MarqueeConfig | undefined): MarqueeConfig {
   const title = clean(config?.title || "TDEA 跑馬燈");
+  const right = normalizeMarqueeButton(config?.right, "查詢點數", `${title} 查詢點數`);
+  right.eventContent = clean(config?.right?.eventContent || "查詢母站點數") || "查詢母站點數";
   return {
     enabled: config?.enabled !== false,
     keyword: marqueeKeyword,
@@ -228,7 +230,7 @@ function normalizeMarqueeConfig(config: MarqueeConfig | undefined): MarqueeConfi
     title,
     imageUrl: clean(config?.imageUrl),
     left: normalizeMarqueeButton(config?.left, "左側簽到", `${title} 左側簽到`),
-    right: normalizeMarqueeButton(config?.right, "右側簽到", `${title} 右側簽到`),
+    right,
     updatedAt: config?.updatedAt
   };
 }
@@ -1239,7 +1241,7 @@ async function updateLocalPoints(env: Env, lineUserId: string, amount: number, r
 async function rewardMarqueePoint(request: Request, env: Env) {
   const input = await request.json().catch(() => ({})) as Record<string, unknown>;
   const lineUserId = firstClean(input.lineUserId, input.lineUid, input.uid, input.LINE_user_id, input.line_user_id);
-  const side = clean(input.side).toLowerCase() === "right" ? "right" : "left";
+  const side = "left";
   if (!lineUserId) return json({ success: false, message: "Missing LINE UID" }, 400);
   const config = await readMarqueeConfig(env);
   if (config.enabled === false) return json({ success: false, message: "跑馬燈尚未啟用" }, 403);
@@ -1254,6 +1256,23 @@ async function rewardMarqueePoint(request: Request, env: Env) {
     referenceId: `${side}:${eventName}`
   });
   return json({ success: Boolean((result as Record<string, unknown>).success), side, label, points, eventName, eventContent, result });
+}
+
+async function queryMarqueePoints(request: Request, env: Env) {
+  const input = await request.json().catch(() => ({})) as Record<string, unknown>;
+  const lineUserId = firstClean(input.lineUserId, input.lineUid, input.uid, input.LINE_user_id, input.line_user_id);
+  if (!lineUserId) return json({ success: false, message: "Missing LINE UID" }, 400);
+  const config = await readMarqueeConfig(env);
+  if (config.enabled === false) return json({ success: false, message: "跑馬燈尚未啟用" }, 403);
+  if (config.right?.enabled === false) return json({ success: false, message: "查詢按鈕尚未啟用" }, 403);
+  const result = await queryPointBalance(env, lineUserId) as Record<string, unknown>;
+  return json({
+    success: result.success !== false,
+    lineUserId,
+    balance: result.balance ?? 0,
+    list: Array.isArray(result.list) ? result.list.slice(0, 5) : [],
+    result
+  }, result.success === false ? 502 : 200);
 }
 
 async function getLegacySyncRecord(env: Env, lineUserId: string) {
@@ -3941,6 +3960,7 @@ export default {
 	    if ((request.method === "PUT" || request.method === "POST") && url.pathname === "/api/marquee") { const guard = await requireAdmin(request, env); if (guard) return guard; if (!env.ASSETS_BUCKET) return json({ success: false, message: "R2 bucket is not configured" }, 503); const config = await request.json().catch(() => ({})) as MarqueeConfig; await writeMarqueeConfig(env, config); return json({ success: true, data: await readMarqueeConfig(env), liffUrl: `${publicLiffUrl}?marquee=1` }); }
 	    if (request.method === "POST" && url.pathname === "/api/marquee/upload") return uploadMarqueeImageApi(request, env);
 	    if (request.method === "POST" && url.pathname === "/api/marquee/reward") return rewardMarqueePoint(request, env);
+	    if (request.method === "POST" && url.pathname === "/api/marquee/points") return queryMarqueePoints(request, env);
 	    if (request.method === "GET" && url.pathname === "/api/rich-menu") return getRichMenuApi(request, env);
 	    if ((request.method === "PUT" || request.method === "POST") && url.pathname === "/api/rich-menu") return saveRichMenuApi(request, env);
 	    if (request.method === "POST" && url.pathname === "/api/rich-menu/validate") return validateRichMenuApi(request, env);

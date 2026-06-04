@@ -12,8 +12,8 @@
     {
       keyword: "TDEA跑馬燈",
       aliases: "",
-      purpose: "開啟 800 x 800 跑馬燈 LIFF，底部左右按鈕可寫入母站簽到贈點。",
-      reply: "回覆 LIFF 按鈕，會員點左右按鈕後依 LINE UID 寫入 +1 點或後台設定點數。",
+      purpose: "開啟 800 x 800 跑馬燈 LIFF，左鍵寫入母站簽到贈點，右鍵查詢母站點數。",
+      reply: "回覆 LIFF 按鈕，會員左鍵依 LINE UID 寫入 +1 點，右鍵查詢目前點數餘額。",
       entry: "https://liff.line.me/2005868456-2jmxqyFU?marquee=1",
       owner: "LINE專區 / 跑馬燈",
       status: "啟用中"
