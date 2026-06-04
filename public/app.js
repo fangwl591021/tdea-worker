@@ -68,6 +68,28 @@
     return `<a class="link" href="${esc(url)}" target="_blank" rel="noopener noreferrer">${esc(url)}</a>`;
   }
   function save() { localStorage.setItem(key, JSON.stringify(state.data)); }
+  function isDefinitelyNonRosterRow(row, type) {
+    const memberNo = String(row?.memberNo || "").trim().toUpperCase();
+    if (/^TDEA/.test(memberNo)) return true;
+    if (type === "association" && memberNo && !/^[A-Z]\d{7}$/.test(memberNo)) return true;
+    return false;
+  }
+  function visibleRosterRows(type) {
+    const rows = Array.isArray(state.data[type]) ? state.data[type] : [];
+    return rows.filter((row) => !isDefinitelyNonRosterRow(row, type));
+  }
+  function cleanupRosterData() {
+    let changed = false;
+    ["association", "vendor"].forEach((type) => {
+      const rows = Array.isArray(state.data[type]) ? state.data[type] : [];
+      const cleaned = rows.filter((row) => !isDefinitelyNonRosterRow(row, type));
+      if (cleaned.length !== rows.length) {
+        state.data[type] = cleaned;
+        changed = true;
+      }
+    });
+    if (changed) save();
+  }
   function adminHeaders(extra = {}) {
     const email = localStorage.getItem("tdea-admin-email") || sessionStorage.getItem("tdea-admin-email") || "";
     return { ...extra, ...(email ? { "x-admin-email": email } : {}) };
@@ -523,6 +545,7 @@
   }
 
   function render() {
+    cleanupRosterData();
     const [title, sub] = labels[state.view];
     const collapsed = sidebarCollapsed();
     document.querySelector("#app").innerHTML = `
@@ -577,7 +600,7 @@
   }
 
   function members(type) {
-    const rows = state.data[type], vendor = type === "vendor";
+    const rows = visibleRosterRows(type), vendor = type === "vendor";
     if (!rows.length) return `<section class="panel"><div class="panel-head"><h2 class="panel-title">${vendor ? "廠商會員" : "協會會員"}</h2><button class="btn" data-import="${type}">匯入 CSV</button></div>${empty(`目前沒有${vendor ? "廠商會員" : "協會會員"}資料`)}</section>`;
     return `<section class="panel"><div class="panel-head"><h2 class="panel-title">${vendor ? "廠商會員" : "協會會員"}</h2><div class="actions"><button class="btn" data-import="${type}">匯入 CSV</button><button class="btn" data-export>匯出備份</button></div></div><div class="table-wrap"><table><thead><tr><th>會員編號</th><th>${vendor ? "公司名稱" : "姓名"}</th><th>${vendor ? "統編" : "身分"}</th><th>${vendor ? "聯絡窗口" : "性別"}</th><th>資格</th><th>備註</th><th>操作</th></tr></thead><tbody>${rows.map(x => `<tr><td>${esc(x.memberNo)}</td><td><strong>${esc(vendor ? x.companyName : x.name)}</strong></td><td>${esc(vendor ? x.taxId : x.identity)}</td><td>${esc(vendor ? x.contact : x.gender)}</td><td><span class="badge ${x.qualification === "Y" ? "live" : "off"}">${esc(x.qualification)}</span></td><td>${esc(x.note)}</td><td><button class="link" data-drawer="${type}:${x.id}">編輯</button><span class="muted"> / </span><button class="link danger-link" data-delete-member="${type}:${x.id}">刪除</button></td></tr>`).join("")}</tbody></table></div></section>`;
   }
