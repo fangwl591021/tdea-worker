@@ -3,8 +3,8 @@
     {
       keyword: "TDEA個人訊息",
       aliases: "",
-      purpose: "開啟個人訊息 LIFF，會員可查看協會傳送的一則則訊息與附件。",
-      reply: "回覆 LIFF 按鈕，點開後依 LINE UID 顯示個人訊息。",
+      purpose: "開啟個人訊息 LIFF，讓會員查看後台發送給自己的訊息與附件。",
+      reply: "開啟 LIFF 頁面，系統會用 LINE UID 顯示個人訊息。",
       entry: "https://liff.line.me/2005868456-2jmxqyFU?personalMessages=1",
       owner: "LINE專區 / 個人訊息",
       status: "啟用中"
@@ -12,8 +12,8 @@
     {
       keyword: "TDEA跑馬燈",
       aliases: "",
-      purpose: "開啟 800 x 800 跑馬燈 LIFF，左鍵寫入母站簽到贈點，右鍵查詢母站點數。",
-      reply: "回覆 LIFF 按鈕，會員左鍵依 LINE UID 寫入 +1 點，右鍵查詢目前點數餘額。",
+      purpose: "開啟 800 x 800 跑馬燈 LIFF；左鍵簽到贈點 +1，右鍵查詢母站點數。",
+      reply: "開啟 LIFF 頁面，系統取得 LINE UID 後執行贈點或查詢點數。",
       entry: "https://liff.line.me/2005868456-2jmxqyFU?marquee=1",
       owner: "LINE專區 / 跑馬燈",
       status: "啟用中"
@@ -33,8 +33,7 @@
   function maybeKeywordTable(table) {
     const headerCount = table.querySelectorAll("thead th").length;
     if (headerCount < 6) return false;
-    const text = table.textContent || "";
-    return text.includes("TDEA");
+    return (table.textContent || "").includes("TDEA");
   }
 
   function appendKeywordRows() {

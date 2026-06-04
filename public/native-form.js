@@ -9,7 +9,7 @@
   const calendarMode = params.has("calendar");
   const marqueeMode = params.has("marquee");
   const app = document.querySelector("#app");
-  const liffId = "2005868456-cfANNVou";
+  const liffId = "2005868456-2jmxqyFU";
   const calendarId = "7d66f2a96f192dda6cca2b04e60a6e549c7adf74f57721845d5b7e03f8b7ca89@group.calendar.google.com";
   let liffReady = null;
   let lineUserId = "";
