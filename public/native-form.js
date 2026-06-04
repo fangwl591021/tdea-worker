@@ -1,4 +1,4 @@
-(() => {
+﻿(() => {
   const api = location.hostname.endsWith("github.io") ? "https://tdeawork.fangwl591021.workers.dev" : "";
   const params = mergedParams();
   const formId = params.get("register");
@@ -77,6 +77,15 @@
       .nf-query-qr{display:grid;gap:8px;justify-items:center;text-align:center;color:#667085;font-size:13px}
       .nf-marquee-square{width:min(100%,800px);aspect-ratio:1/1;margin:0 auto;border-radius:16px;overflow:hidden;background:#f8fafc;display:grid;place-items:center;border:1px solid #e4e7ec}
       .nf-marquee-square img{width:100%;height:100%;object-fit:cover}
+      .nf-marquee-slider{position:relative;width:100%;height:100%;overflow:hidden}
+      .nf-marquee-track{display:flex;width:100%;height:100%;transition:transform .42s ease}
+      .nf-marquee-slide{flex:0 0 100%;height:100%}
+      .nf-marquee-slide img{width:100%;height:100%;object-fit:cover}
+      .nf-marquee-nav{position:absolute;left:0;right:0;top:50%;display:flex;justify-content:space-between;transform:translateY(-50%);pointer-events:none}
+      .nf-marquee-nav button{pointer-events:auto;border:0;border-radius:999px;background:rgba(17,24,39,.62);color:#fff;width:36px;height:36px;margin:0 10px;font-size:22px}
+      .nf-marquee-dots{position:absolute;left:0;right:0;bottom:10px;display:flex;gap:6px;justify-content:center}
+      .nf-marquee-dots button{width:8px;height:8px;border:0;border-radius:999px;background:rgba(255,255,255,.65);padding:0}
+      .nf-marquee-dots button.active{background:#06c755}
       .nf-marquee-buttons{display:grid;grid-template-columns:1fr 1fr;gap:12px}
       @media(max-width:640px){.nf-title{font-size:24px}.nf-body{padding:18px}.nf-actions{display:grid}.nf-btn{width:100%}}
       @media(max-width:640px){.nf-query-body{grid-template-columns:1fr}.nf-query-qr{justify-items:start;text-align:left}.nf-query-qr .nf-qr{width:180px;height:180px}}
@@ -574,6 +583,39 @@
     </div></section>`);
   }
 
+  function marqueeSliderHtml(images) {
+    const urls = [...new Set((images || []).map((url) => trim(url)).filter(Boolean))];
+    if (!urls.length) return "<span>尚未設定圖片</span>";
+    if (urls.length === 1) return `<img src="${esc(urls[0])}" alt="">`;
+    return `<div class="nf-marquee-slider" data-nf-marquee-slider>
+      <div class="nf-marquee-track">${urls.map((url) => `<div class="nf-marquee-slide"><img src="${esc(url)}" alt=""></div>`).join("")}</div>
+      <div class="nf-marquee-nav"><button type="button" data-nf-marquee-prev aria-label="上一張">‹</button><button type="button" data-nf-marquee-next aria-label="下一張">›</button></div>
+      <div class="nf-marquee-dots">${urls.map((_, index) => `<button type="button" data-nf-marquee-dot="${index}" class="${index === 0 ? "active" : ""}" aria-label="第 ${index + 1} 張"></button>`).join("")}</div>
+    </div>`;
+  }
+
+  function bindMarqueeSlider() {
+    const root = app.querySelector("[data-nf-marquee-slider]");
+    if (!root) return;
+    const track = root.querySelector(".nf-marquee-track");
+    const dots = [...root.querySelectorAll("[data-nf-marquee-dot]")];
+    let index = 0;
+    let timer = null;
+    const go = (next) => {
+      index = (next + dots.length) % dots.length;
+      if (track) track.style.transform = `translateX(-${index * 100}%)`;
+      dots.forEach((dot, dotIndex) => dot.classList.toggle("active", dotIndex === index));
+    };
+    const restart = () => {
+      clearInterval(timer);
+      timer = setInterval(() => go(index + 1), 3000);
+    };
+    root.querySelector("[data-nf-marquee-prev]")?.addEventListener("click", () => { go(index - 1); restart(); });
+    root.querySelector("[data-nf-marquee-next]")?.addEventListener("click", () => { go(index + 1); restart(); });
+    dots.forEach((dot) => dot.addEventListener("click", () => { go(Number(dot.dataset.nfMarqueeDot || 0)); restart(); }));
+    restart();
+  }
+
   async function showMarquee() {
     renderLoading("載入跑馬燈...");
     const uid = await loadLiff({ login: true });
@@ -585,15 +627,17 @@
     if (config.enabled === false) return renderError("跑馬燈尚未啟用。");
     const left = config.left || {};
     const right = config.right || {};
+    const images = [...new Set([...(Array.isArray(config.imageUrls) ? config.imageUrls : []), config.imageUrl].map((url) => trim(url)).filter(Boolean))];
     renderShell(`<section class="nf-card"><div class="nf-body">
       <h1 class="nf-title">${esc(config.title || "TDEA 跑馬燈")}</h1>
-      <div class="nf-marquee-square">${config.imageUrl ? `<img src="${esc(config.imageUrl)}" alt="">` : "<span>尚未設定圖片</span>"}</div>
+      <div class="nf-marquee-square">${marqueeSliderHtml(images)}</div>
       <div class="nf-marquee-buttons">
-        <button class="nf-btn primary" data-marquee-action="reward" ${left.enabled === false ? "disabled" : ""}>${esc(left.label || "左側簽到")}</button>
+        <button class="nf-btn primary" data-marquee-action="reward" ${left.enabled === false ? "disabled" : ""}>${esc(left.label || "簽到贈點")}</button>
         <button class="nf-btn primary" data-marquee-action="points" ${right.enabled === false ? "disabled" : ""}>${esc(right.label || "查詢點數")}</button>
       </div>
       <div class="nf-ok" data-marquee-result hidden></div>
     </div></section>`);
+    bindMarqueeSlider();
     app.querySelectorAll("[data-marquee-action]").forEach((button) => {
       button.addEventListener("click", async () => {
         const action = button.dataset.marqueeAction;
@@ -613,7 +657,7 @@
         const resultNode = app.querySelector("[data-marquee-result]");
         const message = action === "points"
           ? `目前點數餘額：${actionResult.balance ?? 0}`
-          : `已完成簽到贈點：+${actionResult.points || 1}`;
+          : `簽到贈點成功：+${actionResult.points || 1}`;
         if (resultNode) {
           resultNode.hidden = false;
           resultNode.textContent = message;
@@ -622,7 +666,6 @@
       });
     });
   }
-
   if (formId) showRegister(formId);
   else if (checkinToken) showCheckin(checkinToken);
   else if (redeemToken) showRedeem(redeemToken);
@@ -631,3 +674,4 @@
   else if (calendarMode) showCalendar();
   else if (marqueeMode) showMarquee();
 })();
+

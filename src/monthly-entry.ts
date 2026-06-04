@@ -7,7 +7,7 @@ type MonthlyConfig = { enabled?: boolean; keyword?: string; month?: string; altT
 type VendorCardItem = { id?: string; enabled?: boolean; name?: string; label?: string; actionText?: string; imageUrl?: string; order?: number };
 type VendorCardConfig = { enabled?: boolean; keyword?: string; altText?: string; title?: string; items?: VendorCardItem[]; updatedAt?: string };
 type MarqueeButtonConfig = { label?: string; eventName?: string; eventContent?: string; points?: number; enabled?: boolean };
-type MarqueeConfig = { enabled?: boolean; keyword?: string; altText?: string; title?: string; imageUrl?: string; left?: MarqueeButtonConfig; right?: MarqueeButtonConfig; updatedAt?: string };
+type MarqueeConfig = { enabled?: boolean; keyword?: string; altText?: string; title?: string; imageUrl?: string; imageUrls?: string[]; left?: MarqueeButtonConfig; right?: MarqueeButtonConfig; updatedAt?: string };
 type RegistrationRecord = { activityId?: string; activityNo?: string; activityName?: string; formId?: string; count: number; lastSubmittedAt?: string };
 type RegistrationSummary = { updatedAt?: string; activities: Record<string, RegistrationRecord> };
 type RegistrationEntry = { id: string; sourceId?: string; formId?: string; submittedAt?: string; activity?: Record<string, unknown>; answers?: Record<string, unknown>; status?: string; checkedInAt?: string; sessionId?: string; queryCode?: string; checkinToken?: string; cancelledAt?: string; lineUserId?: string; pointsSyncedAt?: string; pointResults?: unknown[] };
@@ -223,12 +223,14 @@ function normalizeMarqueeConfig(config: MarqueeConfig | undefined): MarqueeConfi
   const title = clean(config?.title || "TDEA 跑馬燈");
   const right = normalizeMarqueeButton(config?.right, "查詢點數", `${title} 查詢點數`);
   right.eventContent = clean(config?.right?.eventContent || "查詢母站點數") || "查詢母站點數";
+  const imageUrls = [...new Set([...(Array.isArray(config?.imageUrls) ? config?.imageUrls || [] : []), config?.imageUrl].map((url) => clean(url)).filter(Boolean))].slice(0, 20);
   return {
     enabled: config?.enabled !== false,
     keyword: marqueeKeyword,
     altText: clean(config?.altText || "TDEA 跑馬燈") || "TDEA 跑馬燈",
     title,
-    imageUrl: clean(config?.imageUrl),
+    imageUrl: imageUrls[0] || "",
+    imageUrls,
     left: normalizeMarqueeButton(config?.left, "左側簽到", `${title} 左側簽到`),
     right,
     updatedAt: config?.updatedAt
@@ -1245,10 +1247,10 @@ async function rewardMarqueePoint(request: Request, env: Env) {
   if (!lineUserId) return json({ success: false, message: "Missing LINE UID" }, 400);
   const config = await readMarqueeConfig(env);
   if (config.enabled === false) return json({ success: false, message: "跑馬燈尚未啟用" }, 403);
-  const button = side === "right" ? config.right : config.left;
+  const button = config.left;
   if (button?.enabled === false) return json({ success: false, message: "此按鈕尚未啟用" }, 403);
   const points = Math.max(1, Math.round(Number(button?.points || 1)));
-  const label = clean(button?.label || (side === "right" ? "右側簽到" : "左側簽到"));
+  const label = clean(button?.label || "左側簽到");
   const eventName = clean(button?.eventName || `${config.title || "TDEA 跑馬燈"} ${label}`);
   const eventContent = clean(button?.eventContent || "跑馬燈按鈕點擊簽到贈點");
   const result = await updateLocalPoints(env, lineUserId, points, eventContent, {
