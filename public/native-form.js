@@ -389,26 +389,6 @@
 
   function registrationStatus(row) {
     if (row.status === "cancelled") return "已取消";
-    if (row.checkedInAt) return "已報到";
-    return "已報名";
-  }
-
-  function registrationCard(row) {
-    const activity = row.activity || {};
-    const answers = row.answers || {};
-    return `<article class="nf-card" style="box-shadow:none">
-      <div class="nf-body">
-        <div class="nf-meta"><span class="nf-pill">${esc(registrationStatus(row))}</span>${row.submittedAt ? `<span class="nf-pill">${esc(new Date(row.submittedAt).toLocaleString("zh-TW", { hour12: false }))}</span>` : ""}</div>
-        <h2 class="nf-title" style="font-size:22px">${esc(activity.name || row.formId || "活動報名")}</h2>
-        ${activity.courseTime ? `<div class="nf-detail">活動時間：${esc(activity.courseTime)}</div>` : ""}
-        <table class="nf-table"><tbody>${Object.entries(answers).filter(([key]) => key !== "LINE_user_id").map(([key, value]) => `<tr><th>${esc(key)}</th><td>${esc(Array.isArray(value) ? value.join(", ") : value)}</td></tr>`).join("")}</tbody></table>
-        ${row.status === "cancelled" ? "" : `<div class="nf-actions"><button class="nf-btn danger" data-cancel-registration="${esc(row.id)}" data-query-code="${esc(row.queryCode || "")}">取消報名</button></div>`}
-      </div>
-    </article>`;
-  }
-
-  function registrationStatus(row) {
-    if (row.status === "cancelled") return "已取消";
     if (row.checkedInAt) return "已核銷";
     return "已報名";
   }
