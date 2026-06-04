@@ -1180,6 +1180,34 @@ async function queryPointBalance(env: Env, lineUserId: string) {
   return { httpStatus: response.status, ...body, balance, list };
 }
 
+async function queryMemberPointBatchApi(request: Request, env: Env) {
+  const guard = await requireAdmin(request, env);
+  if (guard) return guard;
+  const input = await request.json().catch(() => ({})) as Record<string, unknown>;
+  const rawIds = Array.isArray(input.lineUserIds) ? input.lineUserIds : [];
+  const lineUserIds = Array.from(new Set(rawIds.map((item) => clean(item)).filter(Boolean))).slice(0, 200);
+  const data = [];
+  for (const lineUserId of lineUserIds) {
+    try {
+      const result = await queryPointBalance(env, lineUserId) as Record<string, unknown>;
+      data.push({
+        lineUserId,
+        success: result.success === true,
+        balance: result.success === true ? numberValue(result.balance) : null,
+        message: result.success === true ? "" : clean(result.message) || clean(result.code) || "點數查詢失敗"
+      });
+    } catch (error) {
+      data.push({
+        lineUserId,
+        success: false,
+        balance: null,
+        message: String((error as Error).message || error || "點數查詢失敗")
+      });
+    }
+  }
+  return json({ success: true, data });
+}
+
 function parseMotherPointKeyword(text: string) {
   const raw = clean(text);
   const compact = raw.replace(/\s+/g, "");
@@ -4061,6 +4089,7 @@ export default {
 	    if (redeemMatch && request.method === "POST") return confirmRedeemRequest(request, env, decodeURIComponent(redeemMatch[1]));
 	    if (request.method === "POST" && url.pathname === "/api/points/sync-legacy") return syncLegacyPointApi(request, env);
 	    if (request.method === "GET" && url.pathname === "/api/points/ledger") return listPointLedgerApi(request, env);
+	    if (request.method === "POST" && url.pathname === "/api/member-points/batch") return queryMemberPointBatchApi(request, env);
 	    const pointMatch = url.pathname.match(/^\/api\/points\/([^/]+)$/);
 	    if (pointMatch && request.method === "GET") return getPointAccountApi(request, env, decodeURIComponent(pointMatch[1]));
 	    if (request.method === "GET" && url.pathname === "/api/push/segments") return getPushSegments(request, env);

@@ -4,6 +4,7 @@
   const tokenKey = "tdea-aiwe-read-token";
   const memberSheetCsvUrl = `${apiBase}/api/google-member-sheet`;
   let uidMapPromise = null;
+  let pointMapPromise = null;
   let lastAppliedAt = 0;
 
   const normalize = (value) => String(value || "").trim().toUpperCase();
@@ -121,6 +122,11 @@
     return sessionStorage.getItem("tdea-admin-email") || localStorage.getItem("tdea-admin-email") || "";
   }
 
+  function adminHeaders() {
+    const email = adminEmail();
+    return email ? { "x-admin-email": email } : {};
+  }
+
   async function loadUidMap() {
     if (uidMapPromise) return uidMapPromise;
     uidMapPromise = (async () => {
@@ -222,6 +228,24 @@
     return { data, rows, row: rows.find((item) => normalize(item.memberNo) === memberNo) };
   }
 
+  function ensurePointSyncButton() {
+    const type = activeRosterType();
+    if (!type) return;
+    const actions = document.querySelector(".page-actions, .actions") || document.querySelector("header .actions");
+    const panelHead = Array.from(document.querySelectorAll(".panel-head")).find((node) => {
+      const text = node.textContent || "";
+      return text.includes(type === "vendor" ? "撱?" : "??") || text.includes("會員");
+    });
+    const host = actions || panelHead;
+    if (!host || host.querySelector("[data-sync-member-points]")) return;
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "btn";
+    button.dataset.syncMemberPoints = type;
+    button.textContent = "同步點數";
+    host.prepend(button);
+  }
+
   function makeProfileCell(className, value = "") {
     const td = document.createElement("td");
     td.className = className;
@@ -232,11 +256,19 @@
     return td;
   }
 
+  function makePointCell(value = "") {
+    const td = makeProfileCell("aiwe-point-cell", value);
+    td.style.textAlign = "right";
+    td.style.fontWeight = "700";
+    return td;
+  }
+
   function ensureProfileHeaders(table) {
     const headerRow = table.querySelector("thead tr");
     if (!headerRow || headerRow.dataset.aiweProfileHeaders === "1") return;
     const headers = [
       ["LINE UID", "aiwe-uid-head"],
+      ["點數", "aiwe-point-head"],
       ["手機", "aiwe-phone-head"]
     ];
     headers.slice().reverse().forEach(([label, className]) => {
@@ -248,10 +280,76 @@
     for (const row of table.querySelectorAll("tbody tr")) {
       [
         makeProfileCell("aiwe-phone-cell"),
+        makePointCell(),
         makeProfileCell("aiwe-uid-cell")
       ].forEach((td) => row.insertBefore(td, row.children[2] || null));
     }
     headerRow.dataset.aiweProfileHeaders = "1";
+  }
+
+  async function loadPointMap(lineUserIds, force = false) {
+    const ids = Array.from(new Set((lineUserIds || []).map(clean).filter(isLineUid))).sort();
+    if (!ids.length) return new Map();
+    const cacheKey = ids.join("|");
+    if (!force && pointMapPromise?.cacheKey === cacheKey) return pointMapPromise;
+    const promise = (async () => {
+      const response = await fetch(`${apiBase}/api/member-points/batch`, {
+        method: "POST",
+        headers: { "content-type": "application/json", ...adminHeaders() },
+        body: JSON.stringify({ lineUserIds: ids }),
+        cache: "no-store"
+      });
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok || !result.success) throw new Error(result.message || `點數查詢失敗 HTTP ${response.status}`);
+      const map = new Map();
+      for (const item of result.data || []) {
+        const uid = validLineUid(item.lineUserId);
+        if (uid) map.set(uid, item);
+      }
+      return map;
+    })().catch((error) => {
+      console.warn(error);
+      return new Map();
+    });
+    promise.cacheKey = cacheKey;
+    pointMapPromise = promise;
+    return promise;
+  }
+
+  async function applyPointColumn(table, force = false) {
+    const uids = [];
+    for (const row of table.querySelectorAll("tbody tr")) {
+      const uid = validLineUid(row.dataset.lineUid);
+      const cell = row.querySelector(".aiwe-point-cell");
+      if (!cell) continue;
+      if (!uid) {
+        cell.textContent = "";
+        cell.title = "尚未綁定 LINE UID";
+        continue;
+      }
+      uids.push(uid);
+      cell.textContent = "讀取中";
+      cell.title = "正在查詢母站點數";
+    }
+    const pointMap = await loadPointMap(uids, force);
+    for (const row of table.querySelectorAll("tbody tr")) {
+      const uid = validLineUid(row.dataset.lineUid);
+      const cell = row.querySelector(".aiwe-point-cell");
+      if (!cell || !uid) continue;
+      const item = pointMap.get(uid);
+      if (!item) {
+        cell.textContent = "-";
+        cell.title = "母站沒有回傳點數資料";
+        continue;
+      }
+      if (item.success) {
+        cell.textContent = Number.isFinite(Number(item.balance)) ? String(Number(item.balance)) : "0";
+        cell.title = `LINE UID: ${uid}`;
+      } else {
+        cell.textContent = "查詢失敗";
+        cell.title = item.message || "點數查詢失敗";
+      }
+    }
   }
 
   async function applyUidColumn() {
@@ -298,6 +396,7 @@
     }
 
     if (changed) saveData(data);
+    applyPointColumn(table).catch((error) => console.warn(error));
     table.dataset.uidColumnApplying = "";
   }
 
@@ -671,6 +770,7 @@
       if (table && table.dataset.uidColumnReady === "1" && Date.now() - lastAppliedAt < 500) return;
       if (table) table.dataset.uidColumnReady = "1";
       ensureSyncButton();
+      ensurePointSyncButton();
       applyUidColumn();
       applyUidEditor();
     }, 180);
@@ -688,6 +788,23 @@
     button.textContent = "同步中...";
     syncAiweUid(button.dataset.syncAiweUid || activeRosterType()).catch((error) => {
       alert(error.message || "同步母站 UID 失敗");
+    }).finally(() => {
+      button.disabled = false;
+      button.textContent = oldText;
+    });
+  }, true);
+  document.addEventListener("click", (event) => {
+    const button = event.target?.closest?.("[data-sync-member-points]");
+    if (!button) return;
+    event.preventDefault();
+    const table = findRosterTable();
+    if (!table) return;
+    button.disabled = true;
+    const oldText = button.textContent;
+    button.textContent = "同步中...";
+    pointMapPromise = null;
+    applyPointColumn(table, true).catch((error) => {
+      alert(error.message || "同步點數失敗");
     }).finally(() => {
       button.disabled = false;
       button.textContent = oldText;
