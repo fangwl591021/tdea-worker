@@ -153,7 +153,7 @@ async function updateAdminAccessApi(request: Request, env: Env) {
 
 async function readMonthly(env: Env): Promise<MonthlyConfig> {
   const object = env.ASSETS_BUCKET ? await env.ASSETS_BUCKET.get(monthlyKey) : null;
-  if (!object) return { enabled: false, keyword: fixedKeyword, month: "", altText: "TDEA 瘥?瘣餃?", detailBaseUrl: defaultLiffBase, pages: [] };
+  if (!object) return { enabled: false, keyword: fixedKeyword, month: "", altText: "TDEA 每月活動", detailBaseUrl: defaultLiffBase, pages: [] };
   const data = await object.json().catch(() => ({}));
   return normalizeConfig(data as MonthlyConfig);
 }
@@ -2023,7 +2023,7 @@ function normalizeConfig(config: MonthlyConfig): MonthlyConfig {
     enabled: Boolean(config.enabled),
     keyword: fixedKeyword,
     month: String(config.month || "").trim(),
-    altText: String(config.altText || "TDEA 瘥?瘣餃?").trim() || "TDEA 瘥?瘣餃?",
+    altText: String(config.altText || "TDEA 每月活動").trim() || "TDEA 每月活動",
     detailBaseUrl: String(config.detailBaseUrl || defaultLiffBase).trim(),
     updatedAt: config.updatedAt,
     pages: pages.slice(0, 12).map((page, index) => ({
@@ -2032,7 +2032,7 @@ function normalizeConfig(config: MonthlyConfig): MonthlyConfig {
       imageUrl: String(page.imageUrl || "").trim(),
       galleryUrls: cleanUrls(page.galleryUrls),
       formImageUrl: String(page.formImageUrl || "").trim(),
-      detailTitle: String(page.detailTitle || "閰喟敦隤芣?").trim() || "閰喟敦隤芣?",
+      detailTitle: String(page.detailTitle || "詳細說明").trim() || "詳細說明",
       detailText: String(page.detailText || "").trim(),
       detailUrl: String(page.detailUrl || "").trim(),
       formUrl: String(page.formUrl || "").trim(),
@@ -2058,7 +2058,7 @@ function detailUrlForPage(page: MonthlyPage, config: MonthlyConfig) {
 
 function buildMonthlyFlex(config: MonthlyConfig) {
   const normalized = normalizeConfig(config);
-  return { type: "flex", altText: normalized.altText || "TDEA 瘥?瘣餃?", contents: { type: "carousel", contents: (normalized.pages || []).map((page) => buildMonthlyBubble(page, normalized)) } };
+  return { type: "flex", altText: normalized.altText || "TDEA 每月活動", contents: { type: "carousel", contents: (normalized.pages || []).map((page) => buildMonthlyBubble(page, normalized)) } };
 }
 
 function buildMonthlyBubble(page: MonthlyPage, config: MonthlyConfig) {
@@ -2069,12 +2069,12 @@ function buildMonthlyBubble(page: MonthlyPage, config: MonthlyConfig) {
     type: "bubble",
     size: "kilo",
     body: { type: "box", layout: "vertical", paddingAll: "0px", contents: [
-      { type: "image", url: page.imageUrl || "https://developers-resource.landpress.line.me/fx/img/01_1_cafe.png", size: "full", aspectMode: "cover", aspectRatio: "2:3", gravity: "top", action: { type: "uri", label: "?勗?", uri: formUri } },
-      { type: "box", layout: "vertical", position: "absolute", cornerRadius: "20px", offsetTop: "18px", offsetStart: "18px", backgroundColor: "#ff334b", height: "25px", width: "53px", action: { type: "uri", label: "?澈", uri: shareUri }, contents: [{ type: "text", text: "?澈", color: "#ffffff", align: "center", size: "xs", offsetTop: "3px", action: { type: "uri", label: "?澈", uri: shareUri } }] }
+      { type: "image", url: page.imageUrl || "https://developers-resource.landpress.line.me/fx/img/01_1_cafe.png", size: "full", aspectMode: "cover", aspectRatio: "2:3", gravity: "top", action: { type: "uri", label: "報名", uri: formUri } },
+      { type: "box", layout: "vertical", position: "absolute", cornerRadius: "20px", offsetTop: "18px", offsetStart: "18px", backgroundColor: "#ff334b", height: "25px", width: "53px", action: { type: "uri", label: "分享", uri: shareUri }, contents: [{ type: "text", text: "分享", color: "#ffffff", align: "center", size: "xs", offsetTop: "3px", action: { type: "uri", label: "分享", uri: shareUri } }] }
     ] },
     footer: { type: "box", layout: "horizontal", contents: [
-      { type: "button", height: "sm", style: "primary", action: { type: "uri", label: "閰喟敦隤芣?", uri: detailUri } },
-      { type: "button", height: "sm", style: "primary", margin: "md", action: { type: "uri", label: "暺??勗?", uri: formUri } }
+      { type: "button", height: "sm", style: "primary", action: { type: "uri", label: "詳細說明", uri: detailUri } },
+      { type: "button", height: "sm", style: "primary", margin: "md", action: { type: "uri", label: "點我報名", uri: formUri } }
     ] }
   };
 }
