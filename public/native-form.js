@@ -68,7 +68,14 @@
       .nf-member-grid{display:grid;grid-template-columns:120px 1fr;gap:6px 12px;color:#344054}
       .nf-table{width:100%;border-collapse:collapse}.nf-table th,.nf-table td{border-bottom:1px solid #eaecf0;padding:10px;text-align:left;vertical-align:top}
       .nf-qr{width:220px;height:220px;border:1px solid #e4e7ec;border-radius:8px;background:#fff}
+      .nf-query-card{border:1px solid #e4e7ec;border-radius:12px;background:#fff;overflow:hidden}
+      .nf-query-head{display:grid;gap:10px;padding:18px;border-bottom:1px solid #eaecf0}
+      .nf-query-body{display:grid;grid-template-columns:1fr auto;gap:18px;align-items:start;padding:18px}
+      .nf-query-lines{display:grid;gap:8px;color:#344054;line-height:1.55}
+      .nf-query-lines strong{color:#111827}
+      .nf-query-qr{display:grid;gap:8px;justify-items:center;text-align:center;color:#667085;font-size:13px}
       @media(max-width:640px){.nf-title{font-size:24px}.nf-body{padding:18px}.nf-actions{display:grid}.nf-btn{width:100%}}
+      @media(max-width:640px){.nf-query-body{grid-template-columns:1fr}.nf-query-qr{justify-items:start;text-align:left}.nf-query-qr .nf-qr{width:180px;height:180px}}
     `;
     document.head.appendChild(style);
   }
@@ -396,6 +403,40 @@
         ${activity.courseTime ? `<div class="nf-detail">活動時間：${esc(activity.courseTime)}</div>` : ""}
         <table class="nf-table"><tbody>${Object.entries(answers).filter(([key]) => key !== "LINE_user_id").map(([key, value]) => `<tr><th>${esc(key)}</th><td>${esc(Array.isArray(value) ? value.join(", ") : value)}</td></tr>`).join("")}</tbody></table>
         ${row.status === "cancelled" ? "" : `<div class="nf-actions"><button class="nf-btn danger" data-cancel-registration="${esc(row.id)}" data-query-code="${esc(row.queryCode || "")}">取消報名</button></div>`}
+      </div>
+    </article>`;
+  }
+
+  function registrationStatus(row) {
+    if (row.status === "cancelled") return "已取消";
+    if (row.checkedInAt) return "已核銷";
+    return "已報名";
+  }
+
+  function registrationCard(row) {
+    const activity = row.activity || {};
+    const title = activity.name || row.formId || "活動報名";
+    const submittedAt = row.submittedAt ? new Date(row.submittedAt).toLocaleString("zh-TW", { hour12: false }) : "";
+    const checkedInAt = row.checkedInAt ? new Date(row.checkedInAt).toLocaleString("zh-TW", { hour12: false }) : "";
+    const checkinUrl = row.checkinUrl || (row.checkinToken ? `${api || location.origin}?checkin=${encodeURIComponent(row.checkinToken)}` : "");
+    const qrUrl = checkinUrl ? `https://api.qrserver.com/v1/create-qr-code/?size=220x220&data=${encodeURIComponent(checkinUrl)}` : "";
+    const lines = [
+      activity.courseTime ? `<div><strong>活動時間：</strong>${esc(activity.courseTime)}</div>` : "",
+      submittedAt ? `<div><strong>報名時間：</strong>${esc(submittedAt)}</div>` : "",
+      row.queryCode ? `<div><strong>查詢碼：</strong>${esc(row.queryCode)}</div>` : "",
+      checkedInAt ? `<div><strong>核銷時間：</strong>${esc(checkedInAt)}</div>` : ""
+    ].filter(Boolean).join("");
+    return `<article class="nf-query-card">
+      <div class="nf-query-head">
+        <div class="nf-meta"><span class="nf-pill">${esc(registrationStatus(row))}</span></div>
+        <h2 class="nf-title" style="font-size:22px">${esc(title)}</h2>
+      </div>
+      <div class="nf-query-body">
+        <div class="nf-query-lines">
+          ${lines || `<div>已找到報名紀錄。</div>`}
+          ${row.status === "cancelled" ? "" : `<div class="nf-actions" style="margin-top:10px"><button class="nf-btn danger" data-cancel-registration="${esc(row.id)}" data-query-code="${esc(row.queryCode || "")}">取消報名</button></div>`}
+        </div>
+        ${qrUrl ? `<div class="nf-query-qr"><img class="nf-qr" src="${qrUrl}" alt="核銷 QR Code"><span>活動核銷 QR</span></div>` : ""}
       </div>
     </article>`;
   }
