@@ -112,9 +112,11 @@
       .marquee-button-card{border:1px solid #e4e7ec;border-radius:10px;padding:14px;display:grid;gap:12px;background:#fff}
       .marquee-liff{display:flex;gap:8px;align-items:center;flex-wrap:wrap;padding:12px 14px;border-radius:10px;background:#f8fafc;border:1px solid #e4e7ec;color:#344054}
       .marquee-images{display:grid;gap:10px}
-      .marquee-image-row{display:grid;grid-template-columns:1fr 1fr 120px auto;gap:8px;align-items:end;border:1px solid #e4e7ec;border-radius:8px;padding:10px;background:#f8fafc}
+      .marquee-image-row{display:grid;grid-template-columns:1fr 1fr 120px 180px auto;gap:8px;align-items:end;border:1px solid #e4e7ec;border-radius:8px;padding:10px;background:#f8fafc}
       .marquee-image-row label{display:grid;gap:4px;font-weight:800;color:#344054}
       .marquee-image-row input{width:100%;box-sizing:border-box}
+      .marquee-image-status{border-radius:999px;padding:10px 12px;font-weight:900;text-align:center;background:#ecfdf3;color:#067647;white-space:nowrap}
+      .marquee-image-status.warn{background:#fff3f0;color:#b42318}
       .marquee-dots{position:absolute;left:0;right:0;bottom:10px;display:flex;gap:6px;justify-content:center}
       .marquee-dots button{width:8px;height:8px;border-radius:50%;border:0;background:rgba(255,255,255,.6);padding:0}
       .marquee-dots button.active{background:#06c755}
@@ -175,6 +177,7 @@
         <label>圖片 URL<input data-marquee-item="${esc(item.id)}" data-field="imageUrl" value="${esc(item.imageUrl)}"></label>
         <label>點擊連結網址<input data-marquee-item="${esc(item.id)}" data-field="linkUrl" value="${esc(item.linkUrl)}" placeholder="https://..."></label>
         <label>每日贈點<input type="number" min="1" step="1" data-marquee-item="${esc(item.id)}" data-field="points" value="${esc(item.points || 1)}"></label>
+        <div class="marquee-image-status ${item.linkUrl ? "" : "warn"}">${item.linkUrl ? "贈點並跳轉" : "只贈點不跳轉"}</div>
         <button class="btn danger" type="button" data-marquee-remove-image="${index}">刪除</button>
       </div>
     `).join("")}</div>`;

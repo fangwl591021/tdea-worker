@@ -75,30 +75,30 @@
       .nf-query-lines{display:grid;gap:8px;color:#344054;line-height:1.55}
       .nf-query-lines strong{color:#111827}
       .nf-query-qr{display:grid;gap:8px;justify-items:center;text-align:center;color:#667085;font-size:13px}
-      .nf-card.nf-marquee-card{border-radius:0;max-width:none}
+      .nf-marquee-shell{padding:0;background:#fff}
+      .nf-card.nf-marquee-card{border-radius:0;max-width:none;border:0;box-shadow:none;background:#fff}
       .nf-card.nf-marquee-card .nf-body{padding:0}
       .nf-marquee-square{width:100%;aspect-ratio:1/1;margin:0 auto;border-radius:0;overflow:hidden;background:#f8fafc;display:grid;place-items:center;border:0}
       .nf-marquee-square img{width:100%;height:100%;object-fit:cover}
       .nf-marquee-slider{position:relative;width:100%;height:100%;overflow:hidden}
       .nf-marquee-track{display:flex;width:100%;height:100%;transition:transform .42s ease}
-      .nf-marquee-slide{flex:0 0 100%;height:100%;border:0;background:transparent;padding:0;cursor:pointer}
+      .nf-marquee-slide{flex:0 0 100%;width:100%;height:100%;border:0;background:transparent;padding:0;cursor:pointer;display:block}
       .nf-marquee-slide img{width:100%;height:100%;object-fit:cover}
-      .nf-marquee-nav{position:absolute;left:0;right:0;top:50%;display:flex;justify-content:space-between;transform:translateY(-50%);pointer-events:none}
-      .nf-marquee-nav button{pointer-events:auto;border:0;border-radius:999px;background:rgba(17,24,39,.62);color:#fff;width:36px;height:36px;margin:0 10px;font-size:22px}
       .nf-marquee-dots{position:absolute;left:0;right:0;bottom:10px;display:flex;gap:6px;justify-content:center}
       .nf-marquee-dots button{width:8px;height:8px;border:0;border-radius:999px;background:rgba(255,255,255,.65);padding:0}
       .nf-marquee-dots button.active{background:#06c755}
-      .nf-marquee-buttons{display:grid;grid-template-columns:1fr 1fr;gap:12px;padding:14px}
+      .nf-marquee-buttons{display:grid;grid-template-columns:1fr;gap:12px;padding:14px}
       .nf-marquee-card [data-marquee-result]{margin:0 14px 14px}
+      .nf-marquee-toast{position:fixed;left:50%;bottom:24px;transform:translateX(-50%);z-index:20;background:rgba(17,24,39,.92);color:#fff;border-radius:999px;padding:10px 16px;font-weight:900;box-shadow:0 12px 28px rgba(15,23,42,.24)}
       @media(max-width:640px){.nf-title{font-size:24px}.nf-body{padding:18px}.nf-actions{display:grid}.nf-btn{width:100%}}
       @media(max-width:640px){.nf-query-body{grid-template-columns:1fr}.nf-query-qr{justify-items:start;text-align:left}.nf-query-qr .nf-qr{width:180px;height:180px}}
     `;
     document.head.appendChild(style);
   }
 
-  function renderShell(content) {
+  function renderShell(content, className = "") {
     installStyle();
-    app.innerHTML = `<main class="nf-shell">${content}</main>`;
+    app.innerHTML = `<main class="nf-shell ${esc(className)}">${content}</main>`;
   }
 
   function renderLoading(text = "載入中...") {
@@ -607,7 +607,6 @@
     if (list.length === 1) return `<button type="button" class="nf-marquee-slide" data-marquee-image-id="${esc(list[0].id)}" data-marquee-image-url="${esc(list[0].imageUrl)}" data-marquee-link-url="${esc(list[0].linkUrl)}"><img src="${esc(list[0].imageUrl)}" alt=""></button>`;
     return `<div class="nf-marquee-slider" data-nf-marquee-slider>
       <div class="nf-marquee-track">${list.map((item) => `<button type="button" class="nf-marquee-slide" data-marquee-image-id="${esc(item.id)}" data-marquee-image-url="${esc(item.imageUrl)}" data-marquee-link-url="${esc(item.linkUrl)}"><img src="${esc(item.imageUrl)}" alt=""></button>`).join("")}</div>
-      <div class="nf-marquee-nav"><button type="button" data-nf-marquee-prev aria-label="上一張">‹</button><button type="button" data-nf-marquee-next aria-label="下一張">›</button></div>
       <div class="nf-marquee-dots">${list.map((_, index) => `<button type="button" data-nf-marquee-dot="${index}" class="${index === 0 ? "active" : ""}" aria-label="第 ${index + 1} 張"></button>`).join("")}</div>
     </div>`;
   }
@@ -619,6 +618,8 @@
     const dots = [...root.querySelectorAll("[data-nf-marquee-dot]")];
     let index = 0;
     let timer = null;
+    let touchStartX = 0;
+    let touchDeltaX = 0;
     const go = (next) => {
       index = (next + dots.length) % dots.length;
       if (track) track.style.transform = `translateX(-${index * 100}%)`;
@@ -628,8 +629,29 @@
       clearInterval(timer);
       timer = setInterval(() => go(index + 1), 3000);
     };
-    root.querySelector("[data-nf-marquee-prev]")?.addEventListener("click", () => { go(index - 1); restart(); });
-    root.querySelector("[data-nf-marquee-next]")?.addEventListener("click", () => { go(index + 1); restart(); });
+    root.addEventListener("touchstart", (event) => {
+      touchStartX = event.touches?.[0]?.clientX || 0;
+      touchDeltaX = 0;
+    }, { passive: true });
+    root.addEventListener("touchmove", (event) => {
+      touchDeltaX = (event.touches?.[0]?.clientX || 0) - touchStartX;
+    }, { passive: true });
+    root.addEventListener("touchend", () => {
+      if (Math.abs(touchDeltaX) > 35) {
+        go(index + (touchDeltaX < 0 ? 1 : -1));
+        restart();
+      }
+      setTimeout(() => { touchDeltaX = 0; }, 0);
+    }, { passive: true });
+    root.dataset.swipeDelta = "0";
+    root.addEventListener("pointerdown", (event) => {
+      root.dataset.swipeStartX = String(event.clientX || 0);
+      root.dataset.swipeDelta = "0";
+    });
+    root.addEventListener("pointermove", (event) => {
+      const start = Number(root.dataset.swipeStartX || 0);
+      if (start) root.dataset.swipeDelta = String((event.clientX || 0) - start);
+    });
     dots.forEach((dot) => dot.addEventListener("click", () => { go(Number(dot.dataset.nfMarqueeDot || 0)); restart(); }));
     restart();
   }
@@ -648,22 +670,42 @@
     renderShell(`<section class="nf-card nf-marquee-card"><div class="nf-body">
       <div class="nf-marquee-square">${marqueeSliderHtml(items)}</div>
       <div class="nf-marquee-buttons">
-        <button class="nf-btn primary" type="button" disabled>${esc(config.title || "TDEA 跑馬燈")}</button>
         <button class="nf-btn primary" data-marquee-action="points" ${right.enabled === false ? "disabled" : ""}>${esc(right.label || "查詢點數")}</button>
       </div>
       <div class="nf-ok" data-marquee-result hidden></div>
-    </div></section>`);
+    </div></section><div class="nf-marquee-toast" data-marquee-toast hidden></div>`, "nf-marquee-shell");
     bindMarqueeSlider();
     app.querySelectorAll("[data-marquee-image-id]").forEach((button) => {
+      let pointerStartX = 0;
+      let pointerStartY = 0;
+      let moved = false;
+      button.addEventListener("pointerdown", (event) => {
+        pointerStartX = event.clientX || 0;
+        pointerStartY = event.clientY || 0;
+        moved = false;
+      });
+      button.addEventListener("pointermove", (event) => {
+        if (Math.abs((event.clientX || 0) - pointerStartX) > 20 || Math.abs((event.clientY || 0) - pointerStartY) > 20) moved = true;
+      });
       button.addEventListener("click", async () => {
+        const slider = button.closest("[data-nf-marquee-slider]");
+        const sliderMoved = Math.abs(Number(slider?.dataset.swipeDelta || 0)) > 20;
+        if (moved || sliderMoved) return;
         const imageId = button.dataset.marqueeImageId || "";
         const imageUrl = button.dataset.marqueeImageUrl || "";
         const linkUrl = button.dataset.marqueeLinkUrl || "";
         const resultNode = app.querySelector("[data-marquee-result]");
-        if (resultNode) {
-          resultNode.hidden = false;
-          resultNode.textContent = "處理中...";
-        }
+        const toastNode = app.querySelector("[data-marquee-toast]");
+        const showToast = (message) => {
+          if (toastNode) {
+            toastNode.textContent = message;
+            toastNode.hidden = false;
+            clearTimeout(showToast.timer);
+            showToast.timer = setTimeout(() => { toastNode.hidden = true; }, 1800);
+          }
+        };
+        if (resultNode) resultNode.hidden = true;
+        showToast("處理中...");
         const actionResponse = await fetch(`${api}/api/marquee/reward`, {
           method: "POST",
           headers: { "content-type": "application/json" },
@@ -671,12 +713,13 @@
         });
         const actionResult = await actionResponse.json().catch(() => ({}));
         if (!actionResponse.ok || !actionResult.success) {
-          if (resultNode) resultNode.textContent = actionResult.message || "贈點失敗";
+          showToast(actionResult.message || "贈點失敗");
           alert(actionResult.message || "贈點失敗");
           return;
         }
-        if (resultNode) resultNode.textContent = actionResult.awarded ? `已贈點 +${actionResult.points || 1}` : "今日已領取此圖片點數";
-        if (linkUrl) location.href = linkUrl;
+        const message = actionResult.awarded ? `已贈點 +${actionResult.points || 1}` : "今日已領取此圖片點數";
+        showToast(message);
+        if (linkUrl) setTimeout(() => { location.href = linkUrl; }, 650);
       });
     });
     app.querySelectorAll("[data-marquee-action]").forEach((button) => {
