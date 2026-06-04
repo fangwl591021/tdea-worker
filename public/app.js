@@ -17,6 +17,7 @@
   const state = { view: "dashboard", drawer: "", data: load(), registrationLists: {} };
   let lineDraftAutoImporting = false;
   let lineDraftLastAutoImport = 0;
+  let rosterCleanupApplied = false;
 
   function sidebarCollapsed() { return localStorage.getItem(sidebarCollapsedKey) === "Y"; }
   function setSidebarCollapsed(value) { localStorage.setItem(sidebarCollapsedKey, value ? "Y" : "N"); }
@@ -84,6 +85,8 @@
     return rows.filter((row) => !isDefinitelyNonRosterRow(row, type));
   }
   function cleanupRosterData() {
+    if (rosterCleanupApplied) return;
+    rosterCleanupApplied = true;
     let changed = false;
     ["association", "vendor"].forEach((type) => {
       const rows = Array.isArray(state.data[type]) ? state.data[type] : [];
@@ -550,8 +553,7 @@
   }
 
   function render() {
-    cleanupRosterData();
-    const [title, sub] = labels[state.view];
+    const [title, sub] = labels[state.view] || labels.dashboard;
     const collapsed = sidebarCollapsed();
     document.querySelector("#app").innerHTML = `
       <div class="shell ${collapsed ? "sidebar-collapsed" : ""}">
@@ -1050,5 +1052,9 @@
     }
   };
   render();
+  setTimeout(() => {
+    cleanupRosterData();
+    if (state.view === "association" || state.view === "vendor") render();
+  }, 0);
   loadRosterSeed();
 })();
