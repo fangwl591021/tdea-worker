@@ -12,9 +12,10 @@
   const adminEmail = () => localStorage.getItem("tdea-admin-email") || sessionStorage.getItem("tdea-admin-email") || "";
   const loadData = () => { try { return JSON.parse(localStorage.getItem(storageKey) || "{}"); } catch (_) { return {}; } };
   const saveData = (data) => localStorage.setItem(storageKey, JSON.stringify(data));
+  const id = () => (crypto?.randomUUID ? crypto.randomUUID() : `img-${Date.now()}-${Math.random().toString(36).slice(2)}`);
 
   function blankButton(label) {
-    return { enabled: true, label, eventName: `TDEA 跑馬燈 ${label}`, eventContent: "跑馬燈按鈕點擊簽到贈點", points: 1 };
+    return { enabled: true, label, eventName: `TDEA 跑馬燈 ${label}`, eventContent: "跑馬燈按鈕點擊", points: 1 };
   }
 
   function blankConfig() {
@@ -25,6 +26,7 @@
       title: "TDEA 跑馬燈",
       imageUrl: "",
       imageUrls: [],
+      imageItems: [],
       left: blankButton("簽到贈點"),
       right: { ...blankButton("查詢點數"), eventName: "TDEA 跑馬燈 查詢點數", eventContent: "查詢母站點數", points: 1 }
     };
@@ -34,18 +36,39 @@
     return { ...blankButton(fallback), ...(input || {}), points: Math.max(1, Math.round(Number(input?.points || 1))) };
   }
 
-  function uniqueUrls(urls) {
-    return [...new Set((urls || []).map((url) => String(url || "").trim()).filter(Boolean))];
+  function normalizeItem(item, index) {
+    const imageUrl = String(item?.imageUrl || item?.url || item || "").trim();
+    return {
+      id: String(item?.id || id()).trim(),
+      imageUrl,
+      linkUrl: String(item?.linkUrl || "").trim(),
+      title: String(item?.title || "").trim(),
+      points: Math.max(1, Math.round(Number(item?.points || 1))),
+      enabled: item?.enabled !== false,
+      order: Number.isFinite(Number(item?.order)) ? Number(item.order) : index
+    };
+  }
+
+  function normalizeItems(input) {
+    const rawItems = Array.isArray(input?.imageItems) ? input.imageItems : [];
+    const legacyUrls = [...new Set([...(Array.isArray(input?.imageUrls) ? input.imageUrls : []), input?.imageUrl].map((url) => String(url || "").trim()).filter(Boolean))];
+    const source = rawItems.length ? rawItems : legacyUrls.map((url, index) => ({ id: `legacy-${index + 1}`, imageUrl: url, points: 1, enabled: true, order: index }));
+    const seen = new Set();
+    return source.map(normalizeItem).filter((item) => {
+      if (!item.imageUrl || seen.has(item.id)) return false;
+      seen.add(item.id);
+      return true;
+    }).sort((a, b) => Number(a.order || 0) - Number(b.order || 0)).slice(0, 20);
   }
 
   function normalizeConfig(input) {
     const next = { ...blankConfig(), ...(input || {}) };
     next.keyword = keyword;
-    next.imageUrls = uniqueUrls([...(Array.isArray(next.imageUrls) ? next.imageUrls : []), next.imageUrl]);
+    next.imageItems = normalizeItems(next);
+    next.imageUrls = next.imageItems.map((item) => item.imageUrl);
     next.imageUrl = next.imageUrls[0] || "";
     next.left = normalizeButton(next.left, "簽到贈點");
     next.right = normalizeButton(next.right, "查詢點數");
-    next.right.eventContent = next.right.eventContent || "查詢母站點數";
     return next;
   }
 
@@ -85,20 +108,19 @@
       .marquee-slide{flex:0 0 100%;height:100%}
       .marquee-slide img{width:100%;height:100%;object-fit:cover}
       .marquee-square span{color:#667085;font-weight:800}
-      .marquee-preview-buttons{display:grid;grid-template-columns:1fr 1fr;gap:12px;width:min(100%,420px);margin:14px auto 18px}
-      .marquee-preview-buttons button{border:0;border-radius:10px;background:#06c755;color:#fff;padding:13px 12px;font-weight:900}
       .marquee-button-grid{display:grid;grid-template-columns:1fr 1fr;gap:14px}
       .marquee-button-card{border:1px solid #e4e7ec;border-radius:10px;padding:14px;display:grid;gap:12px;background:#fff}
       .marquee-liff{display:flex;gap:8px;align-items:center;flex-wrap:wrap;padding:12px 14px;border-radius:10px;background:#f8fafc;border:1px solid #e4e7ec;color:#344054}
-      .marquee-images{display:grid;gap:8px}
-      .marquee-image-row{display:grid;grid-template-columns:1fr auto;gap:8px;align-items:center;border:1px solid #e4e7ec;border-radius:8px;padding:8px;background:#f8fafc}
+      .marquee-images{display:grid;gap:10px}
+      .marquee-image-row{display:grid;grid-template-columns:1fr 1fr 120px auto;gap:8px;align-items:end;border:1px solid #e4e7ec;border-radius:8px;padding:10px;background:#f8fafc}
+      .marquee-image-row label{display:grid;gap:4px;font-weight:800;color:#344054}
       .marquee-image-row input{width:100%;box-sizing:border-box}
       .marquee-dots{position:absolute;left:0;right:0;bottom:10px;display:flex;gap:6px;justify-content:center}
       .marquee-dots button{width:8px;height:8px;border-radius:50%;border:0;background:rgba(255,255,255,.6);padding:0}
       .marquee-dots button.active{background:#06c755}
       .marquee-arrows{position:absolute;left:0;right:0;top:50%;display:flex;justify-content:space-between;transform:translateY(-50%);pointer-events:none}
       .marquee-arrows button{pointer-events:auto;border:0;border-radius:999px;background:rgba(17,24,39,.62);color:#fff;width:34px;height:34px;margin:0 10px;font-size:20px}
-      @media(max-width:1100px){.marquee-workspace{grid-template-columns:1fr}.marquee-preview{position:static}.marquee-button-grid{grid-template-columns:1fr}}
+      @media(max-width:1100px){.marquee-workspace{grid-template-columns:1fr}.marquee-preview{position:static}.marquee-button-grid{grid-template-columns:1fr}.marquee-image-row{grid-template-columns:1fr}}
     `;
     document.head.appendChild(style);
   }
@@ -130,10 +152,10 @@
 
   function buttonFields(side, button) {
     const title = side === "left" ? "左側按鈕" : "右側按鈕";
-    const extra = side === "right" ? `<div class="muted">右側按鈕固定做母站點數查詢，不會寫入點數。</div>` : `
-      <div class="field"><label>母站事件名稱</label><input data-marquee-button="${side}" data-field="eventName" value="${esc(button.eventName)}"></div>
-      <div class="field"><label>母站事件內容</label><input data-marquee-button="${side}" data-field="eventContent" value="${esc(button.eventContent)}"></div>
-      <div class="field"><label>贈點點數</label><input type="number" min="1" step="1" data-marquee-button="${side}" data-field="points" value="${esc(button.points || 1)}"></div>
+    const extra = side === "right" ? `<div class="muted">右側按鈕目前用於查詢點數。</div>` : `
+      <div class="field"><label>事件名稱</label><input data-marquee-button="${side}" data-field="eventName" value="${esc(button.eventName)}"></div>
+      <div class="field"><label>事件內容</label><input data-marquee-button="${side}" data-field="eventContent" value="${esc(button.eventContent)}"></div>
+      <div class="field"><label>贈點數</label><input type="number" min="1" step="1" data-marquee-button="${side}" data-field="points" value="${esc(button.points || 1)}"></div>
     `;
     return `
       <div class="marquee-button-card">
@@ -146,35 +168,37 @@
   }
 
   function imageListHtml(config) {
-    const urls = uniqueUrls(config.imageUrls || []);
-    if (!urls.length) return `<div class="muted">尚未上傳圖片。可一次選多張，LIFF 會每 3 秒自動輪播。</div>`;
-    return `<div class="marquee-images">${urls.map((url, index) => `
-      <div class="marquee-image-row">
-        <input data-marquee-image-url data-index="${index}" value="${esc(url)}">
+    const items = normalizeItems(config);
+    if (!items.length) return `<div class="muted">尚未上傳圖片。可一次選多張，LIFF 會每 3 秒自動輪播。</div>`;
+    return `<div class="marquee-images">${items.map((item, index) => `
+      <div class="marquee-image-row" data-marquee-image-row="${esc(item.id)}">
+        <label>圖片 URL<input data-marquee-item="${esc(item.id)}" data-field="imageUrl" value="${esc(item.imageUrl)}"></label>
+        <label>點擊連結網址<input data-marquee-item="${esc(item.id)}" data-field="linkUrl" value="${esc(item.linkUrl)}" placeholder="https://..."></label>
+        <label>每日贈點<input type="number" min="1" step="1" data-marquee-item="${esc(item.id)}" data-field="points" value="${esc(item.points || 1)}"></label>
         <button class="btn danger" type="button" data-marquee-remove-image="${index}">刪除</button>
       </div>
     `).join("")}</div>`;
   }
 
   function previewHtml(config) {
-    const urls = uniqueUrls(config.imageUrls || []);
-    if (!urls.length) return `<span>尚未設定圖片</span>`;
-    const index = Math.min(previewIndex, urls.length - 1);
+    const items = normalizeItems(config);
+    if (!items.length) return `<span>尚未設定圖片</span>`;
+    const index = Math.min(previewIndex, items.length - 1);
     return `
       <div class="marquee-track" data-marquee-track style="transform:translateX(-${index * 100}%)">
-        ${urls.map((url) => `<div class="marquee-slide"><img src="${esc(url)}" alt=""></div>`).join("")}
+        ${items.map((item) => `<div class="marquee-slide"><img src="${esc(item.imageUrl)}" alt=""></div>`).join("")}
       </div>
-      ${urls.length > 1 ? `<div class="marquee-arrows"><button type="button" data-marquee-prev>‹</button><button type="button" data-marquee-next>›</button></div><div class="marquee-dots">${urls.map((_, dotIndex) => `<button type="button" data-marquee-dot="${dotIndex}" class="${dotIndex === index ? "active" : ""}"></button>`).join("")}</div>` : ""}
+      ${items.length > 1 ? `<div class="marquee-arrows"><button type="button" data-marquee-prev>‹</button><button type="button" data-marquee-next>›</button></div><div class="marquee-dots">${items.map((_, dotIndex) => `<button type="button" data-marquee-dot="${dotIndex}" class="${dotIndex === index ? "active" : ""}"></button>`).join("")}</div>` : ""}
     `;
   }
 
   function render() {
-    const config = draft || blankConfig();
+    const config = normalizeConfig(draft || blankConfig());
     const main = document.querySelector(".main");
     if (!main) return;
     main.innerHTML = `
       <div class="topbar">
-        <div><h1>跑馬燈</h1><div class="subtitle">800 x 800 LIFF Tall 跑馬燈，可多張輪播；左鍵簽到贈點，右鍵查詢點數。</div></div>
+        <div><h1>跑馬燈</h1><div class="subtitle">LIFF Tall 多圖輪播。每張圖片可設定連結，會員每天點同一張圖只贈點一次。</div></div>
         <div class="actions"><button class="btn" data-marquee-copy-url>複製 LIFF URL</button><button class="btn primary" data-marquee-save>儲存並啟用</button></div>
       </div>
       <div class="marquee-workspace">
@@ -187,21 +211,17 @@
               <div class="field"><label>LINE 替代文字</label><input data-marquee-field="altText" value="${esc(config.altText || "")}"></div>
             </div>
             <div class="field"><label>標題</label><input data-marquee-field="title" value="${esc(config.title || "")}"></div>
-            <div class="field"><label>800 x 800 圖片上傳</label><input type="file" accept="image/*" multiple data-marquee-upload><div class="muted">可一次選多張 JPG/PNG。LIFF 會每 3 秒自動左移輪播。</div></div>
+            <div class="field"><label>圖片上傳</label><input type="file" accept="image/*" multiple data-marquee-upload><div class="muted">可一次選多張 JPG/PNG。LIFF 會每 3 秒自動左移輪播。</div></div>
             <div class="field"><label>圖片列表</label>${imageListHtml(config)}</div>
             <div class="marquee-liff"><strong>LIFF Tall：</strong><span>${esc(liffUrl)}</span></div>
           </div>
         </section>
         <aside class="panel marquee-preview">
-          <div class="panel-head"><h2 class="panel-title">預覽</h2><span class="muted">${uniqueUrls(config.imageUrls).length} 張</span></div>
+          <div class="panel-head"><h2 class="panel-title">預覽</h2><span class="muted">${normalizeItems(config).length} 張</span></div>
           <div class="marquee-square">${previewHtml(config)}</div>
-          <div class="marquee-preview-buttons">
-            <button type="button">${esc(config.left?.label || "簽到贈點")}</button>
-            <button type="button">${esc(config.right?.label || "查詢點數")}</button>
-          </div>
         </aside>
         <section class="panel" style="grid-column:1/-1">
-          <div class="panel-head"><h2 class="panel-title">按鈕與母站設定</h2></div>
+          <div class="panel-head"><h2 class="panel-title">底部按鈕設定</h2></div>
           <div class="marquee-form"><div class="marquee-button-grid">${buttonFields("left", config.left || blankButton("簽到贈點"))}${buttonFields("right", config.right || blankButton("查詢點數"))}</div></div>
         </section>
       </div>
@@ -218,7 +238,15 @@
     document.querySelectorAll("[data-marquee-field]").forEach((input) => {
       next[input.dataset.marqueeField] = input.value.trim();
     });
-    next.imageUrls = uniqueUrls([...document.querySelectorAll("[data-marquee-image-url]")].map((input) => input.value));
+    const itemMap = new Map(current.imageItems.map((item) => [item.id, { ...item }]));
+    document.querySelectorAll("[data-marquee-item]").forEach((input) => {
+      const item = itemMap.get(input.dataset.marqueeItem);
+      if (!item) return;
+      const field = input.dataset.field;
+      item[field] = field === "points" ? Math.max(1, Math.round(Number(input.value || 1))) : input.value.trim();
+    });
+    next.imageItems = [...itemMap.values()];
+    next.imageUrls = next.imageItems.map((item) => item.imageUrl).filter(Boolean);
     next.imageUrl = next.imageUrls[0] || "";
     for (const side of ["left", "right"]) {
       next[side] = { ...(next[side] || {}) };
@@ -237,14 +265,11 @@
   }
 
   function updatePreviewOnly() {
-    const config = draft || blankConfig();
+    const config = normalizeConfig(draft || blankConfig());
     const preview = document.querySelector(".marquee-preview");
     if (!preview) return;
-    preview.querySelector(".panel-head .muted").textContent = `${uniqueUrls(config.imageUrls).length} 張`;
+    preview.querySelector(".panel-head .muted").textContent = `${normalizeItems(config).length} 張`;
     preview.querySelector(".marquee-square").innerHTML = previewHtml(config);
-    const buttons = preview.querySelectorAll(".marquee-preview-buttons button");
-    if (buttons[0]) buttons[0].textContent = config.left?.label || "簽到贈點";
-    if (buttons[1]) buttons[1].textContent = config.right?.label || "查詢點數";
     bindPreviewControls();
   }
 
@@ -276,24 +301,32 @@
       uploaded.push(result.url);
     }
     updateDraftOnly();
-    draft.imageUrls = uniqueUrls([...(draft.imageUrls || []), ...uploaded]);
-    draft.imageUrl = draft.imageUrls[0] || "";
+    draft.imageItems = normalizeItems(draft).concat(uploaded.map((url, index) => ({
+      id: id(),
+      imageUrl: url,
+      linkUrl: "",
+      title: "",
+      points: 1,
+      enabled: true,
+      order: normalizeItems(draft).length + index
+    })));
+    draft = normalizeConfig(draft);
     saveLocal(draft);
     render();
     toast(`已上傳 ${uploaded.length} 張圖片`);
   }
 
   function goPreview(index) {
-    const urls = uniqueUrls(draft?.imageUrls || []);
-    if (!urls.length) return;
-    previewIndex = (index + urls.length) % urls.length;
+    const items = normalizeItems(draft || {});
+    if (!items.length) return;
+    previewIndex = (index + items.length) % items.length;
     updatePreviewOnly();
   }
 
   function startPreviewTimer() {
     clearInterval(previewTimer);
-    const urls = uniqueUrls(draft?.imageUrls || []);
-    if (urls.length > 1) previewTimer = setInterval(() => goPreview(previewIndex + 1), 3000);
+    const items = normalizeItems(draft || {});
+    if (items.length > 1) previewTimer = setInterval(() => goPreview(previewIndex + 1), 3000);
   }
 
   function bindPreviewControls() {
@@ -315,7 +348,7 @@
       await navigator.clipboard?.writeText(liffUrl).catch(() => {});
       toast("LIFF URL 已複製");
     });
-    document.querySelectorAll("[data-marquee-field],[data-marquee-button],[data-marquee-enabled],[data-marquee-image-url]").forEach((input) => {
+    document.querySelectorAll("[data-marquee-field],[data-marquee-button],[data-marquee-enabled],[data-marquee-item]").forEach((input) => {
       input.addEventListener("input", () => { updateDraftOnly(); updatePreviewOnly(); });
       input.addEventListener("change", () => { updateDraftOnly(); updatePreviewOnly(); });
     });
@@ -323,9 +356,9 @@
       button.addEventListener("click", () => {
         updateDraftOnly();
         const index = Number(button.dataset.marqueeRemoveImage || -1);
-        draft.imageUrls = uniqueUrls(draft.imageUrls).filter((_, itemIndex) => itemIndex !== index);
-        draft.imageUrl = draft.imageUrls[0] || "";
-        previewIndex = Math.min(previewIndex, Math.max(draft.imageUrls.length - 1, 0));
+        draft.imageItems = normalizeItems(draft).filter((_, itemIndex) => itemIndex !== index);
+        draft = normalizeConfig(draft);
+        previewIndex = Math.min(previewIndex, Math.max(draft.imageItems.length - 1, 0));
         saveLocal(draft);
         render();
       });

@@ -7,7 +7,8 @@ type MonthlyConfig = { enabled?: boolean; keyword?: string; month?: string; altT
 type VendorCardItem = { id?: string; enabled?: boolean; name?: string; label?: string; actionText?: string; imageUrl?: string; order?: number };
 type VendorCardConfig = { enabled?: boolean; keyword?: string; altText?: string; title?: string; items?: VendorCardItem[]; updatedAt?: string };
 type MarqueeButtonConfig = { label?: string; eventName?: string; eventContent?: string; points?: number; enabled?: boolean };
-type MarqueeConfig = { enabled?: boolean; keyword?: string; altText?: string; title?: string; imageUrl?: string; imageUrls?: string[]; left?: MarqueeButtonConfig; right?: MarqueeButtonConfig; updatedAt?: string };
+type MarqueeImageItem = { id?: string; imageUrl?: string; linkUrl?: string; title?: string; points?: number; enabled?: boolean; order?: number };
+type MarqueeConfig = { enabled?: boolean; keyword?: string; altText?: string; title?: string; imageUrl?: string; imageUrls?: string[]; imageItems?: MarqueeImageItem[]; left?: MarqueeButtonConfig; right?: MarqueeButtonConfig; updatedAt?: string };
 type RegistrationRecord = { activityId?: string; activityNo?: string; activityName?: string; formId?: string; count: number; lastSubmittedAt?: string };
 type RegistrationSummary = { updatedAt?: string; activities: Record<string, RegistrationRecord> };
 type RegistrationEntry = { id: string; sourceId?: string; formId?: string; submittedAt?: string; activity?: Record<string, unknown>; answers?: Record<string, unknown>; status?: string; checkedInAt?: string; sessionId?: string; queryCode?: string; checkinToken?: string; cancelledAt?: string; lineUserId?: string; pointsSyncedAt?: string; pointResults?: unknown[] };
@@ -219,11 +220,51 @@ function normalizeMarqueeButton(input: MarqueeButtonConfig | undefined, fallback
   };
 }
 
+function marqueeImageId(value: string, index: number) {
+  const source = clean(value) || `image-${index + 1}`;
+  let hash = 0;
+  for (let i = 0; i < source.length; i += 1) hash = ((hash << 5) - hash + source.charCodeAt(i)) | 0;
+  return `img-${index + 1}-${Math.abs(hash).toString(36)}`;
+}
+
+function normalizeMarqueeImageItems(config: MarqueeConfig | undefined): MarqueeImageItem[] {
+  const rawItems = Array.isArray(config?.imageItems) ? config?.imageItems || [] : [];
+  const legacyUrls = [...new Set([...(Array.isArray(config?.imageUrls) ? config?.imageUrls || [] : []), config?.imageUrl].map((url) => clean(url)).filter(Boolean))];
+  const items = rawItems.length
+    ? rawItems.map((item, index) => ({ ...item, order: Number.isFinite(Number(item?.order)) ? Number(item?.order) : index }))
+    : legacyUrls.map((url, index) => ({ id: marqueeImageId(url, index), imageUrl: url, linkUrl: "", points: 1, enabled: true, order: index }));
+  const seen = new Set<string>();
+  return items
+    .map((item, index) => {
+      const imageUrl = clean(item.imageUrl);
+      const id = clean(item.id) || marqueeImageId(imageUrl, index);
+      const points = Number(item.points ?? 1);
+      return {
+        id,
+        imageUrl,
+        linkUrl: clean(item.linkUrl),
+        title: clean(item.title),
+        points: Number.isFinite(points) && points > 0 ? Math.min(Math.round(points), 9999) : 1,
+        enabled: item.enabled !== false,
+        order: Number.isFinite(Number(item.order)) ? Number(item.order) : index
+      };
+    })
+    .filter((item) => {
+      const key = item.id || item.imageUrl || "";
+      if (!item.imageUrl || seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    })
+    .sort((a, b) => Number(a.order || 0) - Number(b.order || 0))
+    .slice(0, 20);
+}
+
 function normalizeMarqueeConfig(config: MarqueeConfig | undefined): MarqueeConfig {
   const title = clean(config?.title || "TDEA 跑馬燈");
   const right = normalizeMarqueeButton(config?.right, "查詢點數", `${title} 查詢點數`);
   right.eventContent = clean(config?.right?.eventContent || "查詢母站點數") || "查詢母站點數";
-  const imageUrls = [...new Set([...(Array.isArray(config?.imageUrls) ? config?.imageUrls || [] : []), config?.imageUrl].map((url) => clean(url)).filter(Boolean))].slice(0, 20);
+  const imageItems = normalizeMarqueeImageItems(config);
+  const imageUrls = imageItems.map((item) => item.imageUrl || "").filter(Boolean);
   return {
     enabled: config?.enabled !== false,
     keyword: marqueeKeyword,
@@ -231,6 +272,7 @@ function normalizeMarqueeConfig(config: MarqueeConfig | undefined): MarqueeConfi
     title,
     imageUrl: imageUrls[0] || "",
     imageUrls,
+    imageItems,
     left: normalizeMarqueeButton(config?.left, "左側簽到", `${title} 左側簽到`),
     right,
     updatedAt: config?.updatedAt
@@ -1240,24 +1282,56 @@ async function updateLocalPoints(env: Env, lineUserId: string, amount: number, r
   return { success: true, balance: nextBalance, log, account: next };
 }
 
+function taipeiDateKey(date = new Date()) {
+  return new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Taipei" }).format(date);
+}
+
 async function rewardMarqueePoint(request: Request, env: Env) {
   const input = await request.json().catch(() => ({})) as Record<string, unknown>;
   const lineUserId = firstClean(input.lineUserId, input.lineUid, input.uid, input.LINE_user_id, input.line_user_id);
-  const side = "left";
   if (!lineUserId) return json({ success: false, message: "Missing LINE UID" }, 400);
   const config = await readMarqueeConfig(env);
   if (config.enabled === false) return json({ success: false, message: "跑馬燈尚未啟用" }, 403);
-  const button = config.left;
-  if (button?.enabled === false) return json({ success: false, message: "此按鈕尚未啟用" }, 403);
-  const points = Math.max(1, Math.round(Number(button?.points || 1)));
-  const label = clean(button?.label || "左側簽到");
-  const eventName = clean(button?.eventName || `${config.title || "TDEA 跑馬燈"} ${label}`);
-  const eventContent = clean(button?.eventContent || "跑馬燈按鈕點擊簽到贈點");
+  const imageId = firstClean(input.imageId, input.itemId, input.id);
+  const imageUrl = firstClean(input.imageUrl, input.url);
+  const items = Array.isArray(config.imageItems) ? config.imageItems : [];
+  const item = items.find((entry) => clean(entry.id) === imageId) || items.find((entry) => clean(entry.imageUrl) === imageUrl);
+  if (!item || item.enabled === false) return json({ success: false, message: "跑馬燈圖片尚未設定或未啟用" }, 404);
+  const points = Math.max(1, Math.round(Number(item.points || 1)));
+  const title = clean(item.title || config.title || "TDEA 跑馬燈");
+  const dateKey = taipeiDateKey();
+  const referenceId = `marquee:${dateKey}:${clean(item.id || item.imageUrl || imageUrl)}`;
+  const account = await readPointAccount(env, lineUserId);
+  const existing = (account.logs || []).find((log) => log.source === "marquee_image_click" && log.referenceId === referenceId);
+  if (existing) {
+    return json({
+      success: true,
+      awarded: false,
+      duplicate: true,
+      points: 0,
+      balance: account.balance,
+      imageId: item.id,
+      linkUrl: clean(item.linkUrl),
+      message: "今日已領取此圖片點數"
+    });
+  }
+  const eventContent = `${title} 圖片點擊每日贈點`;
   const result = await updateLocalPoints(env, lineUserId, points, eventContent, {
-    source: "marquee_checkin",
-    referenceId: `${side}:${eventName}`
+    source: "marquee_image_click",
+    referenceId
   });
-  return json({ success: Boolean((result as Record<string, unknown>).success), side, label, points, eventName, eventContent, result });
+  const record = result as Record<string, unknown>;
+  return json({
+    success: Boolean(record.success),
+    awarded: Boolean(record.success),
+    duplicate: false,
+    points,
+    balance: record.balance,
+    imageId: item.id,
+    linkUrl: clean(item.linkUrl),
+    eventContent,
+    result
+  });
 }
 
 async function queryMarqueePoints(request: Request, env: Env) {
