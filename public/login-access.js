@@ -8,6 +8,14 @@
 
   const normalize = (value) => String(value || "").trim().toUpperCase();
   const clean = (value) => String(value || "").trim();
+  const isNonRosterDomRow = (row) => {
+    const first = normalize(row?.children?.[0]?.textContent);
+    const second = normalize(row?.children?.[1]?.textContent);
+    const text = clean(row?.textContent);
+    if (/^TDEA/.test(first) || /^TDEA/.test(second)) return true;
+    if (/TDEA/.test(first + second) && /LIFF|LINE|跑馬燈|個人訊息|關鍵字/.test(text)) return true;
+    return false;
+  };
 
   function adminEmail() {
     return sessionStorage.getItem(adminKey) || localStorage.getItem(adminKey) || "";
@@ -146,6 +154,10 @@
     }
 
     for (const row of bodyRows) {
+      if (isNonRosterDomRow(row)) {
+        row.remove();
+        continue;
+      }
       const memberNo = normalize(row.children[0]?.textContent);
       const member = findMember(data, memberNo);
       const remote = remoteAccess.get(memberNo);

@@ -109,6 +109,13 @@
       lineUserId: lineUidFromRow(row)
     };
   }
+  function isNonRosterDomRow(row) {
+    const cells = Array.from(row.children).map((cell) => (cell.textContent || "").trim().toUpperCase());
+    const first = cells[0] || "";
+    const second = cells[1] || "";
+    const text = row.textContent || "";
+    return /^TDEA/.test(first) || /^TDEA/.test(second) || (/TDEA/.test(first + second) && /LIFF|LINE|跑馬燈|個人訊息|關鍵字/.test(text));
+  }
 
   function openComposer(member) {
     injectStyles();
@@ -199,6 +206,10 @@
       const hasMemberNo = heads.some((text) => text.includes("會員編號") || text.includes("廠商"));
       if (!hasOperation || !hasMemberNo) return;
       table.querySelectorAll("tbody tr").forEach((row) => {
+        if (isNonRosterDomRow(row)) {
+          row.remove();
+          return;
+        }
         if (row.dataset.pmReady) return;
         const member = memberFromRow(row);
         if (!member.memberNo && !member.name) return;

@@ -70,7 +70,12 @@
   function save() { localStorage.setItem(key, JSON.stringify(state.data)); }
   function isDefinitelyNonRosterRow(row, type) {
     const memberNo = String(row?.memberNo || "").trim().toUpperCase();
+    const name = String(row?.name || row?.companyName || row?.keyword || row?.title || "").trim().toUpperCase();
+    const note = String(row?.note || row?.purpose || row?.reply || "").trim();
     if (/^TDEA/.test(memberNo)) return true;
+    if (/^TDEA/.test(name) && !/^[A-Z]\d{7}$/.test(memberNo)) return true;
+    if (!memberNo && /^TDEA/.test(name)) return true;
+    if (/LINE|LIFF|跑馬燈|個人訊息|關鍵字/.test(note) && /^TDEA/.test(memberNo + name)) return true;
     if (type === "association" && memberNo && !/^[A-Z]\d{7}$/.test(memberNo)) return true;
     return false;
   }

@@ -9,6 +9,14 @@
 
   const normalize = (value) => String(value || "").trim().toUpperCase();
   const clean = (value) => String(value || "").trim();
+  const isNonRosterDomRow = (row) => {
+    const first = normalize(row?.children?.[0]?.textContent);
+    const second = normalize(row?.children?.[1]?.textContent);
+    const text = clean(row?.textContent);
+    if (/^TDEA/.test(first) || /^TDEA/.test(second)) return true;
+    if (/TDEA/.test(first + second) && /LIFF|LINE|跑馬燈|個人訊息|關鍵字/.test(text)) return true;
+    return false;
+  };
   const isLineUid = (value) => /^U[0-9a-f]{32}$/i.test(clean(value));
   const isSyntheticAiweEmail = (value) => /^U[0-9a-f]{32}@aiwe\./i.test(clean(value));
   const validLineUid = (value) => {
@@ -367,6 +375,10 @@
     let changed = false;
 
     for (const row of table.querySelectorAll("tbody tr")) {
+      if (isNonRosterDomRow(row)) {
+        row.remove();
+        continue;
+      }
       const memberNo = normalize(row.children[0]?.textContent);
       if (!memberNo) continue;
       const cell = row.querySelector(".aiwe-uid-cell");
