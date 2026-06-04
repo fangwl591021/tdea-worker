@@ -6,6 +6,8 @@ type MonthlyPage = { id?: string; activityNo?: string; imageUrl?: string; galler
 type MonthlyConfig = { enabled?: boolean; keyword?: string; month?: string; altText?: string; detailBaseUrl?: string; pages?: MonthlyPage[]; updatedAt?: string };
 type VendorCardItem = { id?: string; enabled?: boolean; name?: string; label?: string; actionText?: string; imageUrl?: string; order?: number };
 type VendorCardConfig = { enabled?: boolean; keyword?: string; altText?: string; title?: string; items?: VendorCardItem[]; updatedAt?: string };
+type MarqueeButtonConfig = { label?: string; eventName?: string; eventContent?: string; points?: number; enabled?: boolean };
+type MarqueeConfig = { enabled?: boolean; keyword?: string; altText?: string; title?: string; imageUrl?: string; left?: MarqueeButtonConfig; right?: MarqueeButtonConfig; updatedAt?: string };
 type RegistrationRecord = { activityId?: string; activityNo?: string; activityName?: string; formId?: string; count: number; lastSubmittedAt?: string };
 type RegistrationSummary = { updatedAt?: string; activities: Record<string, RegistrationRecord> };
 type RegistrationEntry = { id: string; sourceId?: string; formId?: string; submittedAt?: string; activity?: Record<string, unknown>; answers?: Record<string, unknown>; status?: string; checkedInAt?: string; sessionId?: string; queryCode?: string; checkinToken?: string; cancelledAt?: string; lineUserId?: string; pointsSyncedAt?: string; pointResults?: unknown[] };
@@ -34,6 +36,7 @@ type LineActivityAiResult = { intent?: string; confidence?: number; question?: s
 
 const monthlyKey = "flex/monthly-activity.json";
 const vendorCardKey = "flex/vendor-card-menu.json";
+const marqueeKey = "line/marquee.json";
 const registrationSummaryKey = "registrations/summary.json";
 const redeemListKey = "redeem/records.json";
 const pointLedgerKey = "points/ledger.json";
@@ -50,6 +53,7 @@ const googleMemberSheetCsvUrl = "https://docs.google.com/spreadsheets/d/1KzXzRsA
 const workerBaseUrl = "https://tdeawork.fangwl591021.workers.dev";
 const fixedKeyword = "TDEA每月活動";
 const vendorCardKeyword = "TDEA廠商列表";
+const marqueeKeyword = "TDEA跑馬燈";
 const queryKeyword = "TDEA活動查詢";
 const memberQrKeyword = "TDEA會員QR";
 const calendarKeyword = "TDEA行事曆";
@@ -201,6 +205,46 @@ async function writeVendorCardConfig(env: Env, config: VendorCardConfig) {
   const normalized = normalizeVendorCardConfig(config);
   normalized.updatedAt = new Date().toISOString();
   await env.ASSETS_BUCKET.put(vendorCardKey, JSON.stringify(normalized, null, 2), { httpMetadata: { contentType: "application/json; charset=utf-8", cacheControl: "no-store" } });
+  return true;
+}
+
+function normalizeMarqueeButton(input: MarqueeButtonConfig | undefined, fallbackLabel: string, fallbackEventName: string): MarqueeButtonConfig {
+  const points = Number(input?.points ?? 1);
+  return {
+    enabled: input?.enabled !== false,
+    label: clean(input?.label || fallbackLabel) || fallbackLabel,
+    eventName: clean(input?.eventName || fallbackEventName) || fallbackEventName,
+    eventContent: clean(input?.eventContent || "跑馬燈按鈕點擊簽到贈點") || "跑馬燈按鈕點擊簽到贈點",
+    points: Number.isFinite(points) && points > 0 ? Math.min(Math.round(points), 9999) : 1
+  };
+}
+
+function normalizeMarqueeConfig(config: MarqueeConfig | undefined): MarqueeConfig {
+  const title = clean(config?.title || "TDEA 跑馬燈");
+  return {
+    enabled: config?.enabled !== false,
+    keyword: marqueeKeyword,
+    altText: clean(config?.altText || "TDEA 跑馬燈") || "TDEA 跑馬燈",
+    title,
+    imageUrl: clean(config?.imageUrl),
+    left: normalizeMarqueeButton(config?.left, "左側簽到", `${title} 左側簽到`),
+    right: normalizeMarqueeButton(config?.right, "右側簽到", `${title} 右側簽到`),
+    updatedAt: config?.updatedAt
+  };
+}
+
+async function readMarqueeConfig(env: Env): Promise<MarqueeConfig> {
+  const object = env.ASSETS_BUCKET ? await env.ASSETS_BUCKET.get(marqueeKey) : null;
+  if (!object) return normalizeMarqueeConfig(undefined);
+  const data = await object.json().catch(() => ({}));
+  return normalizeMarqueeConfig(data as MarqueeConfig);
+}
+
+async function writeMarqueeConfig(env: Env, config: MarqueeConfig) {
+  if (!env.ASSETS_BUCKET) return false;
+  const normalized = normalizeMarqueeConfig(config);
+  normalized.updatedAt = new Date().toISOString();
+  await env.ASSETS_BUCKET.put(marqueeKey, JSON.stringify(normalized, null, 2), { httpMetadata: { contentType: "application/json; charset=utf-8", cacheControl: "no-store" } });
   return true;
 }
 
@@ -1190,6 +1234,26 @@ async function updateLocalPoints(env: Env, lineUserId: string, amount: number, r
   await writePointAccount(env, lineUserId, next);
   await appendPointLedger(env, log);
   return { success: true, balance: nextBalance, log, account: next };
+}
+
+async function rewardMarqueePoint(request: Request, env: Env) {
+  const input = await request.json().catch(() => ({})) as Record<string, unknown>;
+  const lineUserId = firstClean(input.lineUserId, input.lineUid, input.uid, input.LINE_user_id, input.line_user_id);
+  const side = clean(input.side).toLowerCase() === "right" ? "right" : "left";
+  if (!lineUserId) return json({ success: false, message: "Missing LINE UID" }, 400);
+  const config = await readMarqueeConfig(env);
+  if (config.enabled === false) return json({ success: false, message: "跑馬燈尚未啟用" }, 403);
+  const button = side === "right" ? config.right : config.left;
+  if (button?.enabled === false) return json({ success: false, message: "此按鈕尚未啟用" }, 403);
+  const points = Math.max(1, Math.round(Number(button?.points || 1)));
+  const label = clean(button?.label || (side === "right" ? "右側簽到" : "左側簽到"));
+  const eventName = clean(button?.eventName || `${config.title || "TDEA 跑馬燈"} ${label}`);
+  const eventContent = clean(button?.eventContent || "跑馬燈按鈕點擊簽到贈點");
+  const result = await updateLocalPoints(env, lineUserId, points, eventContent, {
+    source: "marquee_checkin",
+    referenceId: `${side}:${eventName}`
+  });
+  return json({ success: Boolean((result as Record<string, unknown>).success), side, label, points, eventName, eventContent, result });
 }
 
 async function getLegacySyncRecord(env: Env, lineUserId: string) {
@@ -2401,6 +2465,21 @@ async function getUploadedFile(env: Env, key: string) {
   responseHeaders.set("cache-control", "public, max-age=31536000");
   responseHeaders.set("access-control-allow-origin", "*");
   return new Response(object.body, { headers: responseHeaders });
+}
+
+async function uploadMarqueeImageApi(request: Request, env: Env) {
+  const guard = await requireAdmin(request, env);
+  if (guard) return guard;
+  if (!env.ASSETS_BUCKET) return json({ success: false, message: "R2 bucket is not configured" }, 503);
+  const form = await request.formData().catch(() => null);
+  const file = form?.get("file");
+  if (!(file instanceof File)) return json({ success: false, message: "Missing image file" }, 400);
+  if (!file.type.startsWith("image/")) return json({ success: false, message: "Only image files are supported" }, 400);
+  const key = `marquee/${Date.now()}-${crypto.randomUUID()}-${safeUploadFileName(file.name)}`;
+  await env.ASSETS_BUCKET.put(key, await file.arrayBuffer(), {
+    httpMetadata: { contentType: file.type || "application/octet-stream", cacheControl: "public, max-age=31536000" }
+  });
+  return json({ success: true, key, url: `${workerBaseUrl}/api/uploads/${key.split("/").map(encodeURIComponent).join("/")}` });
 }
 
 async function readLineActivityDraft(env: Env, lineUserId: string): Promise<LineActivityDraft | null> {
@@ -3721,11 +3800,12 @@ async function handleMonthlyWebhook(request: Request, env: Env, rawBody: string,
   const personalMessageEvents = allEvents.filter((event) => normalizeKeyword(extractTriggerText(event)) === normalizeKeyword(personalMessageKeyword));
   const uidBindEvents = allEvents.filter((event) => parseUidBindKeyword(extractTriggerText(event)).active);
   const vendorCardEvents = allEvents.filter((event) => normalizeKeyword(extractTriggerText(event)) === normalizeKeyword(vendorCardKeyword));
+  const marqueeEvents = allEvents.filter((event) => normalizeKeyword(extractTriggerText(event)) === normalizeKeyword(marqueeKeyword));
   const pointEvents = allEvents
     .map((event) => ({ event, query: parseMotherPointKeyword(extractTriggerText(event)) }))
     .filter((match): match is { event: LineEvent; query: { uid: string } } => Boolean(match.query));
   const events = allEvents.filter((event) => normalizeKeyword(extractTriggerText(event)) === normalizeKeyword(fixedKeyword));
-  if (!queryEvents.length && !memberQrEvents.length && !calendarEvents.length && !personalMessageEvents.length && !uidBindEvents.length && !vendorCardEvents.length && !pointEvents.length && !events.length) return null;
+  if (!queryEvents.length && !memberQrEvents.length && !calendarEvents.length && !personalMessageEvents.length && !uidBindEvents.length && !vendorCardEvents.length && !marqueeEvents.length && !pointEvents.length && !events.length) return null;
   const signature = request.headers.get("x-line-signature");
   if (!await verifyLineSignature(rawBody, signature, env.LINE_CHANNEL_SECRET)) return new Response("Invalid Signature", { status: 403, headers });
   if (uidBindEvents.length) return bindLineUidEvents(uidBindEvents, env);
@@ -3788,6 +3868,21 @@ async function handleMonthlyWebhook(request: Request, env: Env, rawBody: string,
     const lineReplies = await Promise.all(personalMessageEvents.map((event) => event.replyToken ? replyToLine(event.replyToken, [personalMessage], env) : Promise.resolve({ ok: false, status: 400, message: "Missing replyToken" })));
     return json({ success: true, mode: "personal-message", matched: [personalMessageKeyword], forwarded: false, lineReplies });
   }
+  if (marqueeEvents.length) {
+    const marqueeUrl = `${publicLiffUrl}?marquee=1`;
+    const marqueeMessage = {
+      type: "template",
+      altText: "TDEA 跑馬燈",
+      template: {
+        type: "buttons",
+        title: "TDEA 跑馬燈",
+        text: "請點下方按鈕開啟跑馬燈互動頁。",
+        actions: [{ type: "uri", label: "開啟跑馬燈", uri: marqueeUrl }]
+      }
+    };
+    const lineReplies = await Promise.all(marqueeEvents.map((event) => event.replyToken ? replyToLine(event.replyToken, [marqueeMessage], env) : Promise.resolve({ ok: false, status: 400, message: "Missing replyToken" })));
+    return json({ success: true, mode: "marquee", matched: [marqueeKeyword], forwarded: false, lineReplies });
+  }
   if (vendorCardEvents.length) {
     const config = await readVendorCardConfig(env);
     const items = config.items || [];
@@ -3842,6 +3937,10 @@ export default {
 	    if (request.method === "GET" && url.pathname === "/api/vendor-card-menu") return json({ success: true, data: await readVendorCardConfig(env) });
 	    if ((request.method === "PUT" || request.method === "POST") && url.pathname === "/api/vendor-card-menu") { const guard = await requireAdmin(request, env); if (guard) return guard; if (!env.ASSETS_BUCKET) return json({ success: false, message: "R2 bucket is not configured" }, 503); const config = await request.json().catch(() => ({})) as VendorCardConfig; await writeVendorCardConfig(env, config); return json({ success: true, data: await readVendorCardConfig(env), flex: buildVendorCardFlex(config) }); }
 	    if (request.method === "GET" && url.pathname === "/api/vendor-card-menu/flex") { const config = await readVendorCardConfig(env); return json({ success: true, flex: buildVendorCardFlex(config), data: config }); }
+	    if (request.method === "GET" && url.pathname === "/api/marquee") return json({ success: true, data: await readMarqueeConfig(env), liffUrl: `${publicLiffUrl}?marquee=1` });
+	    if ((request.method === "PUT" || request.method === "POST") && url.pathname === "/api/marquee") { const guard = await requireAdmin(request, env); if (guard) return guard; if (!env.ASSETS_BUCKET) return json({ success: false, message: "R2 bucket is not configured" }, 503); const config = await request.json().catch(() => ({})) as MarqueeConfig; await writeMarqueeConfig(env, config); return json({ success: true, data: await readMarqueeConfig(env), liffUrl: `${publicLiffUrl}?marquee=1` }); }
+	    if (request.method === "POST" && url.pathname === "/api/marquee/upload") return uploadMarqueeImageApi(request, env);
+	    if (request.method === "POST" && url.pathname === "/api/marquee/reward") return rewardMarqueePoint(request, env);
 	    if (request.method === "GET" && url.pathname === "/api/rich-menu") return getRichMenuApi(request, env);
 	    if ((request.method === "PUT" || request.method === "POST") && url.pathname === "/api/rich-menu") return saveRichMenuApi(request, env);
 	    if (request.method === "POST" && url.pathname === "/api/rich-menu/validate") return validateRichMenuApi(request, env);

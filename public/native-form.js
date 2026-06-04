@@ -7,13 +7,14 @@
   const queryMode = params.has("query");
   const memberQrMode = params.has("memberQr");
   const calendarMode = params.has("calendar");
+  const marqueeMode = params.has("marquee");
   const app = document.querySelector("#app");
   const liffId = "2005868456-cfANNVou";
   const calendarId = "7d66f2a96f192dda6cca2b04e60a6e549c7adf74f57721845d5b7e03f8b7ca89@group.calendar.google.com";
   let liffReady = null;
   let lineUserId = "";
 
-  if (!app || (!formId && !checkinToken && !redeemToken && !queryMode && !memberQrMode && !calendarMode)) return;
+  if (!app || (!formId && !checkinToken && !redeemToken && !queryMode && !memberQrMode && !calendarMode && !marqueeMode)) return;
 
   const esc = (value) => String(value ?? "").replace(/[&<>"']/g, (ch) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#039;" }[ch]));
   const trim = (value) => String(value ?? "").trim();
@@ -74,6 +75,9 @@
       .nf-query-lines{display:grid;gap:8px;color:#344054;line-height:1.55}
       .nf-query-lines strong{color:#111827}
       .nf-query-qr{display:grid;gap:8px;justify-items:center;text-align:center;color:#667085;font-size:13px}
+      .nf-marquee-square{width:min(100%,800px);aspect-ratio:1/1;margin:0 auto;border-radius:16px;overflow:hidden;background:#f8fafc;display:grid;place-items:center;border:1px solid #e4e7ec}
+      .nf-marquee-square img{width:100%;height:100%;object-fit:cover}
+      .nf-marquee-buttons{display:grid;grid-template-columns:1fr 1fr;gap:12px}
       @media(max-width:640px){.nf-title{font-size:24px}.nf-body{padding:18px}.nf-actions{display:grid}.nf-btn{width:100%}}
       @media(max-width:640px){.nf-query-body{grid-template-columns:1fr}.nf-query-qr{justify-items:start;text-align:left}.nf-query-qr .nf-qr{width:180px;height:180px}}
     `;
@@ -570,10 +574,56 @@
     </div></section>`);
   }
 
+  async function showMarquee() {
+    renderLoading("載入跑馬燈...");
+    const uid = await loadLiff({ login: true });
+    if (!uid) return renderError("無法取得 LINE UID，請從 LINE LIFF 開啟。");
+    const response = await fetch(`${api}/api/marquee`, { cache: "no-store" });
+    const result = await response.json().catch(() => ({}));
+    if (!response.ok || !result.success) return renderError(result.message || "跑馬燈資料讀取失敗");
+    const config = result.data || {};
+    if (config.enabled === false) return renderError("跑馬燈尚未啟用。");
+    const left = config.left || {};
+    const right = config.right || {};
+    renderShell(`<section class="nf-card"><div class="nf-body">
+      <h1 class="nf-title">${esc(config.title || "TDEA 跑馬燈")}</h1>
+      <div class="nf-marquee-square">${config.imageUrl ? `<img src="${esc(config.imageUrl)}" alt="">` : "<span>尚未設定圖片</span>"}</div>
+      <div class="nf-marquee-buttons">
+        <button class="nf-btn primary" data-marquee-side="left" ${left.enabled === false ? "disabled" : ""}>${esc(left.label || "左側簽到")}</button>
+        <button class="nf-btn primary" data-marquee-side="right" ${right.enabled === false ? "disabled" : ""}>${esc(right.label || "右側簽到")}</button>
+      </div>
+      <div class="nf-ok" data-marquee-result hidden></div>
+    </div></section>`);
+    app.querySelectorAll("[data-marquee-side]").forEach((button) => {
+      button.addEventListener("click", async () => {
+        const side = button.dataset.marqueeSide;
+        const label = button.textContent;
+        button.disabled = true;
+        button.textContent = "送出中...";
+        const rewardResponse = await fetch(`${api}/api/marquee/reward`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ lineUserId: uid, side })
+        });
+        const rewardResult = await rewardResponse.json().catch(() => ({}));
+        button.disabled = false;
+        button.textContent = label;
+        if (!rewardResponse.ok || !rewardResult.success) return alert(rewardResult.message || "贈點失敗");
+        const resultNode = app.querySelector("[data-marquee-result]");
+        if (resultNode) {
+          resultNode.hidden = false;
+          resultNode.textContent = `已完成簽到贈點：+${rewardResult.points || 1}`;
+        }
+        alert(`已完成簽到贈點：+${rewardResult.points || 1}`);
+      });
+    });
+  }
+
   if (formId) showRegister(formId);
   else if (checkinToken) showCheckin(checkinToken);
   else if (redeemToken) showRedeem(redeemToken);
   else if (queryMode) showMyRegistrations();
   else if (memberQrMode) showMemberQr();
   else if (calendarMode) showCalendar();
+  else if (marqueeMode) showMarquee();
 })();
