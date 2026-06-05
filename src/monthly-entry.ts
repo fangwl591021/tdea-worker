@@ -2206,26 +2206,27 @@ function normalizeConfig(config: MonthlyConfig): MonthlyConfig {
         return true;
       });
   };
+  const normalizedPages = pages.slice(0, 12).map((page, index) => ({
+    id: String(page.id || crypto.randomUUID()),
+    activityNo: String(page.activityNo || "").trim(),
+    imageUrl: String(page.imageUrl || "").trim(),
+    galleryUrls: cleanUrls(page.galleryUrls),
+    formImageUrl: String(page.formImageUrl || "").trim(),
+    detailTitle: String(page.detailTitle || "詳細說明").trim() || "詳細說明",
+    detailText: String(page.detailText || "").trim(),
+    detailUrl: String(page.detailUrl || "").trim(),
+    formUrl: String(page.formUrl || "").trim(),
+    shareUrl: String(page.shareUrl || "").trim(),
+    order: Number(page.order ?? index)
+  })).filter((page) => page.activityNo || page.imageUrl || page.formUrl || page.detailText || page.detailUrl);
   return {
-    enabled: Boolean(config.enabled),
+    enabled: config.enabled !== false || normalizedPages.length > 0,
     keyword: fixedKeyword,
     month: String(config.month || "").trim(),
     altText: String(config.altText || "TDEA 每月活動").trim() || "TDEA 每月活動",
     detailBaseUrl: String(config.detailBaseUrl || defaultLiffBase).trim(),
     updatedAt: config.updatedAt,
-    pages: pages.slice(0, 12).map((page, index) => ({
-      id: String(page.id || crypto.randomUUID()),
-      activityNo: String(page.activityNo || "").trim(),
-      imageUrl: String(page.imageUrl || "").trim(),
-      galleryUrls: cleanUrls(page.galleryUrls),
-      formImageUrl: String(page.formImageUrl || "").trim(),
-      detailTitle: String(page.detailTitle || "詳細說明").trim() || "詳細說明",
-      detailText: String(page.detailText || "").trim(),
-      detailUrl: String(page.detailUrl || "").trim(),
-      formUrl: String(page.formUrl || "").trim(),
-      shareUrl: String(page.shareUrl || "").trim(),
-      order: Number(page.order ?? index)
-    })).filter((page) => page.activityNo || page.imageUrl || page.formUrl || page.detailText || page.detailUrl)
+    pages: normalizedPages
   };
 }
 

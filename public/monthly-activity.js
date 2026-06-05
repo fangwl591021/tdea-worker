@@ -661,8 +661,8 @@
 
   function prepareMonthlyPayload() {
     config.keyword = fixedKeyword;
-    config.enabled = Boolean(config.enabled);
     config.pages = config.pages.map((page, order) => ({ ...hydratePage(page), detailUrl: detailUrlForPage(page), order })).slice(0, 12);
+    config.enabled = config.pages.length > 0;
     return config;
   }
 
