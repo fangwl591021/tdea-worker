@@ -3,6 +3,7 @@
   const adminKey = "tdea-admin-email";
   const fixedKeyword = "TDEA每月活動";
   const defaultLiffBase = "https://liff.line.me/2005868456-2jmxqyFU?monthlyDetail={id}";
+  const publicLiffUrl = "https://liff.line.me/2005868456-2jmxqyFU";
   const defaultImageUrl = "https://fangwl591021.github.io/tdea-worker/public/assets/kooler-free-course.png";
   const dataKey = "tdea-manager-v3";
   let active = false;
@@ -311,6 +312,16 @@
   function detailUrlForPage(page) {
     const hydrated = hydratePage(page);
     return appendIdToUrl(config.detailBaseUrl, hydrated.activityNo || hydrated.activityId, hydrated.id);
+  }
+
+  function registerUrlForPage(page) {
+    const hydrated = hydratePage(page);
+    const target = trim(hydrated.activityNo) || trim(hydrated.activityId) || trim(hydrated.id);
+    const current = trim(hydrated.formUrl);
+    if (target && (!current || (/liff\.line\.me/i.test(current) && /[?&]register=/.test(current)))) {
+      return `${publicLiffUrl}?register=${encodeURIComponent(target)}`;
+    }
+    return current || (target ? `${publicLiffUrl}?register=${encodeURIComponent(target)}` : "");
   }
 
   function shareUrlForPage(page) { return trim(page.shareUrl) || detailUrlForPage(page); }
@@ -638,7 +649,7 @@
     return { type: "carousel", contents: config.pages.slice(0, 12).map((rawPage) => {
       const page = hydratePage(rawPage);
       const detailUri = detailUrlForPage(page);
-      const formUri = trim(page.formUrl);
+      const formUri = registerUrlForPage(page);
       const shareUri = shareUrlForPage(page);
       return { type: "bubble", size: "kilo", body: { type: "box", layout: "vertical", paddingAll: "0px", contents: [{ type: "image", url: page.imageUrl || defaultImageUrl, size: "full", aspectMode: "cover", aspectRatio: "2:3", gravity: "top", action: { type: "uri", label: "報名", uri: formUri } }, { type: "box", layout: "vertical", position: "absolute", cornerRadius: "20px", offsetTop: "18px", backgroundColor: "#ff334b", offsetStart: "18px", height: "25px", width: "53px", action: { type: "uri", label: "分享", uri: shareUri }, contents: [{ type: "text", text: "分享", color: "#ffffff", align: "center", size: "xs", offsetTop: "3px", action: { type: "uri", label: "分享", uri: shareUri } }] }] }, footer: { type: "box", layout: "horizontal", contents: [{ type: "button", action: { type: "uri", label: "詳細說明", uri: detailUri }, height: "sm", style: "primary" }, { type: "button", action: { type: "uri", label: "點我報名", uri: formUri }, height: "sm", style: "primary", margin: "md" }] } };
     }) };
@@ -661,7 +672,10 @@
 
   function prepareMonthlyPayload() {
     config.keyword = fixedKeyword;
-    config.pages = config.pages.map((page, order) => ({ ...hydratePage(page), detailUrl: detailUrlForPage(page), order })).slice(0, 12);
+    config.pages = config.pages.map((page, order) => {
+      const hydrated = hydratePage(page);
+      return { ...hydrated, detailUrl: detailUrlForPage(hydrated), formUrl: registerUrlForPage(hydrated), order };
+    }).slice(0, 12);
     config.enabled = config.pages.length > 0;
     return config;
   }
@@ -704,7 +718,7 @@
     bindPageButtons();
     document.querySelector("[data-monthly-add]")?.addEventListener("click", () => { if (config.pages.length >= 12) return toast("LINE carousel 最多 12 頁"); config.pages.push(blankPage()); selected = config.pages.length - 1; render(); });
     document.querySelector("[data-monthly-delete]")?.addEventListener("click", () => { if (config.pages.length <= 1) return toast("至少保留 1 頁"); config.pages.splice(selected, 1); selected = Math.max(0, selected - 1); render(); });
-    document.querySelector("[data-monthly-activity]")?.addEventListener("change", (event) => { const page = config.pages[selected]; const activity = findActivity(event.target.value); page.activityNo = activity?.activityNo || event.target.value || ""; page.activityId = activity?.id || ""; if (activity) applyActivityToPage(page, activity); updatePreview(); updatePageLabels(); render(); });
+    document.querySelector("[data-monthly-activity]")?.addEventListener("change", (event) => { const page = config.pages[selected]; const activity = findActivity(event.target.value); page.activityNo = activity?.activityNo || ""; page.activityId = activity?.id || event.target.value || ""; if (activity) applyActivityToPage(page, activity); updatePreview(); updatePageLabels(); render(); });
     document.querySelectorAll("[data-monthly-page]").forEach((input) => input.addEventListener("input", () => { const page = config.pages[selected]; page[input.name] = input.value; updatePreview(); if (input.name === "imageUrl") updatePageLabels(); }));
     document.querySelectorAll("[data-monthly-gallery]").forEach((input) => input.addEventListener("input", () => { const page = config.pages[selected]; page.galleryUrls = uniqueUrls([input.value]); updatePreview(); }));
     document.querySelector("[data-monthly-file]")?.addEventListener("change", uploadImage);

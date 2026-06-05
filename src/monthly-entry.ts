@@ -2,7 +2,7 @@
 
 type Env = { ADMIN_EMAILS?: string; ASSETS_BUCKET?: R2Bucket; LINE_CHANNEL_SECRET?: string; LINE_CHANNEL_ACCESS_TOKEN?: string; FORWARD_WEBHOOK_URL?: string; GOOGLE_FORMS_SCRIPT_URL?: string; GOOGLE_FORMS_SHARED_SECRET?: string; OPNFORM_API_BASE?: string; OPNFORM_PUBLIC_BASE?: string; OPNFORM_API_TOKEN?: string; OPNFORM_WORKSPACE_ID?: string; OPNFORM_WEBHOOK_SECRET?: string; WETW_POINT_API_KEY?: string; WETW_SHOP_ID?: string; WETW_POINT_TYPE?: string; TDEA_POINT_EXTERNAL_SYNC?: string; TDEA_ADMIN_LINE_USER_IDS?: string; OPENAI_API_KEY?: string; OPENAI_MODEL?: string };
 type LineEvent = { type?: string; replyToken?: string; message?: { type?: string; id?: string; text?: string }; postback?: { data?: string }; source?: { type?: string; userId?: string; groupId?: string; roomId?: string } };
-type MonthlyPage = { id?: string; activityNo?: string; imageUrl?: string; galleryUrls?: string[]; formImageUrl?: string; detailTitle?: string; detailText?: string; detailUrl?: string; formUrl?: string; shareUrl?: string; order?: number };
+type MonthlyPage = { id?: string; activityNo?: string; activityId?: string; activityName?: string; imageUrl?: string; galleryUrls?: string[]; formImageUrl?: string; detailTitle?: string; detailText?: string; detailUrl?: string; formUrl?: string; shareUrl?: string; order?: number };
 type MonthlyConfig = { enabled?: boolean; keyword?: string; month?: string; altText?: string; detailBaseUrl?: string; pages?: MonthlyPage[]; updatedAt?: string };
 type VendorCardItem = { id?: string; enabled?: boolean; name?: string; label?: string; actionText?: string; imageUrl?: string; order?: number };
 type VendorCardConfig = { enabled?: boolean; keyword?: string; altText?: string; title?: string; items?: VendorCardItem[]; updatedAt?: string };
@@ -2260,6 +2260,8 @@ function normalizeConfig(config: MonthlyConfig): MonthlyConfig {
   const normalizedPages = pages.slice(0, 12).map((page, index) => ({
     id: String(page.id || crypto.randomUUID()),
     activityNo: String(page.activityNo || "").trim(),
+    activityId: String(page.activityId || "").trim(),
+    activityName: String(page.activityName || "").trim(),
     imageUrl: String(page.imageUrl || "").trim(),
     galleryUrls: cleanUrls(page.galleryUrls),
     formImageUrl: String(page.formImageUrl || "").trim(),
@@ -2269,7 +2271,7 @@ function normalizeConfig(config: MonthlyConfig): MonthlyConfig {
     formUrl: String(page.formUrl || "").trim(),
     shareUrl: String(page.shareUrl || "").trim(),
     order: Number(page.order ?? index)
-  })).filter((page) => page.activityNo || page.imageUrl || page.formUrl || page.detailText || page.detailUrl);
+  })).filter((page) => page.activityNo || page.activityId || page.imageUrl || page.formUrl || page.detailText || page.detailUrl);
   return {
     enabled: config.enabled !== false || normalizedPages.length > 0,
     keyword: fixedKeyword,
@@ -2291,8 +2293,17 @@ function appendIdToUrl(baseUrl: string | undefined, activityNo: string | undefin
 }
 
 function detailUrlForPage(page: MonthlyPage, config: MonthlyConfig) {
-  const generated = appendIdToUrl(config.detailBaseUrl, page.activityNo, page.id);
+  const generated = appendIdToUrl(config.detailBaseUrl, page.activityNo || page.activityId, page.id);
   return generated || page.detailUrl || `${workerBaseUrl}/monthly-detail/${encodeURIComponent(String(page.id || ""))}`;
+}
+
+function registerUrlForPage(page: MonthlyPage) {
+  const target = String(page.activityNo || page.activityId || page.id || "").trim();
+  const current = String(page.formUrl || "").trim();
+  if (target && (!current || (/liff\.line\.me/i.test(current) && /[?&]register=/.test(current)))) {
+    return `${publicLiffUrl}?register=${encodeURIComponent(target)}`;
+  }
+  return current || (target ? `${publicLiffUrl}?register=${encodeURIComponent(target)}` : workerBaseUrl);
 }
 
 function buildMonthlyFlex(config: MonthlyConfig) {
@@ -2302,7 +2313,7 @@ function buildMonthlyFlex(config: MonthlyConfig) {
 
 function buildMonthlyBubble(page: MonthlyPage, config: MonthlyConfig) {
   const detailUri = detailUrlForPage(page, config);
-  const formUri = page.formUrl || workerBaseUrl;
+  const formUri = registerUrlForPage(page);
   const shareUri = page.shareUrl || detailUri;
   return {
     type: "bubble",
@@ -4301,9 +4312,10 @@ async function handleMonthlyWebhook(request: Request, env: Env, rawBody: string,
 
 async function monthlyDetail(env: Env, id: string) {
   const config = await readMonthly(env);
-  const page = (config.pages || []).find((item) => String(item.id) === id || String(item.activityNo) === id);
+  const page = (config.pages || []).find((item) => String(item.id) === id || String(item.activityNo) === id || String(item.activityId) === id);
   if (!page) return new Response("Not found", { status: 404, headers: { "content-type": "text/plain; charset=utf-8" } });
-  const html = `<!doctype html><html lang="zh-Hant"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${esc(page.detailTitle || "活動詳細說明")}</title><style>body{margin:0;background:#f4f6f8;color:#111827;font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI","Noto Sans TC",sans-serif}.wrap{max-width:720px;margin:0 auto;padding:22px}.card{background:#fff;border-radius:14px;padding:22px;box-shadow:0 14px 36px rgba(15,23,42,.08)}img{width:100%;border-radius:10px;margin-bottom:16px}.meta{display:inline-flex;margin:0 0 12px;padding:5px 10px;border-radius:999px;background:#eafff1;color:#027a48;font-size:13px;font-weight:800}h1{font-size:24px;margin:0 0 12px}.text{white-space:pre-wrap;line-height:1.7;color:#344054}.btn{display:block;margin-top:18px;padding:13px 16px;border-radius:10px;background:#06c755;color:#fff;text-align:center;text-decoration:none;font-weight:800}</style></head><body><main class="wrap"><section class="card">${page.imageUrl ? `<img src="${esc(page.imageUrl)}" alt="">` : ""}${page.activityNo ? `<div class="meta">${esc(page.activityNo)}</div>` : ""}<h1>${esc(page.detailTitle || "活動詳細說明")}</h1><div class="text">${esc(page.detailText || "目前沒有詳細說明。")}</div>${page.formUrl ? `<a class="btn" href="${esc(page.formUrl)}">前往報名</a>` : ""}</section></main></body></html>`;
+  const formUrl = registerUrlForPage(page);
+  const html = `<!doctype html><html lang="zh-Hant"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${esc(page.detailTitle || "活動詳細說明")}</title><style>body{margin:0;background:#f4f6f8;color:#111827;font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI","Noto Sans TC",sans-serif}.wrap{max-width:720px;margin:0 auto;padding:22px}.card{background:#fff;border-radius:14px;padding:22px;box-shadow:0 14px 36px rgba(15,23,42,.08)}img{width:100%;border-radius:10px;margin-bottom:16px}.meta{display:inline-flex;margin:0 0 12px;padding:5px 10px;border-radius:999px;background:#eafff1;color:#027a48;font-size:13px;font-weight:800}h1{font-size:24px;margin:0 0 12px}.text{white-space:pre-wrap;line-height:1.7;color:#344054}.btn{display:block;margin-top:18px;padding:13px 16px;border-radius:10px;background:#06c755;color:#fff;text-align:center;text-decoration:none;font-weight:800}</style></head><body><main class="wrap"><section class="card">${page.imageUrl ? `<img src="${esc(page.imageUrl)}" alt="">` : ""}${page.activityNo ? `<div class="meta">${esc(page.activityNo)}</div>` : ""}<h1>${esc(page.detailTitle || "活動詳細說明")}</h1><div class="text">${esc(page.detailText || "目前沒有詳細說明。")}</div>${formUrl ? `<a class="btn" href="${esc(formUrl)}">前往報名</a>` : ""}</section></main></body></html>`;
   return new Response(html, { headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" } });
 }
 
