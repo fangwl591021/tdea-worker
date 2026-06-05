@@ -12,6 +12,7 @@
   let autoPublishTimer = 0;
   let autoPublishBusy = false;
   let lastAutoPublishSignature = "";
+  const previewCollapseKey = "tdea-monthly-preview-collapsed";
 
   const esc = (value) => String(value ?? "").replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;").replaceAll("'", "&#039;");
   const id = () => "monthly-" + Math.random().toString(36).slice(2) + Date.now().toString(36);
@@ -22,6 +23,8 @@
   };
 
   function adminEmail() { return sessionStorage.getItem(adminKey) || localStorage.getItem(adminKey) || ""; }
+  function previewCollapsed() { return localStorage.getItem(previewCollapseKey) === "Y"; }
+  function setPreviewCollapsed(value) { localStorage.setItem(previewCollapseKey, value ? "Y" : "N"); }
 
   function localData() {
     try { return JSON.parse(localStorage.getItem(dataKey) || "{}"); } catch (_) { return {}; }
@@ -378,6 +381,7 @@
     style.id = "monthly-activity-style";
     style.textContent = `.monthly-workspace{display:grid;grid-template-columns:minmax(0,1fr) minmax(380px,42%);gap:18px;align-items:start}.monthly-left{display:grid;gap:18px;min-width:0}.monthly-preview-panel{position:sticky;top:24px}.monthly-pages{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:10px;padding:14px}.monthly-page-btn{border:1px solid #d0d5dd;background:#fff;border-radius:8px;min-height:64px;padding:10px 12px;text-align:left;font-weight:800;display:grid;gap:4px}.monthly-page-btn span{color:#667085;font-size:13px}.monthly-page-btn strong{color:#111827;line-height:1.35;word-break:break-word}.monthly-page-btn.active{border-color:#06c755;background:#eafff1}.monthly-form{display:grid;gap:14px;padding:18px}.monthly-basic-grid{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:14px;align-items:end}.monthly-keyword-pill{border:1px solid #d0d5dd;border-radius:8px;background:#f8fafc;padding:10px 12px;display:grid;gap:4px}.monthly-keyword-pill span{color:#667085;font-size:12px}.monthly-keyword-pill strong{color:#111827}.monthly-enabled{display:inline-flex;align-items:center;gap:8px;font-weight:800}.monthly-phone{width:min(100%,430px);margin:0 auto;border-radius:28px;background:#111827;padding:14px;box-shadow:0 18px 42px rgba(15,23,42,.18)}.monthly-screen{min-height:650px;border-radius:20px;background:#8fb7df;padding:18px 14px;overflow:hidden}.monthly-carousel{display:flex;gap:12px;overflow-x:auto;padding-bottom:8px}.monthly-card{flex:0 0 260px;background:#fff;border-radius:16px;overflow:hidden;box-shadow:0 6px 18px rgba(15,23,42,.12)}.monthly-image{position:relative;background:#e5e7eb;aspect-ratio:2/3;display:grid;place-items:center;color:#667085;font-weight:800}.monthly-image img{width:100%;height:100%;object-fit:cover}.monthly-share{position:absolute;top:18px;left:18px;background:#ff334b;color:#fff;border-radius:20px;width:53px;height:25px;display:grid;place-items:center;font-size:12px}.monthly-footer{display:flex;gap:8px;padding:10px}.monthly-footer button{flex:1;border:0;border-radius:6px;background:#06c755;color:#fff;font-weight:800;min-height:34px}.monthly-detail-pop{white-space:pre-wrap;line-height:1.6;color:#344054;background:#f8fafc;border:1px solid #e5e7eb;border-radius:8px;padding:12px;margin-top:10px;max-height:290px;overflow:auto}.monthly-warning{color:#b42318;background:#fff3f0;border:1px solid #fecdca;border-radius:8px;padding:10px;font-weight:700}.monthly-link-note{font-size:13px;color:#667085;line-height:1.5}.monthly-linked-box{border:1px solid #d0d5dd;border-radius:8px;background:#f8fafc;padding:12px;display:grid;gap:8px}.monthly-linked-box strong{display:block;color:#111827}.monthly-linked-box span{color:#667085;font-size:13px;line-height:1.5}.monthly-empty-link{background:#fffdf5;border-color:#fedf89}.monthly-status-row{display:flex;flex-wrap:wrap;gap:8px}.monthly-status{border-radius:999px;padding:5px 10px;font-weight:800}.monthly-status.ok{background:#dcfae6!important;color:#067647!important}.monthly-status.bad{background:#fee4e2!important;color:#b42318!important}.monthly-detail-pop p{margin:10px 0 0;white-space:pre-wrap}.monthly-image-empty{padding:16px;text-align:center}@media(max-width:1100px){.monthly-workspace{grid-template-columns:1fr}.monthly-preview-panel{position:static}.monthly-phone{width:min(100%,460px)}}@media(max-width:720px){.monthly-basic-grid{grid-template-columns:1fr}}`;
     style.textContent += `.monthly-slide-count{position:absolute;right:12px;bottom:12px;background:rgba(17,24,39,.78);color:#fff;border-radius:999px;padding:4px 9px;font-size:12px;font-weight:800}`;
+    style.textContent += `.monthly-workspace{display:block}.monthly-left{max-width:980px}.monthly-preview-panel{position:fixed;right:24px;bottom:24px;top:auto;width:min(520px,calc(100vw - 48px));max-height:calc(100vh - 96px);z-index:35;box-shadow:0 18px 48px rgba(15,23,42,.24)}.monthly-preview-panel .panel-head{min-height:52px;background:#3f3f3f;color:#fff;border-bottom:0}.monthly-preview-panel .panel-title{color:#fff}.monthly-preview-panel .muted{color:#d1d5db}.monthly-preview-body{padding:18px;max-height:calc(100vh - 148px);overflow:auto}.monthly-preview-toggle{width:30px;height:30px;border:0;border-radius:999px;background:rgba(255,255,255,.16);color:#fff;font-size:18px;font-weight:900;line-height:1}.monthly-preview-panel.is-collapsed{width:260px;max-height:52px;overflow:hidden}.monthly-preview-panel.is-collapsed .monthly-preview-body,.monthly-preview-panel.is-collapsed .muted{display:none}.monthly-preview-panel.is-collapsed .panel-head{cursor:pointer}@media(max-width:720px){.monthly-preview-panel{right:12px;bottom:12px;width:calc(100vw - 24px)}.monthly-phone{width:min(100%,360px)}.monthly-screen{min-height:560px}.monthly-card{flex-basis:230px}}`;
     document.head.appendChild(style);
   }
 
@@ -389,7 +393,7 @@
     if (!main || !config) return;
     selected = Math.min(selected, config.pages.length - 1);
     const page = config.pages[selected];
-    main.innerHTML = `<div class="topbar"><div><h1>每月活動</h1></div><div class="actions"><button class="btn" data-monthly-json>複製 FLEX JSON</button><button class="btn primary" data-monthly-publish>發布</button></div></div><div class="monthly-workspace"><div class="monthly-left"><section class="panel"><div class="panel-head"><h2 class="panel-title">基本設定</h2></div><div class="monthly-form">${basicFields()}</div></section><section class="panel"><div class="panel-head"><h2 class="panel-title">活動頁數</h2><div class="actions"><button class="btn" data-monthly-add>新增頁</button><button class="btn danger" data-monthly-delete>刪除頁</button></div></div><div class="monthly-pages">${pageButtons()}</div></section><section class="panel"><div class="panel-head"><h2 class="panel-title">第 ${selected + 1} 頁設定</h2></div>${pageForm(page)}</section></div><aside class="panel monthly-preview-panel"><div class="panel-head"><h2 class="panel-title">預覽區</h2><span class="muted">橫式多頁 FLEX</span></div><div style="padding:18px" data-monthly-preview-wrap>${preview()}</div></aside></div><div class="toast" id="monthly-toast"></div>`;
+    main.innerHTML = `<div class="topbar"><div><h1>每月活動</h1></div><div class="actions"><button class="btn" data-monthly-json>複製 FLEX JSON</button><button class="btn primary" data-monthly-publish>發布</button></div></div><div class="monthly-workspace"><div class="monthly-left"><section class="panel"><div class="panel-head"><h2 class="panel-title">基本設定</h2></div><div class="monthly-form">${basicFields()}</div></section><section class="panel"><div class="panel-head"><h2 class="panel-title">活動頁數</h2><div class="actions"><button class="btn" data-monthly-add>新增頁</button><button class="btn danger" data-monthly-delete>刪除頁</button></div></div><div class="monthly-pages">${pageButtons()}</div></section><section class="panel"><div class="panel-head"><h2 class="panel-title">第 ${selected + 1} 頁設定</h2></div>${pageForm(page)}</section></div><aside class="panel monthly-preview-panel ${previewCollapsed() ? "is-collapsed" : ""}"><div class="panel-head" data-monthly-preview-head><div class="actions" style="justify-content:flex-start"><button class="monthly-preview-toggle" type="button" data-monthly-preview-toggle>${previewCollapsed() ? "▴" : "▾"}</button><h2 class="panel-title">預覽</h2></div><span class="muted">橫式多頁 FLEX</span></div><div class="monthly-preview-body" data-monthly-preview-wrap>${preview()}</div></aside></div><div class="toast" id="monthly-toast"></div>`;
     bind();
   }
 
@@ -713,6 +717,17 @@
   }
 
   function bind() {
+    const togglePreview = () => {
+      setPreviewCollapsed(!previewCollapsed());
+      render();
+    };
+    document.querySelector("[data-monthly-preview-toggle]")?.addEventListener("click", (event) => {
+      event.stopPropagation();
+      togglePreview();
+    });
+    document.querySelector("[data-monthly-preview-head]")?.addEventListener("click", () => {
+      if (previewCollapsed()) togglePreview();
+    });
     document.querySelectorAll("[data-monthly-basic]").forEach((input) => input.addEventListener("input", () => { config[input.name] = input.value; if (input.name === "month") render(); else updatePreview(); }));
     document.querySelector("[data-monthly-enabled]")?.addEventListener("change", (event) => { config.enabled = event.target.checked; });
     bindPageButtons();
