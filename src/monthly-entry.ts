@@ -18,7 +18,7 @@ type NativeSession = { id: string; name: string; startTime?: string; endTime?: s
 type NativeForm = { id: string; provider: "native_form"; activity: Record<string, unknown>; settings: Record<string, unknown>; fields: NativeField[]; sessions: NativeSession[]; formUrl: string; createdAt: string; updatedAt: string };
 type LineLoginMember = { rosterType: "association" | "vendor"; memberNo: string; name: string; role: string; lineUserId: string; company?: string; phone?: string; email?: string; gender?: string; raw: Record<string, unknown> };
 type PointLog = { logId: string; lineUserId: string; type: "EARN" | "SPEND"; amount: number; points: number; reason: string; balanceAfter: number; createdAt: string; createdTs: number; source?: string; referenceId?: string; externalSync?: unknown };
-type PointAccount = { balance: number; logs: PointLog[]; updatedAt?: string };
+type PointAccount = { balance: number; logs: PointLog[]; updatedAt?: string; source?: string; syncedAt?: string; externalRaw?: unknown };
 type RedeemMode = "fixed" | "manual" | "rate";
 type RedeemTransaction = { id: string; lineUserId: string; amount?: number; points: number; balanceBefore?: number; balanceAfter?: number; createdAt: string; note?: string; pointResult?: unknown };
 type RedeemRequest = { id: string; token: string; vendorId?: string; vendorName: string; amount?: number; points: number; maxPoints?: number; pointRate?: number; mode?: RedeemMode; note?: string; status: "active" | "pending" | "used" | "expired" | "closed"; createdAt: string; startsAt?: string; expiresAt: string; usedAt?: string; lineUserId?: string; pointBalance?: number; pointResult?: unknown; transactions?: RedeemTransaction[] };
@@ -1180,27 +1180,68 @@ async function queryPointBalance(env: Env, lineUserId: string) {
   return { httpStatus: response.status, ...body, balance, list };
 }
 
+async function syncMotherPointToLocal(env: Env, lineUserId: string) {
+  const result = await queryPointBalance(env, lineUserId) as Record<string, unknown>;
+  if (result.success !== true) return result;
+  const current = await readPointAccount(env, lineUserId);
+  const account: PointAccount = {
+    ...current,
+    balance: numberValue(result.balance),
+    logs: Array.isArray(current.logs) ? current.logs : [],
+    source: "wetw-point/query-user-point-list",
+    syncedAt: new Date().toISOString(),
+    externalRaw: {
+      httpStatus: result.httpStatus,
+      code: result.code,
+      message: result.message,
+      latest: Array.isArray(result.list) ? result.list.slice(0, 5) : []
+    }
+  };
+  await writePointAccount(env, lineUserId, account);
+  return { ...result, cached: false, syncedAt: account.syncedAt };
+}
+
 async function queryMemberPointBatchApi(request: Request, env: Env) {
   const guard = await requireAdmin(request, env);
   if (guard) return guard;
   const input = await request.json().catch(() => ({})) as Record<string, unknown>;
   const rawIds = Array.isArray(input.lineUserIds) ? input.lineUserIds : [];
+  const force = Boolean(input.force);
   const lineUserIds = Array.from(new Set(rawIds.map((item) => clean(item)).filter(Boolean))).slice(0, 200);
   const data = [];
   for (const lineUserId of lineUserIds) {
     try {
-      const result = await queryPointBalance(env, lineUserId) as Record<string, unknown>;
+      const cached = await readPointAccount(env, lineUserId);
+      if (!force && clean(cached.updatedAt)) {
+        data.push({
+          lineUserId,
+          success: true,
+          balance: numberValue(cached.balance),
+          cached: true,
+          syncedAt: cached.syncedAt || cached.updatedAt,
+          message: ""
+        });
+        continue;
+      }
+      const result = await syncMotherPointToLocal(env, lineUserId) as Record<string, unknown>;
+      const fallback = clean(cached.updatedAt);
       data.push({
         lineUserId,
-        success: result.success === true,
-        balance: result.success === true ? numberValue(result.balance) : null,
+        success: result.success === true || Boolean(fallback),
+        balance: result.success === true ? numberValue(result.balance) : fallback ? numberValue(cached.balance) : null,
+        cached: result.success === true ? false : Boolean(fallback),
+        syncedAt: clean(result.syncedAt) || cached.syncedAt || cached.updatedAt || "",
         message: result.success === true ? "" : clean(result.message) || clean(result.code) || "點數查詢失敗"
       });
     } catch (error) {
+      const cached = await readPointAccount(env, lineUserId);
+      const fallback = clean(cached.updatedAt);
       data.push({
         lineUserId,
-        success: false,
-        balance: null,
+        success: Boolean(fallback),
+        balance: fallback ? numberValue(cached.balance) : null,
+        cached: Boolean(fallback),
+        syncedAt: cached.syncedAt || cached.updatedAt || "",
         message: String((error as Error).message || error || "點數查詢失敗")
       });
     }
@@ -1264,7 +1305,14 @@ async function readPointAccount(env: Env, lineUserId: string): Promise<PointAcco
   const object = await env.ASSETS_BUCKET.get(pointAccountKey(lineUserId));
   if (!object) return { balance: 0, logs: [] };
   const data = await object.json().catch(() => ({})) as Partial<PointAccount>;
-  return { balance: numberValue(data.balance), logs: Array.isArray(data.logs) ? data.logs as PointLog[] : [], updatedAt: clean(data.updatedAt) };
+  return {
+    balance: numberValue(data.balance),
+    logs: Array.isArray(data.logs) ? data.logs as PointLog[] : [],
+    updatedAt: clean(data.updatedAt),
+    source: clean(data.source),
+    syncedAt: clean(data.syncedAt),
+    externalRaw: data.externalRaw
+  };
 }
 
 async function writePointAccount(env: Env, lineUserId: string, account: PointAccount) {

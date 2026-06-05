@@ -304,7 +304,7 @@
       const response = await fetch(`${apiBase}/api/member-points/batch`, {
         method: "POST",
         headers: { "content-type": "application/json", ...adminHeaders() },
-        body: JSON.stringify({ lineUserIds: ids }),
+        body: JSON.stringify({ lineUserIds: ids, force: Boolean(force) }),
         cache: "no-store"
       });
       const result = await response.json().catch(() => ({}));
@@ -352,7 +352,7 @@
       }
       if (item.success) {
         cell.textContent = Number.isFinite(Number(item.balance)) ? String(Number(item.balance)) : "0";
-        cell.title = `LINE UID: ${uid}`;
+        cell.title = `${item.cached ? "本地快取" : "母站同步"}；LINE UID: ${uid}${item.syncedAt ? `；同步時間: ${item.syncedAt}` : ""}`;
       } else {
         cell.textContent = "查詢失敗";
         cell.title = item.message || "點數查詢失敗";
