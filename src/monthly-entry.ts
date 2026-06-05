@@ -34,6 +34,8 @@ type RichMenuConfig = { name?: string; chatBarText?: string; selected?: boolean;
 type LineActivityDraft = { id: string; lineUserId: string; step: string; answers: Record<string, unknown>; status: "active" | "completed" | "cancelled"; activity?: Record<string, unknown>; createdAt: string; updatedAt: string; completedAt?: string };
 type AdminAccessRecord = { memberNo: string; email?: string; lineUserId?: string; name?: string; loginAccess: boolean; updatedAt?: string; updatedBy?: string };
 type LineActivityAiResult = { intent?: string; confidence?: number; question?: string; fields?: Record<string, unknown> };
+type MemberOnboardingSession = { lineUserId: string; step: "askMember" | "memberNo" | "phone" | "joinInterest" | "applicantInfo"; answers: Record<string, unknown>; triggerText?: string; createdAt: string; updatedAt: string };
+type MemberApplication = { id: string; lineUserId: string; status: "pending" | "handled"; source: "line"; name?: string; phone?: string; triggerText?: string; createdAt: string; updatedAt?: string };
 
 const monthlyKey = "flex/monthly-activity.json";
 const vendorCardKey = "flex/vendor-card-menu.json";
@@ -49,6 +51,7 @@ const aiweMembersKey = "aiwe/members.json";
 const lineActivityDraftListKey = "line-activity/drafts.json";
 const lineActivityLatestDraftKey = "line-activity/latest-active.json";
 const lineActivityDebugKey = "line-activity/debug.json";
+const memberApplicationListKey = "member-applications/list.json";
 const defaultCalendarId = "7d66f2a96f192dda6cca2b04e60a6e549c7adf74f57721845d5b7e03f8b7ca89@group.calendar.google.com";
 const googleMemberSheetCsvUrl = "https://docs.google.com/spreadsheets/d/1KzXzRsAesrF0vlKh2TLUKW-ltpWrxASWt7acWV7ic8w/export?format=csv&gid=858404675";
 const workerBaseUrl = "https://tdeawork.fangwl591021.workers.dev";
@@ -3716,6 +3719,211 @@ function quickReply(items: string[]) {
   };
 }
 
+function memberOnboardingSessionKey(lineUserId: string) {
+  return `member-onboarding/session-${encodeURIComponent(lineUserId)}.json`;
+}
+
+async function readMemberOnboardingSession(env: Env, lineUserId: string): Promise<MemberOnboardingSession | null> {
+  if (!env.ASSETS_BUCKET || !lineUserId) return null;
+  const object = await env.ASSETS_BUCKET.get(memberOnboardingSessionKey(lineUserId));
+  return object ? await object.json().catch(() => null) as MemberOnboardingSession | null : null;
+}
+
+async function writeMemberOnboardingSession(env: Env, session: MemberOnboardingSession) {
+  if (!env.ASSETS_BUCKET) return;
+  session.updatedAt = new Date().toISOString();
+  await env.ASSETS_BUCKET.put(memberOnboardingSessionKey(session.lineUserId), JSON.stringify(session, null, 2), { httpMetadata: { contentType: "application/json; charset=utf-8", cacheControl: "no-store" } });
+}
+
+async function deleteMemberOnboardingSession(env: Env, lineUserId: string) {
+  if (!env.ASSETS_BUCKET || !lineUserId) return;
+  await env.ASSETS_BUCKET.delete(memberOnboardingSessionKey(lineUserId));
+}
+
+function yesNoIntent(text: string) {
+  const normalized = normalizeKeyword(text);
+  if (["是", "YES", "Y", "我是", "本協會會員", "會員", "廠商會員"].includes(normalized)) return "yes";
+  if (["否", "NO", "N", "不是", "非會員", "其他"].includes(normalized)) return "no";
+  if (["有", "有興趣", "我要加入", "想加入", "申請加入"].includes(normalized)) return "interested";
+  if (["不用", "暫時不用", "沒有", "沒興趣"].includes(normalized)) return "decline";
+  return "";
+}
+
+function phoneDigits(value: unknown) {
+  return String(value || "").replace(/\D/g, "");
+}
+
+function rowMatchesPhone(row: Record<string, unknown>, phone: string) {
+  const target = phoneDigits(phone);
+  if (!target) return false;
+  return [row.phone, row.mobile, row.tel, row.telephone, row.contactPhone].some((value) => {
+    const current = phoneDigits(value);
+    return Boolean(current) && (current === target || current.endsWith(target) || target.endsWith(current));
+  });
+}
+
+function parseApplicantInfo(text: string) {
+  const parts = clean(text).split(/[+＋,，\s/／]+/).map(clean).filter(Boolean);
+  const phone = parts.find((item) => phoneDigits(item).length >= 8) || "";
+  const name = parts.find((item) => item !== phone) || "";
+  return { name, phone };
+}
+
+async function readMemberApplications(env: Env): Promise<MemberApplication[]> {
+  if (!env.ASSETS_BUCKET) return [];
+  const object = await env.ASSETS_BUCKET.get(memberApplicationListKey);
+  const data = object ? await object.json().catch(() => []) : [];
+  return Array.isArray(data) ? data as MemberApplication[] : [];
+}
+
+async function writeMemberApplications(env: Env, list: MemberApplication[]) {
+  if (!env.ASSETS_BUCKET) return;
+  await env.ASSETS_BUCKET.put(memberApplicationListKey, JSON.stringify(list.slice(0, 500), null, 2), { httpMetadata: { contentType: "application/json; charset=utf-8", cacheControl: "no-store" } });
+}
+
+async function appendMemberApplication(env: Env, input: { lineUserId: string; name?: string; phone?: string; triggerText?: string }) {
+  const now = new Date().toISOString();
+  const list = await readMemberApplications(env);
+  const existing = list.find((item) => item.status === "pending" && item.lineUserId === input.lineUserId);
+  if (existing) {
+    existing.name = input.name || existing.name;
+    existing.phone = input.phone || existing.phone;
+    existing.triggerText = input.triggerText || existing.triggerText;
+    existing.updatedAt = now;
+  } else {
+    list.unshift({ id: crypto.randomUUID(), lineUserId: input.lineUserId, status: "pending", source: "line", name: input.name || "", phone: input.phone || "", triggerText: input.triggerText || "", createdAt: now });
+  }
+  await writeMemberApplications(env, list);
+}
+
+async function listMemberApplicationsApi(request: Request, env: Env) {
+  const guard = await requireAdmin(request, env);
+  if (guard) return guard;
+  const url = new URL(request.url);
+  const status = clean(url.searchParams.get("status"));
+  let list = await readMemberApplications(env);
+  if (status) list = list.filter((item) => item.status === status);
+  return json({ success: true, data: list });
+}
+
+function membershipQuestionMessage() {
+  return {
+    type: "text",
+    text: "系統需要先確認身分。\n請問你是本協會會員或廠商會員嗎？",
+    quickReply: quickReply(["是", "否"])
+  };
+}
+
+async function startMemberOnboarding(env: Env, event: LineEvent, triggerText: string) {
+  const lineUserId = clean(event.source?.userId);
+  if (!lineUserId || !event.replyToken) return { ok: false, status: 400, message: "Missing LINE UID or replyToken" };
+  const now = new Date().toISOString();
+  await writeMemberOnboardingSession(env, { lineUserId, step: "askMember", answers: {}, triggerText, createdAt: now, updatedAt: now });
+  return replyToLine(event.replyToken, [membershipQuestionMessage()], env);
+}
+
+async function handleMemberOnboardingEvent(event: LineEvent, env: Env): Promise<Record<string, unknown> | null> {
+  const lineUserId = clean(event.source?.userId);
+  const text = clean(extractTriggerText(event));
+  if (!lineUserId || !event.replyToken || !text) return null;
+  let session = await readMemberOnboardingSession(env, lineUserId);
+  if (!session) return null;
+  if (normalizeKeyword(text) === "取消") {
+    await deleteMemberOnboardingSession(env, lineUserId);
+    return replyToLine(event.replyToken, [{ type: "text", text: "已取消身分確認流程。" }], env) as unknown as Record<string, unknown>;
+  }
+  const intent = yesNoIntent(text);
+  if (session.step === "askMember") {
+    if (intent === "yes") {
+      session.step = "memberNo";
+      await writeMemberOnboardingSession(env, session);
+      return replyToLine(event.replyToken, [{ type: "text", text: "請輸入會員編號。", quickReply: quickReply(["取消"]) }], env) as unknown as Record<string, unknown>;
+    }
+    if (intent === "no") {
+      session.step = "joinInterest";
+      await writeMemberOnboardingSession(env, session);
+      return replyToLine(event.replyToken, [{ type: "text", text: "歡迎加入 TDEA。\n請問你是否有加入協會或成為廠商會員的意願？", quickReply: quickReply(["有興趣", "暫時不用"]) }], env) as unknown as Record<string, unknown>;
+    }
+    return replyToLine(event.replyToken, [membershipQuestionMessage()], env) as unknown as Record<string, unknown>;
+  }
+  if (session.step === "memberNo") {
+    session.answers.memberNo = clean(text).toUpperCase();
+    session.step = "phone";
+    await writeMemberOnboardingSession(env, session);
+    return replyToLine(event.replyToken, [{ type: "text", text: "請輸入名冊上的行動電話，用來核對身分。", quickReply: quickReply(["取消"]) }], env) as unknown as Record<string, unknown>;
+  }
+  if (session.step === "phone") {
+    const memberNo = clean(session.answers.memberNo).toUpperCase();
+    const rows = await readAiweMembers(env);
+    const matched = selectAiweBindRows(rows, memberNo);
+    const verified = matched.filter((row) => rowMatchesPhone(row, text));
+    if (!matched.length) {
+      await deleteMemberOnboardingSession(env, lineUserId);
+      return replyToLine(event.replyToken, [{ type: "text", text: `查無會員編號 ${memberNo}，請確認後重新點「會員報到」。` }], env) as unknown as Record<string, unknown>;
+    }
+    if (!verified.length) {
+      return replyToLine(event.replyToken, [{ type: "text", text: "會員編號與行動電話不一致，請重新輸入行動電話，或輸入「取消」中止。", quickReply: quickReply(["取消"]) }], env) as unknown as Record<string, unknown>;
+    }
+    for (const row of verified) setAiweRowLineUid(row, lineUserId);
+    await writeAiweMembers(env, rows);
+    await deleteMemberOnboardingSession(env, lineUserId);
+    const name = aiweRowDisplayName(verified[0]);
+    return replyToLine(event.replyToken, [{ type: "text", text: `身分已確認並完成 LINE 綁定。\n會員編號：${memberNo}\n姓名/單位：${name}\n之後可直接使用活動報名與會員功能。` }], env) as unknown as Record<string, unknown>;
+  }
+  if (session.step === "joinInterest") {
+    if (intent === "interested") {
+      session.step = "applicantInfo";
+      await writeMemberOnboardingSession(env, session);
+      return replyToLine(event.replyToken, [{ type: "text", text: "請留下姓名與行動電話。\n格式：姓名+手機\n例如：王小明+0912345678", quickReply: quickReply(["取消"]) }], env) as unknown as Record<string, unknown>;
+    }
+    if (intent === "decline") {
+      await deleteMemberOnboardingSession(env, lineUserId);
+      return replyToLine(event.replyToken, [{ type: "text", text: "了解，歡迎持續關注 TDEA 活動資訊。" }], env) as unknown as Record<string, unknown>;
+    }
+    return replyToLine(event.replyToken, [{ type: "text", text: "請選擇是否有加入意願。", quickReply: quickReply(["有興趣", "暫時不用"]) }], env) as unknown as Record<string, unknown>;
+  }
+  if (session.step === "applicantInfo") {
+    const info = parseApplicantInfo(text);
+    if (!info.name || !info.phone) {
+      return replyToLine(event.replyToken, [{ type: "text", text: "請用「姓名+手機」格式留下資料。\n例如：王小明+0912345678", quickReply: quickReply(["取消"]) }], env) as unknown as Record<string, unknown>;
+    }
+    await appendMemberApplication(env, { lineUserId, name: info.name, phone: info.phone, triggerText: session.triggerText });
+    await deleteMemberOnboardingSession(env, lineUserId);
+    return replyToLine(event.replyToken, [{ type: "text", text: "已收到你的加入意願，協會後台會看到申請通知，後續將由協會人員聯繫。" }], env) as unknown as Record<string, unknown>;
+  }
+  return null;
+}
+
+async function hasMemberOnboardingSession(events: LineEvent[], env: Env) {
+  for (const event of events) {
+    const lineUserId = clean(event.source?.userId);
+    if (lineUserId && await readMemberOnboardingSession(env, lineUserId)) return true;
+  }
+  return false;
+}
+
+async function handleClosedMemberGate(allEvents: LineEvent[], gatedEvents: LineEvent[], env: Env) {
+  for (const event of allEvents) {
+    const handled = await handleMemberOnboardingEvent(event, env);
+    if (handled) return handled;
+  }
+  for (const event of gatedEvents) {
+    const lineUserId = clean(event.source?.userId);
+    if (!event.replyToken) continue;
+    if (!lineUserId) {
+      const message = {
+        type: "text",
+        text: "系統尚未取得你的 LINE UID，請從 LINE 官方帳號聊天室重新操作。"
+      };
+      return replyToLine(event.replyToken, [message], env);
+    }
+    const member = await resolveLineLoginMember(env, lineUserId);
+    if (member) continue;
+    return startMemberOnboarding(env, event, extractTriggerText(event));
+  }
+  return null;
+}
+
 async function monthlyMemberStatusPrompt(event: LineEvent, env: Env): Promise<Record<string, unknown> | null> {
   const lineUserId = clean(event.source?.userId);
   if (!lineUserId) return {
@@ -3977,9 +4185,24 @@ async function handleMonthlyWebhook(request: Request, env: Env, rawBody: string,
     .map((event) => ({ event, query: parseMotherPointKeyword(extractTriggerText(event)) }))
     .filter((match): match is { event: LineEvent; query: { uid: string } } => Boolean(match.query));
   const events = allEvents.filter((event) => normalizeKeyword(extractTriggerText(event)) === normalizeKeyword(fixedKeyword));
-  if (!queryEvents.length && !memberQrEvents.length && !calendarEvents.length && !personalMessageEvents.length && !uidBindEvents.length && !vendorCardEvents.length && !marqueeEvents.length && !pointEvents.length && !events.length) return null;
+  const onboardingActive = await hasMemberOnboardingSession(allEvents, env);
+  if (!queryEvents.length && !memberQrEvents.length && !calendarEvents.length && !personalMessageEvents.length && !uidBindEvents.length && !vendorCardEvents.length && !marqueeEvents.length && !pointEvents.length && !events.length && !onboardingActive) return null;
   const signature = request.headers.get("x-line-signature");
   if (!await verifyLineSignature(rawBody, signature, env.LINE_CHANNEL_SECRET)) return new Response("Invalid Signature", { status: 403, headers });
+  const bareUidBindEvents = uidBindEvents.filter((event) => !parseUidBindKeyword(extractTriggerText(event)).memberNo);
+  const gatedEvents = [
+    ...queryEvents,
+    ...memberQrEvents,
+    ...calendarEvents,
+    ...personalMessageEvents,
+    ...vendorCardEvents,
+    ...marqueeEvents,
+    ...pointEvents.map((item) => item.event),
+    ...events,
+    ...bareUidBindEvents
+  ];
+  const closedGate = await handleClosedMemberGate(allEvents, gatedEvents, env);
+  if (closedGate) return json({ success: true, mode: "member-gate", lineReply: closedGate });
   if (uidBindEvents.length) return bindLineUidEvents(uidBindEvents, env);
   if (pointEvents.length) return handleMotherPointEvents(pointEvents, env);
   if (queryEvents.length) {
@@ -4096,6 +4319,7 @@ export default {
 	    if ((request.method === "GET" || request.method === "POST") && url.pathname === "/api/line-activity-ai-check") return testLineActivityAi(request, env);
 	    if (request.method === "GET" && url.pathname === "/api/admin-access") return listAdminAccessApi(request, env);
 	    if ((request.method === "PUT" || request.method === "POST") && url.pathname === "/api/admin-access") return updateAdminAccessApi(request, env);
+	    if (request.method === "GET" && url.pathname === "/api/member-applications") return listMemberApplicationsApi(request, env);
 	    if (request.method === "GET" && url.pathname === "/api/aiwe-members-public") return listAiweMembersPublicApi(request, env);
 	    if (request.method === "POST" && url.pathname === "/api/aiwe-members/import") return importAiweMembersApi(request, env);
 	    if (request.method === "GET" && url.pathname === "/api/google-member-sheet") return fetchGoogleMemberSheet(request, env);

@@ -14,7 +14,7 @@
     keywords: ["關鍵字", "整理 LINE OA 觸發關鍵字、用途與回覆行為。"],
     redeem: ["點數折抵", "建立限時店家掃碼工作台，店家掃會員 QR 後執行扣點。"]
   };
-  const state = { view: "dashboard", drawer: "", data: load(), registrationLists: {} };
+  const state = { view: "dashboard", drawer: "", data: load(), registrationLists: {}, memberApplications: null };
   let lineDraftAutoImporting = false;
   let lineDraftLastAutoImport = 0;
   let rosterCleanupApplied = false;
@@ -101,6 +101,18 @@
   function adminHeaders(extra = {}) {
     const email = localStorage.getItem("tdea-admin-email") || sessionStorage.getItem("tdea-admin-email") || "";
     return { ...extra, ...(email ? { "x-admin-email": email } : {}) };
+  }
+  async function loadMemberApplications(force = false) {
+    if (state.memberApplications && !force) return state.memberApplications;
+    try {
+      const r = await fetch(api + "/api/member-applications?status=pending", { headers: adminHeaders() });
+      const j = await r.json();
+      state.memberApplications = j.success && Array.isArray(j.data) ? j.data : [];
+    } catch (_) {
+      state.memberApplications = [];
+    }
+    render();
+    return state.memberApplications;
   }
   async function syncRosterMemberToWorker(type, item) {
     if (!item || (type !== "association" && type !== "vendor")) return;
@@ -573,6 +585,7 @@
     if (autoSyncEnabled()) syncRegistrations();
     if (state.view === "redeem" && !state.redeemRecords) loadRedeemRecords();
     if (state.view === "redeem" && !state.pointLedger) loadPointLedger();
+    if (state.view === "dashboard" && state.memberApplications === null) loadMemberApplications();
     window.TDEALineNav?.refresh?.();
   }
 
@@ -591,7 +604,14 @@
     if (state.view === "creator") return creator();
     if (state.view === "redeem") return redeem();
     if (state.view === "keywords") return keywords();
-    return dashboard();
+    return memberApplicationsPanel() + dashboard();
+  }
+
+  function memberApplicationsPanel() {
+    if (state.view !== "dashboard") return "";
+    const rows = Array.isArray(state.memberApplications) ? state.memberApplications : [];
+    if (!rows.length) return `<section class="panel" style="margin-bottom:18px"><div class="panel-head"><h2 class="panel-title">新會員申請通知</h2><button class="btn" data-load-member-applications>刷新</button></div>${empty("目前沒有待處理申請")}</section>`;
+    return `<section class="panel" style="margin-bottom:18px"><div class="panel-head"><h2 class="panel-title">新會員申請通知</h2><div class="actions"><span class="badge live">${rows.length} 件待處理</span><button class="btn" data-load-member-applications>刷新</button></div></div><div class="table-wrap"><table><thead><tr><th>時間</th><th>姓名</th><th>手機</th><th>LINE UID</th><th>來源關鍵字</th></tr></thead><tbody>${rows.map(row => `<tr><td>${esc(formatTime(row.createdAt || row.updatedAt))}</td><td><strong>${esc(row.name || "-")}</strong></td><td>${esc(row.phone || "-")}</td><td>${esc(row.lineUserId || "-")}</td><td>${esc(row.triggerText || "-")}</td></tr>`).join("")}</tbody></table></div></section>`;
   }
 
   function dashboard() {
@@ -889,6 +909,7 @@
     document.querySelectorAll("[data-delete-member]").forEach(b => b.onclick = () => deleteMember(b.dataset.deleteMember));
     document.querySelectorAll("[data-registration-list]").forEach(b => b.onclick = () => openRegistrationList(b.dataset.registrationList));
     document.querySelectorAll("[data-refresh-registration-list]").forEach(b => b.onclick = () => loadRegistrationList(b.dataset.refreshRegistrationList, true));
+    document.querySelectorAll("[data-load-member-applications]").forEach(b => b.onclick = () => loadMemberApplications(true));
     const autoSync = document.querySelector("[data-auto-sync]"); if (autoSync) autoSync.onchange = () => { setAutoSyncEnabled(autoSync.checked); toast(autoSync.checked ? "已開啟自動同步" : "已關閉自動同步"); };
     const refreshKeywords = document.querySelector("[data-refresh-keywords]"); if (refreshKeywords) refreshKeywords.onclick = () => { render(); toast("關鍵字列表已刷新"); };
     const loadRedeem = document.querySelector("[data-load-redeem]"); if (loadRedeem) loadRedeem.onclick = () => loadRedeemRecords(true);
