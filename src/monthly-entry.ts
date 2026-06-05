@@ -4303,7 +4303,12 @@ async function handleMonthlyWebhook(request: Request, env: Env, rawBody: string,
   const message = config.enabled && pages.length ? buildMonthlyFlex(config) as Record<string, unknown> : { type: "text", text: "TDEA 每月活動尚未啟用，請稍後再試。" };
   const lineReplies = await Promise.all(events.map(async (event) => {
     if (!event.replyToken) return { ok: false, status: 400, message: "Missing replyToken" };
-    const prompt = await monthlyMemberStatusPrompt(event, env);
+    let prompt: Record<string, unknown> | null = null;
+    try {
+      prompt = await monthlyMemberStatusPrompt(event, env);
+    } catch (error) {
+      console.log("monthly member prompt failed", error);
+    }
     const messages = prompt ? [message, prompt] : [message];
     return replyToLine(event.replyToken, messages, env);
   }));
