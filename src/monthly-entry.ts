@@ -3316,6 +3316,7 @@ async function handleLineActivityMakerEvent(event: LineEvent, env: Env, ctx?: Ex
 async function handleLineActivityMaker(request: Request, env: Env, rawBody: string, allEvents: LineEvent[], ctx?: ExecutionContext) {
   const candidates = allEvents.filter((event) => {
     const text = clean(extractTriggerText(event));
+    if (normalizeKeyword(text) === normalizeKeyword(fixedKeyword)) return false;
     return (text || isLineImageMessage(event)) && lineUserIdFromEvent(event);
   });
   if (!candidates.length) return null;
@@ -4200,6 +4201,23 @@ async function handleMonthlyWebhook(request: Request, env: Env, rawBody: string,
   if (!queryEvents.length && !memberQrEvents.length && !calendarEvents.length && !personalMessageEvents.length && !uidBindEvents.length && !vendorCardEvents.length && !marqueeEvents.length && !pointEvents.length && !events.length && !onboardingActive) return null;
   const signature = request.headers.get("x-line-signature");
   if (!await verifyLineSignature(rawBody, signature, env.LINE_CHANNEL_SECRET)) return new Response("Invalid Signature", { status: 403, headers });
+  if (events.length) {
+    const config = await readMonthly(env);
+    const pages = config.pages || [];
+    const message = config.enabled && pages.length ? buildMonthlyFlex(config) as Record<string, unknown> : { type: "text", text: "TDEA 每月活動尚未啟用，請稍後再試。" };
+    const lineReplies = await Promise.all(events.map(async (event) => {
+      if (!event.replyToken) return { ok: false, status: 400, message: "Missing replyToken" };
+      let prompt: Record<string, unknown> | null = null;
+      try {
+        prompt = await monthlyMemberStatusPrompt(event, env);
+      } catch (error) {
+        console.log("monthly member prompt failed", error);
+      }
+      const messages = prompt ? [message, prompt] : [message];
+      return replyToLine(event.replyToken, messages, env);
+    }));
+    return json({ success: true, mode: "monthly-activity", matched: [fixedKeyword], forwarded: false, lineReplies });
+  }
   const bareUidBindEvents = uidBindEvents.filter((event) => !parseUidBindKeyword(extractTriggerText(event)).memberNo);
   const gatedEvents = [
     ...queryEvents,
@@ -4209,7 +4227,6 @@ async function handleMonthlyWebhook(request: Request, env: Env, rawBody: string,
     ...vendorCardEvents,
     ...marqueeEvents,
     ...pointEvents.map((item) => item.event),
-    ...events,
     ...bareUidBindEvents
   ];
   const closedGate = await handleClosedMemberGate(allEvents, gatedEvents, env);
@@ -4298,21 +4315,7 @@ async function handleMonthlyWebhook(request: Request, env: Env, rawBody: string,
     const lineReplies = await Promise.all(vendorCardEvents.map((event) => event.replyToken ? replyToLine(event.replyToken, [message], env) : Promise.resolve({ ok: false, status: 400, message: "Missing replyToken" })));
     return json({ success: true, mode: "vendor-card-menu", matched: [vendorCardKeyword], forwarded: false, lineReplies });
   }
-  const config = await readMonthly(env);
-  const pages = config.pages || [];
-  const message = config.enabled && pages.length ? buildMonthlyFlex(config) as Record<string, unknown> : { type: "text", text: "TDEA 每月活動尚未啟用，請稍後再試。" };
-  const lineReplies = await Promise.all(events.map(async (event) => {
-    if (!event.replyToken) return { ok: false, status: 400, message: "Missing replyToken" };
-    let prompt: Record<string, unknown> | null = null;
-    try {
-      prompt = await monthlyMemberStatusPrompt(event, env);
-    } catch (error) {
-      console.log("monthly member prompt failed", error);
-    }
-    const messages = prompt ? [message, prompt] : [message];
-    return replyToLine(event.replyToken, messages, env);
-  }));
-  return json({ success: true, mode: "monthly-activity", matched: [fixedKeyword], forwarded: false, lineReplies });
+  return json({ success: true, mode: "monthly-activity", matched: [fixedKeyword], forwarded: false, lineReplies: [] });
 }
 
 async function monthlyDetail(env: Env, id: string) {
