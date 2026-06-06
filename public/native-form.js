@@ -515,21 +515,19 @@
     if (!response.ok || !result.success) return renderError(result.message || "核銷資料無效");
     const row = result.data || {};
     const answers = row.answers || {};
-    const adminEmail = localStorage.getItem("tdea-admin-email") || sessionStorage.getItem("tdea-admin-email") || "";
     renderShell(`<section class="nf-card"><div class="nf-body">
       <h1 class="nf-title">活動報到核銷</h1>
       <div class="${row.checkedInAt ? "nf-ok" : "nf-alert"}">${row.checkedInAt ? `已報到：${esc(row.checkedInAt)}` : "尚未報到"}</div>
       <table class="nf-table"><tbody>${Object.entries(answers).map(([key, value]) => `<tr><th>${esc(key)}</th><td>${esc(Array.isArray(value) ? value.join(", ") : value)}</td></tr>`).join("")}</tbody></table>
-      <div class="nf-field"><label>管理者 Email</label><input data-admin-email value="${esc(adminEmail)}"></div>
       <div class="nf-actions"><button class="nf-btn primary" data-confirm-checkin>確認報到</button></div>
     </div></section>`);
     app.querySelector("[data-confirm-checkin]")?.addEventListener("click", async () => {
-      const email = app.querySelector("[data-admin-email]")?.value?.trim() || "";
-      if (email) localStorage.setItem("tdea-admin-email", email);
+      const operatorLineUserId = await loadLiff({ login: true });
+      if (!operatorLineUserId) return alert("無法取得工作人員 LINE UID，請從 LINE LIFF 開啟。");
       const confirmResponse = await fetch(`${api}/api/native-checkin/confirm`, {
         method: "POST",
-        headers: { "content-type": "application/json", "x-admin-email": email },
-        body: JSON.stringify({ token })
+        headers: { "content-type": "application/json", "x-line-user-id": operatorLineUserId },
+        body: JSON.stringify({ token, operatorLineUserId })
       });
       const confirmResult = await confirmResponse.json().catch(() => ({}));
       if (!confirmResponse.ok || !confirmResult.success) return alert(confirmResult.message || "核銷失敗");

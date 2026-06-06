@@ -71,7 +71,7 @@ const defaultLiffCloseUrl = "https://liff.line.me/2005868456-2jmxqyFU?close=1";
 const publicAppUrl = "https://fangwl591021.github.io/tdea-worker/";
 const publicLiffUrl = "https://liff.line.me/2005868456-2jmxqyFU";
 const pointApiBase = "https://aiwe.cc/index.php/wp-json/wetw-point/v1";
-const headers = { "access-control-allow-origin": "*", "access-control-allow-methods": "GET,POST,PUT,OPTIONS", "access-control-allow-headers": "content-type,x-admin-email,x-aiwe-token,x-line-signature" };
+const headers = { "access-control-allow-origin": "*", "access-control-allow-methods": "GET,POST,PUT,OPTIONS", "access-control-allow-headers": "content-type,x-admin-email,x-admin-member-no,x-line-user-id,x-line-uid,x-aiwe-token,x-line-signature" };
 
 const json = (data: unknown, status = 200) => new Response(JSON.stringify(data), { status, headers: { "content-type": "application/json; charset=utf-8", "cache-control": "no-store", ...headers } });
 const esc = (value: unknown) => String(value ?? "").replace(/[&<>'"]/g, (ch) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "'": "&#039;", "\"": "&quot;" }[ch] || ch));
@@ -1974,9 +1974,11 @@ async function verifyNativeCheckin(request: Request, env: Env) {
 }
 
 async function confirmNativeCheckin(request: Request, env: Env) {
-  const guard = await requireAdmin(request, env);
-  if (guard) return guard;
   const input = await request.json().catch(() => ({})) as Record<string, unknown>;
+  const operatorLineUserId = firstClean(input.operatorLineUserId, input.operatorUid, input.adminLineUserId, input.lineUserId, adminLineUserIdFromRequest(request));
+  if (!operatorLineUserId || !await isDynamicAdmin({ lineUserId: operatorLineUserId }, env)) {
+    return json({ success: false, message: "Unauthorized" }, 401);
+  }
   const token = clean(input.token);
   if (!token || !env.ASSETS_BUCKET) return json({ success: false, message: "缺少核銷碼" }, 400);
   const object = await env.ASSETS_BUCKET.get(nativeTokenKey(token));
