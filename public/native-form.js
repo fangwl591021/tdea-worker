@@ -24,12 +24,32 @@
 
   function mergedParams() {
     const output = new URLSearchParams(location.search);
-    const state = output.get("liff.state");
-    if (!state) return output;
-    let raw = state;
-    try { raw = decodeURIComponent(state); } catch (_) {}
-    const query = raw.startsWith("?") ? raw.slice(1) : raw.includes("?") ? raw.split("?").slice(1).join("?") : raw;
-    new URLSearchParams(query).forEach((value, key) => {
+    const merge = (rawValue) => {
+      if (!rawValue) return;
+      let raw = rawValue;
+      for (let i = 0; i < 2; i += 1) {
+        try {
+          const decoded = decodeURIComponent(raw);
+          if (decoded === raw) break;
+          raw = decoded;
+        } catch (_) {
+          break;
+        }
+      }
+      const query = raw.startsWith("?") ? raw.slice(1) : raw.includes("?") ? raw.split("?").slice(1).join("?") : raw;
+      new URLSearchParams(query).forEach((value, key) => {
+        if (!output.has(key)) output.set(key, value);
+      });
+    };
+    merge(output.get("liff.state"));
+    if (location.hash) {
+      const hash = location.hash.startsWith("#") ? location.hash.slice(1) : location.hash;
+      merge(hash);
+      new URLSearchParams(hash).forEach((value, key) => {
+        if (!output.has(key)) output.set(key, value);
+      });
+    }
+    new URLSearchParams(location.search.replace(/^\?/, "")).forEach((value, key) => {
       if (!output.has(key)) output.set(key, value);
     });
     return output;
