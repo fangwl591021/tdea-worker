@@ -1757,7 +1757,6 @@ async function getNativeForm(request: Request, env: Env, formId: string) {
 async function getNativeLoginMember(request: Request, env: Env, formId: string) {
   const form = await readNativeForm(env, formId);
   if (!form) return json({ success: false, message: "找不到報名表" }, 404);
-  if (!nativeLoginEnabled(form)) return json({ success: false, message: "此報名表未啟用 LINE Login 報名" }, 400);
   const url = new URL(request.url);
   const lineUserId = firstClean(url.searchParams.get("lineUserId"), url.searchParams.get("uid"), url.searchParams.get("LINE_user_id"));
   if (!lineUserId) return json({ success: false, message: "缺少 LINE UID" }, 400);
@@ -1889,7 +1888,6 @@ async function submitNativeLoginRegistration(request: Request, env: Env, formId:
   if (!env.ASSETS_BUCKET) return json({ success: false, message: "R2 bucket is not configured" }, 503);
   const form = await readNativeForm(env, formId);
   if (!form) return json({ success: false, message: "找不到報名表" }, 404);
-  if (!nativeLoginEnabled(form)) return json({ success: false, message: "此報名表未啟用 LINE Login 報名" }, 400);
   const input = await request.json().catch(() => ({})) as Record<string, unknown>;
   const lineUserId = firstClean(input.lineUserId, input.uid, input.LINE_user_id);
   if (!lineUserId) return json({ success: false, message: "請透過 LINE Login 取得會員身份" }, 400);

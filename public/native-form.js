@@ -342,7 +342,7 @@
     const showFullForm = mode === "form" || mode === "mixed";
     let autoLoginNotice = "";
 
-    if (mode === "member_login" || mode === "mixed") {
+    if (location.hostname.includes("liff.line.me") || window.liff) {
       renderLoading("正在比對會員名冊...");
       const uid = await loadLiff({ login: true });
       if (uid) {
