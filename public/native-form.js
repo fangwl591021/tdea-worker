@@ -223,6 +223,16 @@
     return "";
   }
 
+  async function submitLoginRegistration(id, input) {
+    const submitResponse = await fetch(`${api}/api/native-forms/${encodeURIComponent(id)}/login-register`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(input)
+    });
+    const submitResult = await submitResponse.json().catch(() => ({}));
+    return { response: submitResponse, result: submitResult };
+  }
+
   function sessionFieldHtml(sessions) {
     return sessions.length > 1
       ? `<div class="nf-field"><label>場次 <span class="nf-required">*</span></label><select name="sessionId" required>${sessions.map((session) => `<option value="${esc(session.id)}">${esc(session.name || "場次")}${session.startTime ? ` ${esc(session.startTime)}` : ""}</option>`).join("")}</select></div>`
@@ -377,12 +387,7 @@
       }
       const sessionId = loginBox?.querySelector("[name='sessionId']")?.value || sessions[0]?.id || "default";
       loginButton.textContent = "送出中...";
-      const submitResponse = await fetch(`${api}/api/native-forms/${encodeURIComponent(id)}/login-register`, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ lineUserId: uid, sessionId, answers: {} })
-      });
-      const submitResult = await submitResponse.json().catch(() => ({}));
+      const { response: submitResponse, result: submitResult } = await submitLoginRegistration(id, { lineUserId: uid, sessionId, answers: {} });
       if (!submitResponse.ok || !submitResult.success) {
         loginButton.disabled = false;
         loginButton.textContent = "會員/廠商快速報名";
@@ -402,13 +407,29 @@
       const uid = await loadLiff({ login: true });
       const answers = collectAnswers(registerForm, fields);
       if (uid) answers.LINE_user_id = uid;
+      const sessionId = registerForm.elements.sessionId?.value || "default";
+      if (claimIsMember(answers)) {
+        if (!uid) {
+          submit.disabled = false;
+          submit.textContent = "送出報名";
+          return alert("你選擇會員或廠商會員報名，請從 LINE LIFF 開啟，讓系統取得 LINE UID 後自動比對名冊。");
+        }
+        const { response: loginResponse, result: loginResult } = await submitLoginRegistration(id, { lineUserId: uid, sessionId, answers });
+        if (!loginResponse.ok || !loginResult.success) {
+          submit.disabled = false;
+          submit.textContent = "送出報名";
+          return alert(loginResult.message || "此 LINE 帳號尚未綁定會員或廠商會員資料，請先完成會員報到。");
+        }
+        renderReceipt(loginResult);
+        return;
+      }
       const claimError = missingMemberClaimIdentity(answers);
       if (claimError) {
         submit.disabled = false;
         submit.textContent = "送出報名";
         return alert(claimError);
       }
-      const payload = { sessionId: registerForm.elements.sessionId?.value || "default", lineUserId: uid || "", answers };
+      const payload = { sessionId, lineUserId: uid || "", answers };
       const submitResponse = await fetch(`${api}/api/native-forms/${encodeURIComponent(id)}`, {
         method: "POST",
         headers: { "content-type": "application/json" },
