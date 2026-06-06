@@ -70,6 +70,7 @@ const defaultLiffBase = "https://liff.line.me/2005868456-2jmxqyFU?monthlyDetail=
 const defaultLiffCloseUrl = "https://liff.line.me/2005868456-2jmxqyFU?close=1";
 const publicAppUrl = "https://fangwl591021.github.io/tdea-worker/";
 const publicLiffUrl = "https://liff.line.me/2005868456-2jmxqyFU";
+const nativeLiffUrl = "https://liff.line.me/2005868456-cfANNVou";
 const pointApiBase = "https://aiwe.cc/index.php/wp-json/wetw-point/v1";
 const headers = { "access-control-allow-origin": "*", "access-control-allow-methods": "GET,POST,PUT,OPTIONS", "access-control-allow-headers": "content-type,x-admin-email,x-admin-member-no,x-line-user-id,x-line-uid,x-aiwe-token,x-line-signature" };
 
@@ -907,15 +908,15 @@ function redeemKey(token: string) {
 }
 
 function nativeFormUrl(formId: string) {
-  return `${publicLiffUrl}?register=${encodeURIComponent(formId)}`;
+  return `${nativeLiffUrl}?register=${encodeURIComponent(formId)}`;
 }
 
 function redeemUrl(token: string) {
-  return `${workerBaseUrl}/?redeemSession=${encodeURIComponent(token)}`;
+  return `${nativeLiffUrl}?redeemSession=${encodeURIComponent(token)}`;
 }
 
 function nativeCheckinUrl(token: string) {
-  return `${publicAppUrl}?checkin=${encodeURIComponent(token)}`;
+  return `${nativeLiffUrl}?checkin=${encodeURIComponent(token)}`;
 }
 
 function codeToken(length = 8) {
@@ -4236,7 +4237,7 @@ async function handleMonthlyWebhook(request: Request, env: Env, rawBody: string,
   if (uidBindEvents.length) return bindLineUidEvents(uidBindEvents, env);
   if (pointEvents.length) return handleMotherPointEvents(pointEvents, env);
   if (queryEvents.length) {
-    const queryUrl = `${publicLiffUrl}?query=1`;
+    const queryUrl = `${nativeLiffUrl}?query=1`;
     const queryMessage = {
       type: "template",
       altText: "TDEA 活動查詢",
@@ -4250,7 +4251,7 @@ async function handleMonthlyWebhook(request: Request, env: Env, rawBody: string,
     return json({ success: true, mode: "registration-query", matched: [queryKeyword], forwarded: false, lineReplies });
   }
   if (memberQrEvents.length) {
-    const memberQrUrl = `${publicLiffUrl}?memberQr=1`;
+    const memberQrUrl = `${nativeLiffUrl}?memberQr=1`;
     const memberQrMessage = {
       type: "template",
       altText: "TDEA 會員 QR",
@@ -4264,7 +4265,7 @@ async function handleMonthlyWebhook(request: Request, env: Env, rawBody: string,
     return json({ success: true, mode: "member-qr", matched: [memberQrKeyword], forwarded: false, lineReplies });
   }
   if (calendarEvents.length) {
-    const calendarUrl = `${publicLiffUrl}?calendar=1`;
+    const calendarUrl = `${nativeLiffUrl}?calendar=1`;
     const calendarMessage = {
       type: "template",
       altText: "TDEA 行事曆",
@@ -4294,7 +4295,7 @@ async function handleMonthlyWebhook(request: Request, env: Env, rawBody: string,
     return json({ success: true, mode: "personal-message", matched: [personalMessageKeyword], forwarded: false, lineReplies });
   }
   if (marqueeEvents.length) {
-    const marqueeUrl = `${publicLiffUrl}?marquee=1`;
+    const marqueeUrl = `${nativeLiffUrl}?marquee=1`;
     const marqueeMessage = {
       type: "template",
       altText: "TDEA 跑馬燈",
@@ -4355,8 +4356,8 @@ export default {
 	    if (request.method === "GET" && url.pathname === "/api/vendor-card-menu") return json({ success: true, data: await readVendorCardConfig(env) });
 	    if ((request.method === "PUT" || request.method === "POST") && url.pathname === "/api/vendor-card-menu") { const guard = await requireAdmin(request, env); if (guard) return guard; if (!env.ASSETS_BUCKET) return json({ success: false, message: "R2 bucket is not configured" }, 503); const config = await request.json().catch(() => ({})) as VendorCardConfig; await writeVendorCardConfig(env, config); return json({ success: true, data: await readVendorCardConfig(env), flex: buildVendorCardFlex(config) }); }
 	    if (request.method === "GET" && url.pathname === "/api/vendor-card-menu/flex") { const config = await readVendorCardConfig(env); return json({ success: true, flex: buildVendorCardFlex(config), data: config }); }
-	    if (request.method === "GET" && url.pathname === "/api/marquee") return json({ success: true, data: await readMarqueeConfig(env), liffUrl: `${publicLiffUrl}?marquee=1` });
-	    if ((request.method === "PUT" || request.method === "POST") && url.pathname === "/api/marquee") { const guard = await requireAdmin(request, env); if (guard) return guard; if (!env.ASSETS_BUCKET) return json({ success: false, message: "R2 bucket is not configured" }, 503); const config = await request.json().catch(() => ({})) as MarqueeConfig; await writeMarqueeConfig(env, config); return json({ success: true, data: await readMarqueeConfig(env), liffUrl: `${publicLiffUrl}?marquee=1` }); }
+	    if (request.method === "GET" && url.pathname === "/api/marquee") return json({ success: true, data: await readMarqueeConfig(env), liffUrl: `${nativeLiffUrl}?marquee=1` });
+	    if ((request.method === "PUT" || request.method === "POST") && url.pathname === "/api/marquee") { const guard = await requireAdmin(request, env); if (guard) return guard; if (!env.ASSETS_BUCKET) return json({ success: false, message: "R2 bucket is not configured" }, 503); const config = await request.json().catch(() => ({})) as MarqueeConfig; await writeMarqueeConfig(env, config); return json({ success: true, data: await readMarqueeConfig(env), liffUrl: `${nativeLiffUrl}?marquee=1` }); }
 	    if (request.method === "POST" && url.pathname === "/api/marquee/upload") return uploadMarqueeImageApi(request, env);
 	    if (request.method === "POST" && url.pathname === "/api/marquee/reward") return rewardMarqueePoint(request, env);
 	    if (request.method === "POST" && url.pathname === "/api/marquee/points") return queryMarqueePoints(request, env);

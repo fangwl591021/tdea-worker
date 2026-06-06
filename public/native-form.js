@@ -9,7 +9,8 @@
   const calendarMode = params.has("calendar");
   const marqueeMode = params.has("marquee");
   const app = document.querySelector("#app");
-  const liffId = "2005868456-2jmxqyFU";
+  const liffId = "2005868456-cfANNVou";
+  const nativeLiffUrl = "https://liff.line.me/2005868456-cfANNVou";
   const calendarId = "7d66f2a96f192dda6cca2b04e60a6e549c7adf74f57721845d5b7e03f8b7ca89@group.calendar.google.com";
   let liffReady = null;
   let lineUserId = "";
@@ -414,7 +415,7 @@
     const title = activity.name || row.formId || "活動報名";
     const submittedAt = row.submittedAt ? new Date(row.submittedAt).toLocaleString("zh-TW", { hour12: false }) : "";
     const checkedInAt = row.checkedInAt ? new Date(row.checkedInAt).toLocaleString("zh-TW", { hour12: false }) : "";
-    const checkinUrl = row.checkinUrl || (row.checkinToken ? `${api || location.origin}?checkin=${encodeURIComponent(row.checkinToken)}` : "");
+    const checkinUrl = row.checkinUrl || (row.checkinToken ? `${nativeLiffUrl}?checkin=${encodeURIComponent(row.checkinToken)}` : "");
     const qrUrl = checkinUrl ? `https://api.qrserver.com/v1/create-qr-code/?size=220x220&data=${encodeURIComponent(checkinUrl)}` : "";
     const lines = [
       activity.courseTime ? `<div><strong>活動時間：</strong>${esc(activity.courseTime)}</div>` : "",

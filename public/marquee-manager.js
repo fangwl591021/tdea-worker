@@ -2,7 +2,7 @@
   const api = location.hostname.endsWith("github.io") ? "https://tdeawork.fangwl591021.workers.dev" : "";
   const storageKey = "tdea-manager-v3";
   const keyword = "TDEA跑馬燈";
-  const liffUrl = "https://liff.line.me/2005868456-2jmxqyFU?marquee=1";
+  const liffUrl = "https://liff.line.me/2005868456-cfANNVou?marquee=1";
   let active = false;
   let draft = null;
   let previewIndex = 0;
