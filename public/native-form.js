@@ -340,6 +340,32 @@
     const image = activity.posterUrl || activity.imageUrl || "";
     const mode = registrationMode(form);
     const showFullForm = mode === "form" || mode === "mixed";
+    let autoLoginNotice = "";
+
+    if (mode === "member_login" || mode === "mixed") {
+      renderLoading("正在比對會員名冊...");
+      const uid = await loadLiff({ login: true });
+      if (uid) {
+        const memberResponse = await fetch(`${api}/api/native-forms/${encodeURIComponent(id)}/login-member?lineUserId=${encodeURIComponent(uid)}`, { cache: "no-store" });
+        const memberResult = await memberResponse.json().catch(() => ({}));
+        if (memberResponse.ok && memberResult.success) {
+          const member = memberResult.data || {};
+          const sessionId = sessions[0]?.id || "default";
+          renderLoading(`已確認會員 ${member.name || ""}，正在送出報名...`);
+          const { response: submitResponse, result: submitResult } = await submitLoginRegistration(id, { lineUserId: uid, sessionId, answers: {} });
+          if (submitResponse.ok && submitResult.success) {
+            renderReceipt(submitResult);
+            return;
+          }
+          if (mode === "member_login") return renderError(submitResult.message || "報名失敗");
+          autoLoginNotice = submitResult.message || "會員自動報名未完成，請補填必要欄位後送出。";
+        } else if (mode === "member_login") {
+          return renderError(memberResult.message || "此 LINE 帳號尚未綁定會員或廠商會員資料。");
+        }
+      } else if (mode === "member_login") {
+        return renderError("無法取得 LINE UID，請從 LINE LIFF 開啟報名頁。");
+      }
+    }
 
     renderShell(`<section class="nf-card">
       ${image ? `<img class="nf-hero" src="${esc(image)}" alt="${esc(activity.name || "")}">` : ""}
@@ -347,6 +373,7 @@
         <h1 class="nf-title">${esc(activity.name || "活動報名")}</h1>
         <div class="nf-meta">${activity.courseTime ? `<span class="nf-pill">${esc(activity.courseTime)}</span>` : ""}${activity.deadline ? `<span class="nf-pill">截止 ${esc(activity.deadline)}</span>` : ""}</div>
         ${activity.detailText ? `<div class="nf-detail">${esc(activity.detailText)}</div>` : ""}
+        ${autoLoginNotice ? `<div class="nf-alert">${esc(autoLoginNotice)}</div>` : ""}
         ${loginRegisterPanel(mode, sessions)}
         ${showFullForm ? `<form class="nf-form" data-native-register novalidate>
           ${sessionFieldHtml(sessions)}
