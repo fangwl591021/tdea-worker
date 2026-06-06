@@ -20,7 +20,7 @@
   const esc = (value) => String(value ?? "").replace(/[&<>"']/g, (ch) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#039;" }[ch]));
   const trim = (value) => String(value ?? "").trim();
   const fieldTypes = new Set(["text", "email", "paragraph", "radio", "checkbox", "dropdown"]);
-  const autoMemberKeys = new Set(["line_user_id", "lineuserid", "lineid", "line_id", "lineuid", "line_uid", "uid", "name", "phone", "mobile", "email", "company", "memberno", "gender", "ismember", "membertype"]);
+  const autoMemberKeys = new Set(["line_user_id", "lineuserid", "lineid", "line_id", "lineuid", "line_uid", "uid"]);
 
   function mergedParams() {
     const output = new URLSearchParams(location.search);
@@ -408,21 +408,6 @@
       const answers = collectAnswers(registerForm, fields);
       if (uid) answers.LINE_user_id = uid;
       const sessionId = registerForm.elements.sessionId?.value || "default";
-      if (claimIsMember(answers)) {
-        if (!uid) {
-          submit.disabled = false;
-          submit.textContent = "送出報名";
-          return alert("你選擇會員或廠商會員報名，請從 LINE LIFF 開啟，讓系統取得 LINE UID 後自動比對名冊。");
-        }
-        const { response: loginResponse, result: loginResult } = await submitLoginRegistration(id, { lineUserId: uid, sessionId, answers });
-        if (!loginResponse.ok || !loginResult.success) {
-          submit.disabled = false;
-          submit.textContent = "送出報名";
-          return alert(loginResult.message || "此 LINE 帳號尚未綁定會員或廠商會員資料，請先完成會員報到。");
-        }
-        renderReceipt(loginResult);
-        return;
-      }
       const claimError = missingMemberClaimIdentity(answers);
       if (claimError) {
         submit.disabled = false;
