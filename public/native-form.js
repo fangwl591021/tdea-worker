@@ -515,10 +515,23 @@
     if (!response.ok || !result.success) return renderError(result.message || "核銷資料無效");
     const row = result.data || {};
     const answers = row.answers || {};
+    const activity = row.activity || {};
+    const pickFrom = (source, ...keys) => {
+      for (const key of keys) {
+        const value = source[key];
+        if (value !== undefined && value !== null && String(value).trim()) return value;
+      }
+      return "-";
+    };
+    const attendeeName = pickFrom(answers, "memberName", "name", "姓名", "participantName", "displayName");
+    const activityName = pickFrom(activity, "name", "activityName", "活動名稱", "title");
     renderShell(`<section class="nf-card"><div class="nf-body">
       <h1 class="nf-title">活動報到核銷</h1>
       <div class="${row.checkedInAt ? "nf-ok" : "nf-alert"}">${row.checkedInAt ? `已報到：${esc(row.checkedInAt)}` : "尚未報到"}</div>
-      <table class="nf-table"><tbody>${Object.entries(answers).map(([key, value]) => `<tr><th>${esc(key)}</th><td>${esc(Array.isArray(value) ? value.join(", ") : value)}</td></tr>`).join("")}</tbody></table>
+      <table class="nf-table"><tbody>
+        <tr><th>人名</th><td>${esc(attendeeName)}</td></tr>
+        <tr><th>活動名稱</th><td>${esc(activityName)}</td></tr>
+      </tbody></table>
       <div class="nf-actions"><button class="nf-btn primary" data-confirm-checkin>確認報到</button></div>
     </div></section>`);
     app.querySelector("[data-confirm-checkin]")?.addEventListener("click", async () => {
