@@ -265,15 +265,32 @@
     if (liffReady) return liffReady;
     liffReady = new Promise((resolve) => {
       const finish = (value = "") => { lineUserId = value || lineUserId; resolve(lineUserId); };
+      const loadSdk = () => new Promise((sdkResolve) => {
+        if (window.liff) return sdkResolve(true);
+        const existing = document.querySelector("script[data-liff-sdk]");
+        if (existing) {
+          existing.addEventListener("load", () => sdkResolve(true), { once: true });
+          existing.addEventListener("error", () => sdkResolve(false), { once: true });
+          return;
+        }
+        const script = document.createElement("script");
+        script.src = "https://static.line-scdn.net/liff/edge/2/sdk.js";
+        script.async = true;
+        script.dataset.liffSdk = "1";
+        script.onload = () => sdkResolve(true);
+        script.onerror = () => sdkResolve(false);
+        document.head.appendChild(script);
+      });
       const init = async () => {
         try {
+          await loadSdk();
           await window.liff?.init?.({ liffId });
           if (window.liff?.isLoggedIn?.()) {
             const profile = await window.liff.getProfile();
             finish(profile?.userId || "");
             return;
           }
-          if (options.login && window.liff?.login && location.hostname.includes("liff.line.me")) {
+          if (options.login && window.liff?.login) {
             window.liff.login({ redirectUri: location.href });
             return;
           }
@@ -342,7 +359,7 @@
     const showFullForm = mode === "form" || mode === "mixed";
     let autoLoginNotice = "";
 
-    if (location.hostname.includes("liff.line.me") || window.liff) {
+    if (formId) {
       renderLoading("正在比對會員名冊...");
       const uid = await loadLiff({ login: true });
       if (uid) {
@@ -434,6 +451,11 @@
       const uid = await loadLiff({ login: true });
       const answers = collectAnswers(registerForm, fields);
       if (uid) answers.LINE_user_id = uid;
+      if (!uid && claimIsMember(answers)) {
+        submit.disabled = false;
+        submit.textContent = "送出報名";
+        return alert("無法取得 LINE UID，請從 LINE LIFF 開啟報名頁，或先完成會員報到。");
+      }
       const sessionId = registerForm.elements.sessionId?.value || "default";
       const claimError = missingMemberClaimIdentity(answers);
       if (claimError) {
