@@ -680,6 +680,21 @@ async function appendRegistrationList(env: Env, keys: string[], entry: Registrat
   return maxCount;
 }
 
+function publicRegistrationEntry(entry: RegistrationEntry): RegistrationEntry & { checkinStatus: string; checkinStatusText: string } {
+  const answers = normalizeAnswersRecord(entry.answers || {});
+  if (isSyntheticLineEmail(answers.email)) answers.email = "";
+  if (isSyntheticLineEmail(answers.Email)) answers.Email = "";
+  if (isSyntheticLineEmail(answers["電子郵件"])) answers["電子郵件"] = "";
+  const checkedInAt = clean(entry.checkedInAt);
+  const cancelled = clean(entry.status || "active") === "cancelled";
+  return {
+    ...entry,
+    answers,
+    checkinStatus: cancelled ? "cancelled" : checkedInAt ? "checked_in" : "pending",
+    checkinStatusText: cancelled ? "已取消" : checkedInAt ? "已完成簽到" : "尚未簽到"
+  };
+}
+
 async function listRegistrations(request: Request, env: Env) {
   if (!env.ASSETS_BUCKET) return json({ success: false, message: "R2 bucket is not configured" }, 503);
   const url = new URL(request.url);
@@ -689,7 +704,7 @@ async function listRegistrations(request: Request, env: Env) {
     .filter(Boolean);
   for (const key of keys) {
     const list = dedupeRegistrations(await readRegistrationList(env, key));
-    if (list.length) return json({ success: true, key, data: list });
+    if (list.length) return json({ success: true, key, data: list.map(publicRegistrationEntry) });
   }
   return json({ success: true, key: keys[0] || "", data: [] });
 }
@@ -788,6 +803,10 @@ async function syncGoogleFormResponses(request: Request, env: Env) {
 
 function clean(value: unknown) {
   return String(value ?? "").trim();
+}
+
+function isSyntheticLineEmail(value: unknown) {
+  return /^U[a-f0-9]{32}@aiwe\.cc$/i.test(clean(value));
 }
 
 function numberValue(value: unknown) {
@@ -1041,7 +1060,7 @@ async function resolveLineLoginMember(env: Env, lineUserId: string): Promise<Lin
     lineUserId: uid,
     company,
     phone: firstClean(row.phone, row.mobile, row.tel, row.telephone),
-    email: firstClean(row.email, row.user_email),
+    email: isSyntheticLineEmail(firstClean(row.email, row.user_email)) ? "" : firstClean(row.email, row.user_email),
     gender: firstClean(row.gender, row.sex),
     raw: row
   };
@@ -1955,7 +1974,7 @@ async function queryNativeRegistration(request: Request, env: Env) {
   }
   const entry = await readNativeRegistration(env, targetId);
   if (!entry || (queryCode && entry.queryCode !== queryCode)) return json({ success: false, message: "查無報名資料" }, 404);
-  return json({ success: true, data: { ...entry, checkinUrl: entry.checkinToken ? nativeCheckinUrl(entry.checkinToken) : "" } });
+  return json({ success: true, data: { ...publicRegistrationEntry(entry), checkinUrl: entry.checkinToken ? nativeCheckinUrl(entry.checkinToken) : "" } });
 }
 
 async function queryNativeRegistrationsByLine(request: Request, env: Env) {
@@ -1969,7 +1988,7 @@ async function queryNativeRegistrationsByLine(request: Request, env: Env) {
     const entry = await readNativeRegistration(env, id);
     if (entry && clean(entry.lineUserId) === lineUserId) entries.push(entry);
   }
-  return json({ success: true, data: entries.map((entry) => ({ ...entry, checkinUrl: entry.checkinToken ? nativeCheckinUrl(entry.checkinToken) : "" })) });
+  return json({ success: true, data: entries.map((entry) => ({ ...publicRegistrationEntry(entry), checkinUrl: entry.checkinToken ? nativeCheckinUrl(entry.checkinToken) : "" })) });
 }
 
 async function updateRegistrationEverywhere(env: Env, entry: RegistrationEntry) {
@@ -2010,7 +2029,7 @@ async function verifyNativeCheckin(request: Request, env: Env) {
   const registrationId = object ? await object.text() : "";
   const entry = await readNativeRegistration(env, registrationId);
   if (!entry || entry.checkinToken !== token) return json({ success: false, message: "核銷碼無效" }, 404);
-  return json({ success: true, data: entry });
+  return json({ success: true, data: publicRegistrationEntry(entry) });
 }
 
 async function confirmNativeCheckin(request: Request, env: Env) {
@@ -3695,7 +3714,7 @@ function setAiweRowLineUid(row: Record<string, unknown>, lineUserId: string) {
   row.lineUserId = lineUserId;
   row.LINE_user_id = lineUserId;
   row.uid = lineUserId;
-  if (clean(row.email).match(/^U[0-9a-f]{32}@aiwe\./i) || !clean(row.email)) row.email = `${lineUserId}@aiwe.cc`;
+  if (isSyntheticLineEmail(row.email)) row.email = "";
 }
 
 function inferUidBindMemberNo(rows: Array<Record<string, unknown>>, lineUserId: string, env: Env) {

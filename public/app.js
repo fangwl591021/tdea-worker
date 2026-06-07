@@ -705,8 +705,38 @@
     const rows = state.registrationLists[rowId];
     if (!rows) return `<section class="panel"><div class="panel-head"><h2 class="panel-title">${esc(activity.name || "活動")} 報名名單</h2><button class="btn" data-refresh-registration-list="${esc(rowId)}">重新載入</button></div>${empty("正在載入報名名單...")}</section>`;
     if (!rows.length) return `<section class="panel"><div class="panel-head"><h2 class="panel-title">${esc(activity.name || "活動")} 報名名單</h2><button class="btn" data-refresh-registration-list="${esc(rowId)}">重新載入</button></div>${empty("目前 Worker 沒有收到這個活動的報名資料")}</section>`;
-    const headers = [...new Set(rows.flatMap(row => Object.keys(row.answers || {})))];
-    return `<section class="panel"><div class="panel-head"><h2 class="panel-title">${esc(activity.name || "活動")} 報名名單</h2><button class="btn" data-refresh-registration-list="${esc(rowId)}">重新載入</button></div><div class="table-wrap"><table><thead><tr><th>送出時間</th>${headers.map(h => `<th>${esc(h)}</th>`).join("")}</tr></thead><tbody>${rows.map(row => `<tr><td>${esc(formatTime(row.submittedAt))}</td>${headers.map(h => `<td>${esc(valueText(row.answers?.[h]))}</td>`).join("")}</tr>`).join("")}</tbody></table></div></section>`;
+    const systemFields = new Set(["LINE_user_id", "lineUserId", "line_user_id", "uid", "UID", "memberName", "registrationSource"]);
+    const baseFields = [
+      ["送出時間", row => formatTime(row.submittedAt)],
+      ["姓名", row => answerPick(row.answers, ["name", "姓名", "memberName", "memberName"])],
+      ["會員編號", row => answerPick(row.answers, ["memberNo", "會員編號"])],
+      ["電話", row => answerPick(row.answers, ["phone", "mobile", "手機", "電話"])],
+      ["Email", row => cleanFakeEmail(answerPick(row.answers, ["email", "Email", "電子郵件"]))],
+      ["會員類型", row => answerPick(row.answers, ["memberType", "isMember", "是否為會員"])],
+      ["來源", row => sourceLabel(answerPick(row.answers, ["registrationSource"]))],
+      ["簽到狀態", row => row.checkinStatusText || (row.checkedInAt ? "已完成簽到" : "尚未簽到")],
+      ["簽到時間", row => row.checkedInAt ? formatTime(row.checkedInAt) : ""]
+    ];
+    const customHeaders = [...new Set(rows.flatMap(row => Object.keys(row.answers || {})))]
+      .filter(key => !systemFields.has(key) && !baseFields.some(([label]) => label === key) && !["name", "姓名", "memberNo", "會員編號", "phone", "mobile", "手機", "電話", "email", "Email", "電子郵件", "memberType", "isMember", "是否為會員"].includes(key));
+    return `<section class="panel"><div class="panel-head"><h2 class="panel-title">${esc(activity.name || "活動")} 報名名單</h2><button class="btn" data-refresh-registration-list="${esc(rowId)}">重新載入</button></div><div class="table-wrap"><table><thead><tr>${baseFields.map(([label]) => `<th>${esc(label)}</th>`).join("")}${customHeaders.map(h => `<th>${esc(h)}</th>`).join("")}</tr></thead><tbody>${rows.map(row => `<tr>${baseFields.map(([, getter]) => `<td>${esc(getter(row))}</td>`).join("")}${customHeaders.map(h => `<td>${esc(valueText(row.answers?.[h]))}</td>`).join("")}</tr>`).join("")}</tbody></table></div></section>`;
+  }
+  function answerPick(answers, keys) {
+    const source = answers || {};
+    for (const key of keys) {
+      const value = valueText(source[key]);
+      if (value) return value;
+    }
+    return "";
+  }
+  function cleanFakeEmail(value) {
+    const text = String(value || "").trim();
+    return /^U[a-f0-9]{32}@aiwe\.cc$/i.test(text) ? "" : text;
+  }
+  function sourceLabel(value) {
+    if (value === "line_login" || value === "line_member_claim") return "LINE 登入";
+    if (value === "form") return "填表";
+    return value || "";
   }
   function valueText(value) {
     if (Array.isArray(value)) return value.map(valueText).filter(Boolean).join("、");
