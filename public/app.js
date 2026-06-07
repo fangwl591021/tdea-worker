@@ -15,7 +15,7 @@
     keywords: ["關鍵字", "整理 LINE OA 觸發關鍵字、用途與回覆行為。"],
     redeem: ["點數折抵", "建立限時店家掃碼工作台，店家掃會員 QR 後執行扣點。"]
   };
-  const state = { view: "dashboard", drawer: "", data: load(), registrationLists: {}, memberApplications: null };
+  const state = { view: "dashboard", drawer: "", data: load(), registrationLists: {}, memberRegistrationLists: {}, memberApplications: null };
   let lineDraftAutoImporting = false;
   let lineDraftLastAutoImport = 0;
   let rosterCleanupApplied = false;
@@ -933,6 +933,8 @@
     };
     document.querySelectorAll("[data-nav]").forEach(b => b.onclick = () => { state.view = b.dataset.nav; state.drawer = ""; render(); });
     document.querySelectorAll("[data-drawer]").forEach(b => b.onclick = () => { state.drawer = b.dataset.drawer; render(); });
+    mountMemberRegistrationPanel();
+    document.querySelectorAll("[data-refresh-member-registrations]").forEach(b => b.onclick = () => loadMemberRegistrationList(b.dataset.memberType, b.dataset.memberId, true));
     document.querySelectorAll("[data-import]").forEach(b => b.onclick = () => { state.drawer = "import-" + b.dataset.import + ":new"; render(); });
     document.querySelectorAll("[data-close]").forEach(b => b.onclick = () => { state.drawer = ""; render(); });
     document.querySelectorAll("[data-toggle]").forEach(b => b.onclick = () => { const x = state.data.activities.find(r => r.id === b.dataset.toggle); if (x) x.status = x.status === "上架" ? "下架" : "上架"; save(); render(); });
@@ -972,6 +974,59 @@
     state.drawer = "registrations:" + rowId;
     render();
     loadRegistrationList(rowId);
+  }
+
+  function memberLineUid(row) {
+    return String(row?.lineUserId || row?.lineUid || row?.uid || row?.LINE_user_id || row?.line_user_id || "").trim();
+  }
+
+  function currentMemberDrawer() {
+    const [type, rowId] = String(state.drawer || "").split(":");
+    if (!["association", "vendor"].includes(type) || !rowId || rowId === "new") return null;
+    const row = state.data[type]?.find(item => item.id === rowId);
+    return row ? { type, rowId, row } : null;
+  }
+
+  function memberRegistrationRowsHtml(rows) {
+    if (!rows?.length) return `<div class="empty">目前沒有報名活動記錄。</div>`;
+    return `<div class="table-wrap"><table><thead><tr><th>活動名稱</th><th>報名時間</th><th>簽到狀態</th><th>簽到時間</th></tr></thead><tbody>${rows.map(item => `<tr><td>${esc(item.activity?.name || item.activityName || item.eventName || "-")}</td><td>${esc(formatTime(item.submittedAt || item.createdAt || item.timestamp))}</td><td>${esc(item.checkinStatusText || (item.checkedInAt ? "已完成簽到" : "尚未簽到"))}</td><td>${esc(item.checkedInAt ? formatTime(item.checkedInAt) : "-")}</td></tr>`).join("")}</tbody></table></div>`;
+  }
+
+  function mountMemberRegistrationPanel() {
+    const form = document.querySelector("#drawer-member");
+    const info = currentMemberDrawer();
+    if (!form || !info || document.querySelector("[data-member-registration-panel]")) return;
+    const key = `${info.type}:${info.rowId}`;
+    const lineUserId = memberLineUid(info.row);
+    const rows = state.memberRegistrationLists[key];
+    const panel = document.createElement("section");
+    panel.className = "panel member-registration-history";
+    panel.dataset.memberRegistrationPanel = "1";
+    panel.innerHTML = `<div class="panel-head"><h3>報名活動記錄</h3><button class="btn" type="button" data-refresh-member-registrations data-member-type="${esc(info.type)}" data-member-id="${esc(info.rowId)}">重新載入</button></div>${!lineUserId ? `<div class="empty">此會員尚未綁定 LINE UID，無法查詢報名活動記錄。</div>` : rows ? memberRegistrationRowsHtml(rows) : `<div class="empty">正在載入報名活動記錄...</div>`}`;
+    form.insertAdjacentElement("afterend", panel);
+    if (lineUserId && !rows) loadMemberRegistrationList(info.type, info.rowId);
+  }
+
+  async function loadMemberRegistrationList(type, rowId, showMessage = false) {
+    const row = state.data[type]?.find(item => item.id === rowId);
+    const key = `${type}:${rowId}`;
+    const lineUserId = memberLineUid(row);
+    if (!lineUserId) {
+      state.memberRegistrationLists[key] = [];
+      if (showMessage) toast("此會員尚未綁定 LINE UID");
+      render();
+      return;
+    }
+    try {
+      const res = await fetch(api + "/api/native-registrations/me?lineUserId=" + encodeURIComponent(lineUserId), { cache: "no-store" });
+      const result = await res.json().catch(() => ({}));
+      state.memberRegistrationLists[key] = Array.isArray(result.data) ? result.data : [];
+      if (showMessage) toast("報名活動記錄已更新");
+    } catch (_) {
+      state.memberRegistrationLists[key] = [];
+      if (showMessage) toast("報名活動記錄載入失敗");
+    }
+    render();
   }
 
   async function createRedeem(event) {
