@@ -610,18 +610,36 @@
       </tbody></table>
       <div class="nf-actions"><button class="nf-btn primary" data-confirm-checkin>確認報到</button></div>
     </div></section>`);
-    app.querySelector("[data-confirm-checkin]")?.addEventListener("click", async () => {
-      const operatorLineUserId = await loadLiff({ login: true });
-      if (!operatorLineUserId) return alert("無法取得工作人員 LINE UID，請從 LINE LIFF 開啟。");
-      const confirmResponse = await fetch(`${api}/api/native-checkin/confirm`, {
-        method: "POST",
-        headers: { "content-type": "application/json", "x-line-user-id": operatorLineUserId },
-        body: JSON.stringify({ token, operatorLineUserId })
-      });
-      const confirmResult = await confirmResponse.json().catch(() => ({}));
-      if (!confirmResponse.ok || !confirmResult.success) return alert(confirmResult.message || "核銷失敗");
-      alert("報到成功");
-      showCheckin(token);
+    app.querySelector("[data-confirm-checkin]")?.addEventListener("click", async (event) => {
+      const button = event.currentTarget;
+      if (button?.dataset.busy === "1") return;
+      const originalText = button?.textContent || "確認報到";
+      if (button) {
+        button.dataset.busy = "1";
+        button.disabled = true;
+        button.textContent = "核銷中，請稍候...";
+      }
+      try {
+        const operatorLineUserId = await loadLiff({ login: true });
+        if (!operatorLineUserId) throw new Error("無法取得工作人員 LINE UID，請從 LINE LIFF 開啟。");
+        const confirmResponse = await fetch(`${api}/api/native-checkin/confirm`, {
+          method: "POST",
+          headers: { "content-type": "application/json", "x-line-user-id": operatorLineUserId },
+          body: JSON.stringify({ token, operatorLineUserId })
+        });
+        const confirmResult = await confirmResponse.json().catch(() => ({}));
+        if (!confirmResponse.ok || !confirmResult.success) throw new Error(confirmResult.message || "核銷失敗");
+        if (button) button.textContent = "報到成功";
+        alert("報到成功");
+        showCheckin(token);
+      } catch (error) {
+        if (button) {
+          button.dataset.busy = "0";
+          button.disabled = false;
+          button.textContent = originalText;
+        }
+        alert(error?.message || "核銷失敗");
+      }
     });
   }
 
