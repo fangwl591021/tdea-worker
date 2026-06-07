@@ -124,6 +124,37 @@ async function isDynamicAdmin(identity: { email?: string; memberNo?: string; lin
   });
 }
 
+function loginAccessEnabled(value: unknown) {
+  if (value === true) return true;
+  const text = clean(value).toLowerCase();
+  return ["1", "true", "y", "yes", "allow", "allowed", "允許", "啟用"].includes(text);
+}
+
+function memberRowLoginAccess(row: Record<string, unknown>) {
+  return [
+    row.loginAccess,
+    row.loginAllowed,
+    row.allowLogin,
+    row.canLogin,
+    row.adminAccess,
+    row["登入權限"]
+  ].some(loginAccessEnabled);
+}
+
+async function isCheckinOperator(lineUserId: string, env: Env) {
+  const uid = clean(lineUserId);
+  if (!uid) return false;
+  if (await isDynamicAdmin({ lineUserId: uid }, env)) return true;
+  const lowerUid = uid.toLowerCase();
+  const adminRecords = Object.values(await readAdminAccess(env)).filter((record) => record.loginAccess === true);
+  const rows = await readAiweMembers(env);
+  return rows.some((row) => {
+    if (memberLineUid(row).toLowerCase() !== lowerUid) return false;
+    if (memberRowLoginAccess(row)) return true;
+    return adminRecords.some((record) => rowMatchesMemberNo(row, record.memberNo));
+  });
+}
+
 async function requireAdmin(request: Request, env: Env) {
   const email = adminEmailFromRequest(request);
   if (email && staticAdminEmails(env).includes(email)) return null;
@@ -157,6 +188,16 @@ async function updateAdminAccessApi(request: Request, env: Env) {
     updatedBy: adminEmailFromRequest(request)
   };
   await writeAdminAccess(env, records);
+  const rows = await readAiweMembers(env);
+  const matchedRows = rows.filter((row) => rowMatchesMemberNo(row, memberNo));
+  if (matchedRows.length) {
+    for (const row of matchedRows) {
+      row.loginAccess = Boolean(input.loginAccess);
+      if (lineUserId) setAiweRowLineUid(row, lineUserId);
+      if (email && !clean(row.email)) row.email = email;
+    }
+    await writeAiweMembers(env, rows);
+  }
   return json({ success: true, data: records[memberNo] });
 }
 
@@ -1975,7 +2016,7 @@ async function verifyNativeCheckin(request: Request, env: Env) {
 async function confirmNativeCheckin(request: Request, env: Env) {
   const input = await request.json().catch(() => ({})) as Record<string, unknown>;
   const operatorLineUserId = firstClean(input.operatorLineUserId, input.operatorUid, input.adminLineUserId, input.lineUserId, adminLineUserIdFromRequest(request));
-  if (!operatorLineUserId || !await isDynamicAdmin({ lineUserId: operatorLineUserId }, env)) {
+  if (!operatorLineUserId || !await isCheckinOperator(operatorLineUserId, env)) {
     return json({ success: false, message: "Unauthorized" }, 401);
   }
   const token = clean(input.token);
