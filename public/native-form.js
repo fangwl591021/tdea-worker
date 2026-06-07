@@ -490,6 +490,7 @@
     const title = activity.name || row.formId || "活動報名";
     const submittedAt = row.submittedAt ? new Date(row.submittedAt).toLocaleString("zh-TW", { hour12: false }) : "";
     const checkedInAt = row.checkedInAt ? new Date(row.checkedInAt).toLocaleString("zh-TW", { hour12: false }) : "";
+    const isCheckedIn = Boolean(row.checkedInAt);
     const checkinUrl = row.checkinUrl || (row.checkinToken ? `${nativeLiffUrl}?checkin=${encodeURIComponent(row.checkinToken)}` : "");
     const qrUrl = checkinUrl ? `https://api.qrserver.com/v1/create-qr-code/?size=220x220&data=${encodeURIComponent(checkinUrl)}` : "";
     const lines = [
@@ -505,10 +506,11 @@
       </div>
       <div class="nf-query-body">
         <div class="nf-query-lines">
+          ${isCheckedIn ? `<div class="nf-ok">已完成報到</div>` : ""}
           ${lines || `<div>已找到報名紀錄。</div>`}
-          ${row.status === "cancelled" ? "" : `<div class="nf-actions" style="margin-top:10px"><button class="nf-btn danger" data-cancel-registration="${esc(row.id)}" data-query-code="${esc(row.queryCode || "")}">取消報名</button></div>`}
+          ${row.status === "cancelled" || isCheckedIn ? "" : `<div class="nf-actions" style="margin-top:10px"><button class="nf-btn danger" data-cancel-registration="${esc(row.id)}" data-query-code="${esc(row.queryCode || "")}">取消報名</button></div>`}
         </div>
-        ${qrUrl ? `<div class="nf-query-qr"><img class="nf-qr" src="${qrUrl}" alt="核銷 QR Code"><span>活動核銷 QR</span></div>` : ""}
+        ${!isCheckedIn && qrUrl ? `<div class="nf-query-qr"><img class="nf-qr" src="${qrUrl}" alt="核銷 QR Code"><span>活動核銷 QR</span></div>` : ""}
       </div>
     </article>`;
   }
@@ -601,15 +603,17 @@
     };
     const attendeeName = pickFrom(answers, "memberName", "name", "姓名", "participantName", "displayName");
     const activityName = pickFrom(activity, "name", "activityName", "活動名稱", "title");
+    const alreadyCheckedIn = Boolean(row.checkedInAt);
     renderShell(`<section class="nf-card"><div class="nf-body">
       <h1 class="nf-title">活動報到核銷</h1>
-      <div class="${row.checkedInAt ? "nf-ok" : "nf-alert"}">${row.checkedInAt ? `已報到：${esc(row.checkedInAt)}` : "尚未報到"}</div>
+      <div class="${alreadyCheckedIn ? "nf-ok" : "nf-alert"}">${alreadyCheckedIn ? `已完成報到：${esc(row.checkedInAt)}` : "尚未報到"}</div>
       <table class="nf-table"><tbody>
         <tr><th>人名</th><td>${esc(attendeeName)}</td></tr>
         <tr><th>活動名稱</th><td>${esc(activityName)}</td></tr>
       </tbody></table>
-      <div class="nf-actions"><button class="nf-btn primary" data-confirm-checkin>確認報到</button></div>
+      <div class="nf-actions"><button class="nf-btn primary" data-confirm-checkin ${alreadyCheckedIn ? "disabled" : ""}>${alreadyCheckedIn ? "已完成報到" : "確認報到"}</button></div>
     </div></section>`);
+    if (alreadyCheckedIn) return;
     app.querySelector("[data-confirm-checkin]")?.addEventListener("click", async (event) => {
       const button = event.currentTarget;
       if (button?.dataset.busy === "1") return;
