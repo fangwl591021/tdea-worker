@@ -86,6 +86,47 @@
       hasFormSettings
     ));
   }
+  function storedValue(...keys) {
+    for (const key of keys) {
+      const value = localStorage.getItem(key) || sessionStorage.getItem(key) || "";
+      if (String(value).trim()) return String(value).trim();
+    }
+    return "";
+  }
+  function firstParam(params, names) {
+    for (const name of names) {
+      const value = params.get(name);
+      if (String(value || "").trim()) return String(value).trim();
+    }
+    return "";
+  }
+  function rememberAdminIdentityFromUrl() {
+    const searchSets = [new URLSearchParams(location.search)];
+    const liffState = searchSets[0].get("liff.state");
+    if (liffState) {
+      try { searchSets.push(new URLSearchParams(decodeURIComponent(liffState).replace(/^\?/, ""))); } catch (_) {}
+    }
+    for (const params of searchSets) {
+      const email = firstParam(params, ["adminEmail", "email"]);
+      const memberNo = firstParam(params, ["adminMemberNo", "memberNo", "rosterMemberNo"]);
+      const lineUserId = firstParam(params, ["adminLineUserId", "lineUserId", "lineUid", "uid"]);
+      if (email) sessionStorage.setItem("tdea-admin-email", email.toLowerCase());
+      if (memberNo) sessionStorage.setItem("tdea-admin-member-no", memberNo.toUpperCase());
+      if (lineUserId) sessionStorage.setItem("tdea-admin-line-user-id", lineUserId);
+    }
+  }
+  rememberAdminIdentityFromUrl();
+  function adminIdentity() {
+    return {
+      email: storedValue("tdea-admin-email").toLowerCase(),
+      memberNo: storedValue("tdea-admin-member-no", "tdea-member-no").toUpperCase(),
+      lineUserId: storedValue("tdea-admin-line-user-id", "tdea-line-user-id", "lineUserId")
+    };
+  }
+  function hasAdminIdentity() {
+    const identity = adminIdentity();
+    return Boolean(identity.email || identity.memberNo || identity.lineUserId);
+  }
   function loginAccessEnabled(value) {
     if (value === true) return true;
     const text = String(value ?? "").trim().toLowerCase();
@@ -133,8 +174,7 @@
     managerDataSaveTimer = setTimeout(saveManagerDataRemote, 700);
   }
   async function saveManagerDataRemote() {
-    const email = localStorage.getItem("tdea-admin-email") || sessionStorage.getItem("tdea-admin-email") || "";
-    if (!email) return;
+    if (!hasAdminIdentity()) return;
     if (!managerDataHasContent(state.data)) return;
     try {
       await fetch(api + "/api/manager-data", {
@@ -192,12 +232,16 @@
     if (changed) save();
   }
   function adminHeaders(extra = {}) {
-    const email = localStorage.getItem("tdea-admin-email") || sessionStorage.getItem("tdea-admin-email") || "";
-    return { ...extra, ...(email ? { "x-admin-email": email } : {}) };
+    const identity = adminIdentity();
+    return {
+      ...extra,
+      ...(identity.email ? { "x-admin-email": identity.email } : {}),
+      ...(identity.memberNo ? { "x-admin-member-no": identity.memberNo } : {}),
+      ...(identity.lineUserId ? { "x-line-user-id": identity.lineUserId } : {})
+    };
   }
   async function loadAdminAccessIntoRoster() {
-    const email = localStorage.getItem("tdea-admin-email") || sessionStorage.getItem("tdea-admin-email") || "";
-    if (!email) return;
+    if (!hasAdminIdentity()) return;
     try {
       const response = await fetch(api + "/api/admin-access", { headers: adminHeaders(), cache: "no-store" });
       const result = await response.json().catch(() => ({}));
@@ -287,12 +331,11 @@
     state.data.deletedActivityKeys = [...keys].slice(-300);
   }
   async function deleteRemoteLineActivityDraft(activity) {
-    const email = localStorage.getItem("tdea-admin-email") || sessionStorage.getItem("tdea-admin-email") || "";
-    if (!email) return;
+    if (!hasAdminIdentity()) return;
     try {
       await fetch(api + "/api/line-activity-drafts/delete", {
         method: "POST",
-        headers: { "content-type": "application/json", "x-admin-email": email },
+        headers: adminHeaders({ "content-type": "application/json" }),
         body: JSON.stringify({
           id: activity?.id || "",
           lineDraftId: activity?.lineDraftId || "",
@@ -446,8 +489,7 @@
   }
 
   async function pullGoogleResponses(showMessage = false) {
-    const email = localStorage.getItem("tdea-admin-email") || sessionStorage.getItem("tdea-admin-email") || "";
-    if (!email) {
+    if (!hasAdminIdentity()) {
       if (showMessage) toast("缺少管理者 Email，無法向 GAS 拉取表單回覆");
       return;
     }
@@ -465,7 +507,7 @@
     if (!activities.length) return;
     const response = await fetch(api + "/api/google-forms/sync", {
       method: "POST",
-      headers: { "content-type": "application/json", "x-admin-email": email },
+      headers: adminHeaders({ "content-type": "application/json" }),
       body: JSON.stringify({ activities })
     });
     const result = await response.json().catch(() => ({}));
@@ -474,8 +516,7 @@
   }
 
   async function pullRemoteResponses(showMessage = false) {
-    const email = localStorage.getItem("tdea-admin-email") || sessionStorage.getItem("tdea-admin-email") || "";
-    if (!email) {
+    if (!hasAdminIdentity()) {
       if (showMessage) toast("請先登入管理者，才能同步報名。");
       return;
     }
@@ -502,7 +543,7 @@
       attempted = true;
       const response = await fetch(api + "/api/opnform/sync", {
         method: "POST",
-        headers: { "content-type": "application/json", "x-admin-email": email },
+        headers: adminHeaders({ "content-type": "application/json" }),
         body: JSON.stringify({ activities: opnformActivities })
       });
       const result = await response.json().catch(() => ({}));
@@ -515,7 +556,7 @@
       attempted = true;
       const response = await fetch(api + "/api/google-forms/sync", {
         method: "POST",
-        headers: { "content-type": "application/json", "x-admin-email": email },
+        headers: adminHeaders({ "content-type": "application/json" }),
         body: JSON.stringify({ activities: googleActivities })
       });
       const result = await response.json().catch(() => ({}));
@@ -587,11 +628,11 @@
   }
 
   async function ensureNativeFormForActivity(activity, email) {
-    if (!email || activity.formUrl || activity.nativeFormUrl) return false;
+    if (!hasAdminIdentity() || activity.formUrl || activity.nativeFormUrl) return false;
     const settings = nativeFormSettingsFor(activity);
     const response = await fetch(`${api}/api/native-forms/create`, {
       method: "POST",
-      headers: { "content-type": "application/json", "x-admin-email": email },
+      headers: adminHeaders({ "content-type": "application/json" }),
       body: JSON.stringify({ activity, settings })
     });
     const result = await response.json().catch(() => ({}));
@@ -610,24 +651,23 @@
   }
 
   async function uploadActivityPoster(file, activityId, email) {
-    if (!file || !file.size || !email) return null;
+    if (!file || !file.size || !hasAdminIdentity()) return null;
     const form = new FormData();
     form.append("file", file);
     form.append("folder", `activities/${activityId || "poster"}`);
-    const response = await fetch(`${api}/api/uploads`, { method: "POST", headers: { "x-admin-email": email }, body: form });
+    const response = await fetch(`${api}/api/uploads`, { method: "POST", headers: adminHeaders(), body: form });
     const result = await response.json().catch(() => ({}));
     if (!response.ok || !result.success) throw new Error(result.message || "圖片上傳失敗");
     return { url: result.url?.startsWith("http") ? result.url : api + result.url, key: result.key || "" };
   }
 
   async function importLineActivityDrafts(showMessage = true) {
-    const email = localStorage.getItem("tdea-admin-email") || sessionStorage.getItem("tdea-admin-email") || "";
-    if (!email) {
+    if (!hasAdminIdentity()) {
       if (showMessage) toast("請先設定管理者 Email，才能匯入 LINE 活動草稿");
       return;
     }
     const response = await fetch(api + "/api/line-activity-drafts", {
-      headers: { "x-admin-email": email },
+      headers: adminHeaders(),
       cache: "no-store"
     });
     const result = await response.json().catch(() => ({}));
@@ -1183,13 +1223,13 @@
 
   async function createRedeem(event) {
     event.preventDefault();
-    const email = localStorage.getItem("tdea-admin-email") || sessionStorage.getItem("tdea-admin-email") || "";
+    const email = adminIdentity().email || (hasAdminIdentity() ? "dynamic-admin" : "");
     if (!email) return toast("請先設定管理者 Email");
     const form = event.currentTarget;
     const data = Object.fromEntries(new FormData(form));
     const response = await fetch(api + "/api/redeem/create", {
       method: "POST",
-      headers: { "content-type": "application/json", "x-admin-email": email },
+      headers: adminHeaders({ "content-type": "application/json" }),
       body: JSON.stringify(data)
     });
     const result = await response.json().catch(() => ({}));
@@ -1202,12 +1242,12 @@
   }
 
   async function loadRedeemRecords(showMessage = false) {
-    const email = localStorage.getItem("tdea-admin-email") || sessionStorage.getItem("tdea-admin-email") || "";
+    const email = adminIdentity().email || (hasAdminIdentity() ? "dynamic-admin" : "");
     if (!email) {
       if (showMessage) toast("請先設定管理者 Email");
       return;
     }
-    const response = await fetch(api + "/api/redeem/list", { headers: { "x-admin-email": email }, cache: "no-store" });
+    const response = await fetch(api + "/api/redeem/list", { headers: adminHeaders(), cache: "no-store" });
     const result = await response.json().catch(() => ({}));
     if (!response.ok || !result.success) {
       if (showMessage) toast(result.message || "折抵紀錄載入失敗");
@@ -1220,14 +1260,14 @@
 
   async function syncLegacyPoints(event) {
     event.preventDefault();
-    const email = localStorage.getItem("tdea-admin-email") || sessionStorage.getItem("tdea-admin-email") || "";
+    const email = adminIdentity().email || (hasAdminIdentity() ? "dynamic-admin" : "");
     if (!email) return toast("請先設定管理者 Email");
     const data = Object.fromEntries(new FormData(event.currentTarget));
     const lineUserId = String(data.lineUserId || "").trim();
     if (!lineUserId) return toast("請輸入會員 LINE UID");
     const response = await fetch(api + "/api/points/sync-legacy", {
       method: "POST",
-      headers: { "content-type": "application/json", "x-admin-email": email },
+      headers: adminHeaders({ "content-type": "application/json" }),
       body: JSON.stringify({ lineUserId, force: Boolean(data.force) })
     });
     const result = await response.json().catch(() => ({}));
@@ -1242,13 +1282,13 @@
   }
 
   async function loadPointLedger(showMessage = false) {
-    const email = localStorage.getItem("tdea-admin-email") || sessionStorage.getItem("tdea-admin-email") || "";
+    const email = adminIdentity().email || (hasAdminIdentity() ? "dynamic-admin" : "");
     if (!email) {
       if (showMessage) toast("請先設定管理者 Email");
       return;
     }
     const response = await fetch(api + "/api/points/ledger?limit=200", {
-      headers: { "x-admin-email": email },
+      headers: adminHeaders(),
       cache: "no-store"
     });
     const result = await response.json().catch(() => ({}));
