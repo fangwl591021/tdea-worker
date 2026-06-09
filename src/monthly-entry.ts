@@ -345,10 +345,22 @@ async function writeManagerData(env: Env, input: Record<string, unknown>) {
   if (!managerDataHasUsefulContent(input)) return false;
   const previous = await readManagerData(env);
   if (managerDataHasUsefulContent(previous) && !managerDataHasUsefulContent(input)) return false;
+  const preserveIfOmitted = (key: string) => (
+    Object.prototype.hasOwnProperty.call(input, key)
+      ? input[key]
+      : previous && Object.prototype.hasOwnProperty.call(previous, key)
+        ? previous[key]
+        : undefined
+  );
   const data = {
+    ...(previous || {}),
     ...input,
+    association: preserveIfOmitted("association"),
+    vendor: preserveIfOmitted("vendor"),
     updatedAt: new Date().toISOString()
   };
+  if (data.association === undefined) delete data.association;
+  if (data.vendor === undefined) delete data.vendor;
   await env.ASSETS_BUCKET.put(managerDataKey, JSON.stringify(data, null, 2), {
     httpMetadata: { contentType: "application/json; charset=utf-8", cacheControl: "no-store" }
   });

@@ -147,10 +147,11 @@
     return String(row?.memberNo || row?.rosterMemberNo || "").trim().toUpperCase();
   }
   function mergeRosterRows(localRows = [], remoteRows = []) {
+    if (!Array.isArray(remoteRows)) return Array.isArray(localRows) ? localRows : [];
     const localByNo = new Map((Array.isArray(localRows) ? localRows : [])
       .map((row) => [rosterMatchKey(row), row])
       .filter(([key]) => key));
-    return (Array.isArray(remoteRows) ? remoteRows : []).map((remoteRow) => {
+    return remoteRows.map((remoteRow) => {
       const localRow = localByNo.get(rosterMatchKey(remoteRow));
       const loginAccess = memberLoginAllowed(remoteRow) || memberLoginAllowed(localRow);
       return {
