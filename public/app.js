@@ -84,6 +84,47 @@
       data.formSettings
     ));
   }
+  function loginAccessEnabled(value) {
+    if (value === true) return true;
+    const text = String(value ?? "").trim().toLowerCase();
+    return ["1", "true", "y", "yes", "allow", "allowed", "允許", "啟用"].includes(text);
+  }
+  function memberLoginAllowed(row) {
+    return [
+      row?.loginAccess,
+      row?.loginAllowed,
+      row?.allowLogin,
+      row?.canLogin,
+      row?.adminAccess,
+      row?.["登入權限"]
+    ].some(loginAccessEnabled);
+  }
+  function rosterMatchKey(row) {
+    return String(row?.memberNo || row?.rosterMemberNo || "").trim().toUpperCase();
+  }
+  function mergeRosterRows(localRows = [], remoteRows = []) {
+    const localByNo = new Map((Array.isArray(localRows) ? localRows : [])
+      .map((row) => [rosterMatchKey(row), row])
+      .filter(([key]) => key));
+    return (Array.isArray(remoteRows) ? remoteRows : []).map((remoteRow) => {
+      const localRow = localByNo.get(rosterMatchKey(remoteRow));
+      const loginAccess = memberLoginAllowed(remoteRow) || memberLoginAllowed(localRow);
+      return {
+        ...(localRow || {}),
+        ...remoteRow,
+        lineUserId: memberLineUid(remoteRow) || memberLineUid(localRow),
+        loginAccess,
+        allowLogin: loginAccess,
+        canLogin: loginAccess
+      };
+    });
+  }
+  function mergeManagerData(localData, remoteData) {
+    const merged = { ...localData, ...remoteData };
+    merged.association = mergeRosterRows(localData?.association, remoteData?.association);
+    merged.vendor = mergeRosterRows(localData?.vendor, remoteData?.vendor);
+    return merged;
+  }
   function queueManagerDataSave() {
     if (managerDataLoading) return;
     clearTimeout(managerDataSaveTimer);
@@ -108,8 +149,9 @@
       const response = await fetch(api + "/api/manager-data", { cache: "no-store" });
       const result = await response.json().catch(() => ({}));
       if (result.success && managerDataHasContent(result.data)) {
-        state.data = { ...load(), ...result.data };
+        state.data = mergeManagerData(load(), result.data);
         localStorage.setItem(key, JSON.stringify(state.data));
+        await loadAdminAccessIntoRoster();
         render();
       } else if (managerDataHasContent(state.data)) {
         managerDataLoading = false;
@@ -152,6 +194,50 @@
   function adminHeaders(extra = {}) {
     const email = localStorage.getItem("tdea-admin-email") || sessionStorage.getItem("tdea-admin-email") || "";
     return { ...extra, ...(email ? { "x-admin-email": email } : {}) };
+  }
+  async function loadAdminAccessIntoRoster() {
+    const email = localStorage.getItem("tdea-admin-email") || sessionStorage.getItem("tdea-admin-email") || "";
+    if (!email) return;
+    try {
+      const response = await fetch(api + "/api/admin-access", { headers: adminHeaders(), cache: "no-store" });
+      const result = await response.json().catch(() => ({}));
+      const records = result?.data && typeof result.data === "object" ? result.data : {};
+      let changed = false;
+      ["association", "vendor"].forEach((type) => {
+        (state.data[type] || []).forEach((row) => {
+          const memberNo = rosterMatchKey(row);
+          const access = records[memberNo];
+          if (!access) return;
+          const enabled = access.loginAccess === true;
+          if (row.loginAccess !== enabled || row.allowLogin !== enabled || row.canLogin !== enabled || (access.lineUserId && !memberLineUid(row))) {
+            row.loginAccess = enabled;
+            row.allowLogin = enabled;
+            row.canLogin = enabled;
+            if (access.lineUserId && !memberLineUid(row)) row.lineUserId = access.lineUserId;
+            changed = true;
+          }
+        });
+      });
+      if (changed) localStorage.setItem(key, JSON.stringify(state.data));
+    } catch (_) {}
+  }
+  async function syncAdminAccessForMember(type, item) {
+    if (!item || (type !== "association" && type !== "vendor")) return;
+    const memberNo = rosterMatchKey(item);
+    if (!memberNo) return;
+    try {
+      await fetch(api + "/api/admin-access", {
+        method: "PUT",
+        headers: adminHeaders({ "content-type": "application/json" }),
+        body: JSON.stringify({
+          memberNo,
+          name: item.name || item.companyName || "",
+          email: item.email || "",
+          lineUserId: memberLineUid(item),
+          loginAccess: memberLoginAllowed(item)
+        })
+      });
+    } catch (_) {}
   }
   async function loadMemberApplications(force = false) {
     if (state.memberApplications && !force) return state.memberApplications;
@@ -680,7 +766,7 @@
   function members(type) {
     const rows = visibleRosterRows(type), vendor = type === "vendor";
     if (!rows.length) return `<section class="panel"><div class="panel-head"><h2 class="panel-title">${vendor ? "廠商會員" : "協會會員"}</h2><button class="btn" data-import="${type}">匯入 CSV</button></div>${empty(`目前沒有${vendor ? "廠商會員" : "協會會員"}資料`)}</section>`;
-    return `<section class="panel"><div class="panel-head"><h2 class="panel-title">${vendor ? "廠商會員" : "協會會員"}</h2><div class="actions"><button class="btn" data-import="${type}">匯入 CSV</button><button class="btn" data-export>匯出備份</button></div></div><div class="table-wrap"><table><thead><tr><th>會員編號</th><th>${vendor ? "公司名稱" : "姓名"}</th><th>${vendor ? "統編" : "身分"}</th><th>${vendor ? "聯絡窗口" : "性別"}</th><th>資格</th><th>備註</th><th>操作</th></tr></thead><tbody>${rows.map(x => `<tr><td>${esc(x.memberNo)}</td><td><strong>${esc(vendor ? x.companyName : x.name)}</strong></td><td>${esc(vendor ? x.taxId : x.identity)}</td><td>${esc(vendor ? x.contact : x.gender)}</td><td><span class="badge ${x.qualification === "Y" ? "live" : "off"}">${esc(x.qualification)}</span></td><td>${esc(x.note)}</td><td><button class="link" data-drawer="${type}:${x.id}">編輯</button><span class="muted"> / </span><button class="link danger-link" data-delete-member="${type}:${x.id}">刪除</button></td></tr>`).join("")}</tbody></table></div></section>`;
+    return `<section class="panel"><div class="panel-head"><h2 class="panel-title">${vendor ? "廠商會員" : "協會會員"}</h2><div class="actions"><button class="btn" data-import="${type}">匯入 CSV</button><button class="btn" data-export>匯出備份</button></div></div><div class="table-wrap"><table><thead><tr><th>會員編號</th><th>${vendor ? "公司名稱" : "姓名"}</th><th>LINE UID</th><th>點數</th><th>${vendor ? "統編" : "身分"}</th><th>${vendor ? "聯絡窗口" : "性別"}</th><th>資格</th><th>登入權限</th><th>備註</th><th>操作</th></tr></thead><tbody>${rows.map(x => `<tr><td>${esc(x.memberNo)}</td><td><strong>${esc(vendor ? x.companyName : x.name)}</strong></td><td>${esc(shortUid(memberLineUid(x)))}</td><td>${esc(x.pointBalance ?? x.points ?? "")}</td><td>${esc(vendor ? x.taxId : x.identity)}</td><td>${esc(vendor ? x.contact : x.gender)}</td><td><span class="badge ${x.qualification === "Y" ? "live" : "off"}">${esc(x.qualification)}</span></td><td><label class="sync-toggle"><input type="checkbox" data-member-login-toggle="${type}:${x.id}" ${memberLoginAllowed(x) ? "checked" : ""}> 允許</label></td><td>${esc(x.note)}</td><td><button class="link" data-drawer="${type}:${x.id}">編輯</button><span class="muted"> / </span><button class="link danger-link" data-delete-member="${type}:${x.id}">刪除</button></td></tr>`).join("")}</tbody></table></div></section>`;
   }
 
   function creator() {
@@ -818,7 +904,7 @@
   }
   function memberForm(type, rowId) {
     const x = state.data[type].find(r => r.id === rowId) || {}, vendor = type === "vendor";
-    return `<form class="form-grid" id="drawer-member" data-type="${type}">${hidden("id", x.id)}${field("會員編號", "memberNo", x.memberNo)}${vendor ? `${field("公司名稱", "companyName", x.companyName)}${field("統一編號", "taxId", x.taxId)}${field("負責人", "owner", x.owner)}${field("聯絡窗口", "contact", x.contact)}` : `${field("身分", "identity", x.identity)}${field("姓名", "name", x.name)}${select("性別", "gender", ["", "男", "女"], x.gender)}`}${select("會員資格", "qualification", ["Y", "N"], x.qualification || "Y")}<div class="field"><label>備註</label><textarea name="note">${esc(x.note)}</textarea></div><button class="btn primary" type="submit">儲存</button></form>`;
+    return `<form class="form-grid" id="drawer-member" data-type="${type}">${hidden("id", x.id)}${field("會員編號", "memberNo", x.memberNo)}${field("LINE UID", "lineUserId", memberLineUid(x), "例如：Ub68b9724664b889e790c789ece72f717")}${vendor ? `${field("公司名稱", "companyName", x.companyName)}${field("統一編號", "taxId", x.taxId)}${field("負責人", "owner", x.owner)}${field("聯絡窗口", "contact", x.contact)}` : `${field("身分", "identity", x.identity)}${field("姓名", "name", x.name)}${select("性別", "gender", ["", "男", "女"], x.gender)}`}${select("會員資格", "qualification", ["Y", "N"], x.qualification || "Y")}<label class="sync-toggle"><input type="checkbox" name="loginAccess" value="Y" ${memberLoginAllowed(x) ? "checked" : ""}> 允許登入 / 核銷權限</label><div class="field"><label>備註</label><textarea name="note">${esc(x.note)}</textarea></div><button class="btn primary" type="submit">儲存</button></form>`;
   }
   function importForm(type) {
     const vendor = type === "vendor";
@@ -990,6 +1076,17 @@
     document.querySelectorAll("[data-toggle]").forEach(b => b.onclick = () => { const x = state.data.activities.find(r => r.id === b.dataset.toggle); if (x) x.status = x.status === "上架" ? "下架" : "上架"; save(); render(); });
     document.querySelectorAll("[data-delete-activity]").forEach(b => b.onclick = () => deleteActivity(b.dataset.deleteActivity));
     document.querySelectorAll("[data-delete-member]").forEach(b => b.onclick = () => deleteMember(b.dataset.deleteMember));
+    document.querySelectorAll("[data-member-login-toggle]").forEach(input => input.onchange = () => {
+      const [type, rowId] = String(input.dataset.memberLoginToggle || "").split(":");
+      const row = state.data[type]?.find(item => item.id === rowId);
+      if (!row) return;
+      row.loginAccess = input.checked;
+      row.allowLogin = input.checked;
+      row.canLogin = input.checked;
+      save();
+      syncAdminAccessForMember(type, row);
+      toast(input.checked ? "已允許登入權限" : "已取消登入權限");
+    });
     document.querySelectorAll("[data-registration-list]").forEach(b => b.onclick = () => openRegistrationList(b.dataset.registrationList));
     document.querySelectorAll("[data-refresh-registration-list]").forEach(b => b.onclick = () => loadRegistrationList(b.dataset.refreshRegistrationList, true));
     document.querySelectorAll("[data-load-member-applications]").forEach(b => b.onclick = () => loadMemberApplications(true));
@@ -1012,7 +1109,7 @@
     });
     const af = document.querySelector("#activity-form"); if (af) af.onsubmit = e => { e.preventDefault(); const d = Object.fromEntries(new FormData(af)); const templateMode = d.templateMode || "custom"; const registrationMode = d.registrationMode || (templateMode === "mode1_vendor_visit" ? "member_login" : "form"); state.data.activities.unshift({ id: uid(), name: d.name.trim(), templateMode, type: d.type, typeLabel: formTypeLabel(d), courseTime: d.courseTime, deadline: d.deadline, capacity: Number(d.capacity || 0), checkinPoints: Number(d.checkinPoints || 0), feePoints: Number(d.feePoints || 0), registrationMode, detailText: d.detailText || "", reg: 0, check: 0, status: d.status, formUrl: "" }); save(); state.view = "dashboard"; render(); toast("活動已建立"); };
     const ea = document.querySelector("#drawer-activity"); if (ea) ea.onsubmit = e => { e.preventDefault(); const d = Object.fromEntries(new FormData(ea)); const x = state.data.activities.find(r => r.id === d.id); if (x) Object.assign(x, { name: d.name, templateMode: d.templateMode || x.templateMode || "custom", type: d.type, typeLabel: formTypeLabel(d), courseTime: d.courseTime, deadline: d.deadline, capacity: Number(d.capacity || 0), checkinPoints: Number(d.checkinPoints || 0), feePoints: Number(d.feePoints || 0), registrationMode: d.registrationMode || "form", reg: Number(d.reg || 0), check: Number(d.check || 0), status: d.status, formUrl: d.formUrl }); state.drawer = ""; save(); render(); toast("活動已儲存"); };
-    const mf = document.querySelector("#drawer-member"); if (mf) mf.onsubmit = e => { e.preventDefault(); const type = mf.dataset.type; const d = Object.fromEntries(new FormData(mf)); const rows = state.data[type]; const old = rows.find(r => r.id === d.id); const item = { ...d, id: d.id || uid() }; old ? Object.assign(old, item) : rows.unshift(item); state.drawer = ""; save(); syncRosterMemberToWorker(type, item); render(); toast("名冊已儲存"); };
+    const mf = document.querySelector("#drawer-member"); if (mf) mf.onsubmit = e => { e.preventDefault(); const type = mf.dataset.type; const d = Object.fromEntries(new FormData(mf)); const rows = state.data[type]; const old = rows.find(r => r.id === d.id); const loginAccess = d.loginAccess === "Y"; const item = { ...d, id: d.id || uid(), loginAccess, allowLogin: loginAccess, canLogin: loginAccess }; old ? Object.assign(old, item) : rows.unshift(item); state.drawer = ""; save(); syncRosterMemberToWorker(type, item); syncAdminAccessForMember(type, item); render(); toast("名冊已儲存"); };
     const im = document.querySelector("#import-form"); if (im) im.onsubmit = e => { e.preventDefault(); const d = Object.fromEntries(new FormData(im)); const count = importRows(im.dataset.type, d.csv || ""); state.drawer = ""; render(); toast(`已導入 ${count} 筆資料`); };
     const loadRoster = document.querySelector("[data-load-roster]"); if (loadRoster) loadRoster.onclick = () => loadRosterSeed(true);
     const worker = document.querySelector("[data-worker]"); if (worker) worker.onclick = async () => { try { const r = await fetch(api + "/api/activities"); const j = await r.json(); toast(j.success ? "Worker API 連線正常" : "Worker API 回應異常"); } catch (_) { toast("Worker API 無法連線"); } };
@@ -1028,6 +1125,11 @@
 
   function memberLineUid(row) {
     return String(row?.lineUserId || row?.lineUid || row?.uid || row?.LINE_user_id || row?.line_user_id || "").trim();
+  }
+  function shortUid(value) {
+    const text = String(value || "").trim();
+    if (!text) return "";
+    return text.length > 18 ? `${text.slice(0, 10)}...${text.slice(-8)}` : text;
   }
 
   function currentMemberDrawer() {
