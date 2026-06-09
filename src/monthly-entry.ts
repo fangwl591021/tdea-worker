@@ -2542,6 +2542,92 @@ function normalizeConfig(config: MonthlyConfig): MonthlyConfig {
   };
 }
 
+function activityStatusIsOnline(activity: Record<string, unknown>) {
+  const status = clean(activity.status || activity["狀態"]);
+  return !status || status === "上架" || /online|active|published/i.test(status);
+}
+
+function activityIdentity(activity: Record<string, unknown>) {
+  return firstClean(activity.activityNo, activity.no, activity.activityId, activity.id);
+}
+
+function pageIdentity(page: MonthlyPage) {
+  return firstClean(page.activityNo, page.activityId, page.id);
+}
+
+function monthlyUrlList(value: unknown) {
+  const seen = new Set<string>();
+  const values = Array.isArray(value) ? value : String(value || "").split(/[\n,]+/);
+  return values
+    .map((item) => clean(item))
+    .filter((item) => /^https?:\/\//i.test(item))
+    .filter((item) => {
+      if (seen.has(item)) return false;
+      seen.add(item);
+      return true;
+    });
+}
+
+function pageFromActivity(activity: Record<string, unknown>, order: number): MonthlyPage | null {
+  const activityId = activityIdentity(activity);
+  const name = firstClean(activity.name, activity.activityName, activity.title, activity["活動名稱"]);
+  if (!activityId && !name) return null;
+  return {
+    id: activityId || `monthly-${order}`,
+    activityNo: firstClean(activity.activityNo, activity.no),
+    activityId,
+    activityName: name,
+    imageUrl: firstClean(activity.imageUrl, activity.posterUrl, activity.formImageUrl),
+    galleryUrls: monthlyUrlList(activity.galleryUrls),
+    formImageUrl: firstClean(activity.formImageUrl, activity.imageUrl),
+    detailTitle: name || "詳細說明",
+    detailText: firstClean(activity.detailText, activity.description, activity.note),
+    detailUrl: firstClean(activity.detailUrl),
+    formUrl: firstClean(activity.nativeFormUrl, activity.formUrl),
+    shareUrl: firstClean(activity.shareUrl),
+    order
+  };
+}
+
+async function readEffectiveMonthly(env: Env): Promise<MonthlyConfig> {
+  const monthly = await readMonthly(env);
+  const managerData = await readManagerData(env);
+  const activities = Array.isArray(managerData?.activities) ? managerData.activities : [];
+  const activityPages = activities
+    .filter((item): item is Record<string, unknown> => Boolean(item) && typeof item === "object" && activityStatusIsOnline(item as Record<string, unknown>))
+    .map((item, index) => pageFromActivity(item, index))
+    .filter((page): page is MonthlyPage => Boolean(page));
+  if (!activityPages.length) return monthly;
+
+  const merged = new Map<string, MonthlyPage>();
+  activityPages.forEach((page) => merged.set(pageIdentity(page), page));
+  (monthly.pages || []).forEach((page, index) => {
+    const key = pageIdentity(page);
+    if (!key) return;
+    const base = merged.get(key);
+    merged.set(key, {
+      ...(base || {}),
+      ...page,
+      activityId: page.activityId || base?.activityId,
+      activityNo: page.activityNo || base?.activityNo,
+      activityName: page.activityName || base?.activityName,
+      detailTitle: page.detailTitle || base?.detailTitle,
+      detailText: page.detailText || base?.detailText,
+      detailUrl: page.detailUrl || base?.detailUrl,
+      formUrl: page.formUrl || base?.formUrl,
+      imageUrl: page.imageUrl || base?.imageUrl,
+      galleryUrls: page.galleryUrls?.length ? page.galleryUrls : base?.galleryUrls,
+      order: Number.isFinite(Number(page.order)) ? page.order : index
+    });
+  });
+
+  return normalizeConfig({
+    ...monthly,
+    enabled: monthly.enabled !== false || merged.size > 0,
+    pages: [...merged.values()].sort((a, b) => Number(a.order || 0) - Number(b.order || 0))
+  });
+}
+
 function appendIdToUrl(baseUrl: string | undefined, activityNo: string | undefined, pageId: string | undefined) {
   const raw = String(baseUrl || defaultLiffBase).trim();
   const target = String(activityNo || pageId || "").trim();
@@ -4461,7 +4547,7 @@ async function handleMonthlyWebhook(request: Request, env: Env, rawBody: string,
   const signature = request.headers.get("x-line-signature");
   if (!await verifyLineSignature(rawBody, signature, env.LINE_CHANNEL_SECRET)) return new Response("Invalid Signature", { status: 403, headers });
   if (events.length) {
-    const config = await readMonthly(env);
+    const config = await readEffectiveMonthly(env);
     const pages = config.pages || [];
     const message = config.enabled && pages.length ? buildMonthlyFlex(config) as Record<string, unknown> : { type: "text", text: "TDEA 每月活動尚未啟用，請稍後再試。" };
     const lineReplies = await Promise.all(events.map(async (event) => {
@@ -4578,7 +4664,7 @@ async function handleMonthlyWebhook(request: Request, env: Env, rawBody: string,
 }
 
 async function monthlyDetail(env: Env, id: string) {
-  const config = await readMonthly(env);
+  const config = await readEffectiveMonthly(env);
   const page = (config.pages || []).find((item) => String(item.id) === id || String(item.activityNo) === id || String(item.activityId) === id);
   if (!page) return new Response("Not found", { status: 404, headers: { "content-type": "text/plain; charset=utf-8" } });
   const formUrl = registerUrlForPage(page);
@@ -4608,9 +4694,9 @@ export default {
 	    if (request.method === "GET" && url.pathname === "/api/personal-messages/admin") return listPersonalMessagesAdminApi(request, env);
 	    if (request.method === "POST" && url.pathname === "/api/personal-messages") return createPersonalMessageApi(request, env);
 	    if (request.method === "POST" && url.pathname === "/api/personal-messages/upload") return uploadPersonalMessageFileApi(request, env);
-	    if (request.method === "GET" && url.pathname === "/api/monthly-activity") return json({ success: true, data: await readMonthly(env) });
-	    if ((request.method === "PUT" || request.method === "POST") && url.pathname === "/api/monthly-activity") { const guard = await requireAdmin(request, env); if (guard) return guard; if (!env.ASSETS_BUCKET) return json({ success: false, message: "R2 bucket is not configured" }, 503); const config = await request.json().catch(() => ({})) as MonthlyConfig; await writeMonthly(env, config); return json({ success: true, data: await readMonthly(env), flex: buildMonthlyFlex(config) }); }
-	    if (request.method === "GET" && url.pathname === "/api/monthly-activity/flex") { const config = await readMonthly(env); return json({ success: true, flex: buildMonthlyFlex(config), data: config }); }
+	    if (request.method === "GET" && url.pathname === "/api/monthly-activity") return json({ success: true, data: await readEffectiveMonthly(env) });
+	    if ((request.method === "PUT" || request.method === "POST") && url.pathname === "/api/monthly-activity") { const guard = await requireAdmin(request, env); if (guard) return guard; if (!env.ASSETS_BUCKET) return json({ success: false, message: "R2 bucket is not configured" }, 503); const config = await request.json().catch(() => ({})) as MonthlyConfig; await writeMonthly(env, config); const effective = await readEffectiveMonthly(env); return json({ success: true, data: effective, flex: buildMonthlyFlex(effective) }); }
+	    if (request.method === "GET" && url.pathname === "/api/monthly-activity/flex") { const config = await readEffectiveMonthly(env); return json({ success: true, flex: buildMonthlyFlex(config), data: config }); }
 	    if (request.method === "GET" && url.pathname === "/api/manager-data") return json({ success: true, data: await readManagerData(env) });
 	    if ((request.method === "PUT" || request.method === "POST") && url.pathname === "/api/manager-data") {
 	      const guard = await requireAdmin(request, env);
