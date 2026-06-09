@@ -33,13 +33,11 @@ type RichMenuSnapshot = { id: string; savedAt: string; name: string; chatBarText
 type RichMenuConfig = { name?: string; chatBarText?: string; selected?: boolean; size?: { width: number; height: number }; imageUrl?: string; areas?: RichMenuArea[]; lastRichMenuId?: string; updatedAt?: string; deployments?: RichMenuDeployment[]; snapshots?: RichMenuSnapshot[] };
 type LineActivityDraft = { id: string; lineUserId: string; step: string; answers: Record<string, unknown>; status: "active" | "completed" | "cancelled"; activity?: Record<string, unknown>; createdAt: string; updatedAt: string; completedAt?: string };
 type AdminAccessRecord = { memberNo: string; email?: string; lineUserId?: string; name?: string; loginAccess: boolean; updatedAt?: string; updatedBy?: string };
-type AdminWhitelistRecord = { id?: string; enabled?: boolean; label?: string; memberNo?: string; email?: string; lineUserId?: string; role?: string; note?: string; createdAt?: string; updatedAt?: string; updatedBy?: string };
 type LineActivityAiResult = { intent?: string; confidence?: number; question?: string; fields?: Record<string, unknown> };
 type MemberOnboardingSession = { lineUserId: string; step: "askMember" | "memberNo" | "phone" | "joinInterest" | "applicantInfo"; answers: Record<string, unknown>; triggerText?: string; createdAt: string; updatedAt: string };
 type MemberApplication = { id: string; lineUserId: string; status: "pending" | "handled"; source: "line"; name?: string; phone?: string; triggerText?: string; createdAt: string; updatedAt?: string };
 
 const monthlyKey = "flex/monthly-activity.json";
-const managerDataKey = "manager/state.json";
 const vendorCardKey = "flex/vendor-card-menu.json";
 const marqueeKey = "line/marquee.json";
 const registrationSummaryKey = "registrations/summary.json";
@@ -49,7 +47,6 @@ const pushLogKey = "push/logs.json";
 const personalMessagesKey = "personal-messages/messages.json";
 const richMenuKey = "line/rich-menu.json";
 const adminAccessKey = "line/admin-access.json";
-const adminWhitelistKey = "line/admin-whitelist.json";
 const aiweMembersKey = "aiwe/members.json";
 const lineActivityDraftListKey = "line-activity/drafts.json";
 const lineActivityLatestDraftKey = "line-activity/latest-active.json";
@@ -73,9 +70,8 @@ const defaultLiffBase = "https://liff.line.me/2005868456-2jmxqyFU?monthlyDetail=
 const defaultLiffCloseUrl = "https://liff.line.me/2005868456-2jmxqyFU?close=1";
 const publicAppUrl = "https://fangwl591021.github.io/tdea-worker/";
 const publicLiffUrl = "https://liff.line.me/2005868456-2jmxqyFU";
-const nativeLiffUrl = "https://liff.line.me/2005868456-cfANNVou";
 const pointApiBase = "https://aiwe.cc/index.php/wp-json/wetw-point/v1";
-const headers = { "access-control-allow-origin": "*", "access-control-allow-methods": "GET,POST,PUT,OPTIONS", "access-control-allow-headers": "content-type,x-admin-email,x-admin-member-no,x-line-user-id,x-line-uid,x-aiwe-token,x-line-signature" };
+const headers = { "access-control-allow-origin": "*", "access-control-allow-methods": "GET,POST,PUT,OPTIONS", "access-control-allow-headers": "content-type,x-admin-email,x-aiwe-token,x-line-signature" };
 
 const json = (data: unknown, status = 200) => new Response(JSON.stringify(data), { status, headers: { "content-type": "application/json; charset=utf-8", "cache-control": "no-store", ...headers } });
 const esc = (value: unknown) => String(value ?? "").replace(/[&<>'"]/g, (ch) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "'": "&#039;", "\"": "&quot;" }[ch] || ch));
@@ -112,121 +108,11 @@ async function writeAdminAccess(env: Env, records: Record<string, AdminAccessRec
   return true;
 }
 
-async function readAdminWhitelist(env: Env): Promise<AdminWhitelistRecord[]> {
-  if (!env.ASSETS_BUCKET) return [];
-  const object = await env.ASSETS_BUCKET.get(adminWhitelistKey);
-  if (!object) return [];
-  const data = await object.json().catch(() => []);
-  const rows = Array.isArray(data) ? data : Array.isArray((data as { records?: unknown[] }).records) ? (data as { records: unknown[] }).records : [];
-  return rows
-    .filter((row): row is Record<string, unknown> => Boolean(row) && typeof row === "object")
-    .map((row) => ({
-      id: clean(row.id) || crypto.randomUUID(),
-      enabled: row.enabled !== false,
-      label: clean(row.label || row.name),
-      memberNo: clean(row.memberNo).toUpperCase(),
-      email: clean(row.email).toLowerCase(),
-      lineUserId: firstClean(row.lineUserId, row.lineUid, row.uid, row.LINE_user_id, row.line_user_id),
-      role: clean(row.role) || "admin",
-      note: clean(row.note),
-      createdAt: clean(row.createdAt),
-      updatedAt: clean(row.updatedAt),
-      updatedBy: clean(row.updatedBy)
-    }));
-}
-
-async function writeAdminWhitelist(env: Env, records: AdminWhitelistRecord[]) {
-  if (!env.ASSETS_BUCKET) return false;
-  const now = new Date().toISOString();
-  const rows = records.map((row) => ({
-    id: clean(row.id) || crypto.randomUUID(),
-    enabled: row.enabled !== false,
-    label: clean(row.label),
-    memberNo: clean(row.memberNo).toUpperCase(),
-    email: clean(row.email).toLowerCase(),
-    lineUserId: clean(row.lineUserId),
-    role: clean(row.role) || "admin",
-    note: clean(row.note),
-    createdAt: clean(row.createdAt) || now,
-    updatedAt: now,
-    updatedBy: clean(row.updatedBy)
-  }));
-  await env.ASSETS_BUCKET.put(adminWhitelistKey, JSON.stringify({ records: rows, updatedAt: now }, null, 2), {
-    httpMetadata: { contentType: "application/json; charset=utf-8", cacheControl: "no-store" }
-  });
-  return true;
-}
-
-function adminWhitelistConfigured(records: AdminWhitelistRecord[]) {
-  return records.some((record) => record.enabled !== false && (clean(record.email) || clean(record.memberNo) || clean(record.lineUserId)));
-}
-
-function adminWhitelistMatches(records: AdminWhitelistRecord[], identity: { email?: string; memberNo?: string; lineUserId?: string }) {
-  const email = clean(identity.email).toLowerCase();
-  const memberNo = clean(identity.memberNo).toUpperCase();
-  const lineUserId = clean(identity.lineUserId);
-  if (!email && !memberNo && !lineUserId) return false;
-  return records.some((record) => {
-    if (record.enabled === false) return false;
-    if (memberNo && clean(record.memberNo).toUpperCase() === memberNo) return true;
-    if (lineUserId && clean(record.lineUserId) === lineUserId) return true;
-    if (email && clean(record.email).toLowerCase() === email) return true;
-    return false;
-  });
-}
-
-async function adminWhitelistFromAssociationRoster(env: Env): Promise<AdminWhitelistRecord[]> {
-  const data = await readManagerData(env);
-  const rows = Array.isArray(data?.association) ? data.association : [];
-  const fromRoster = rows
-    .filter((row): row is Record<string, unknown> => Boolean(row) && typeof row === "object")
-    .filter((row) => memberRowLoginAccess(row))
-    .map((row) => {
-      const memberNo = clean(row.memberNo || row.rosterMemberNo).toUpperCase();
-      const lineUserId = memberLineUid(row);
-      const email = clean(row.email).toLowerCase();
-      return {
-        id: memberNo || lineUserId || email || crypto.randomUUID(),
-        enabled: true,
-        label: clean(row.name || row.rosterName || row.memberName || memberNo || lineUserId),
-        memberNo,
-        email,
-        lineUserId,
-        role: "admin",
-        note: "from association roster"
-      };
-    })
-    .filter((row) => row.label || row.memberNo || row.email || row.lineUserId);
-  const accessRecords = Object.values(await readAdminAccess(env))
-    .filter((record) => record.loginAccess === true)
-    .map((record) => ({
-      id: clean(record.memberNo || record.lineUserId || record.email || crypto.randomUUID()),
-      enabled: true,
-      label: clean(record.name || record.memberNo || record.lineUserId || record.email),
-      memberNo: clean(record.memberNo).toUpperCase(),
-      email: clean(record.email).toLowerCase(),
-      lineUserId: clean(record.lineUserId),
-      role: "admin",
-      note: "from association access"
-    }))
-    .filter((row) => row.label || row.memberNo || row.email || row.lineUserId);
-  const deduped = new Map<string, AdminWhitelistRecord>();
-  [...fromRoster, ...accessRecords].forEach((row) => {
-    const key = [row.memberNo, row.lineUserId, row.email].filter(Boolean).join("|").toLowerCase() || row.id;
-    if (!deduped.has(key)) deduped.set(key, row);
-  });
-  return [...deduped.values()];
-}
-
 async function isDynamicAdmin(identity: { email?: string; memberNo?: string; lineUserId?: string }, env: Env) {
   const email = clean(identity.email).toLowerCase();
   const memberNo = clean(identity.memberNo).toUpperCase();
   const lineUserId = clean(identity.lineUserId);
   if (!email && !memberNo && !lineUserId) return false;
-  const whitelist = await readAdminWhitelist(env);
-  const rosterWhitelist = await adminWhitelistFromAssociationRoster(env);
-  const combinedWhitelist = [...whitelist, ...rosterWhitelist];
-  if (adminWhitelistConfigured(combinedWhitelist)) return adminWhitelistMatches(combinedWhitelist, { email, memberNo, lineUserId });
   const records = await readAdminAccess(env);
   return Object.values(records).some((record) => {
     if (record.loginAccess !== true) return false;
@@ -234,39 +120,6 @@ async function isDynamicAdmin(identity: { email?: string; memberNo?: string; lin
     if (lineUserId && clean(record.lineUserId) === lineUserId) return true;
     if (email && clean(record.email).toLowerCase() === email) return true;
     return false;
-  });
-}
-
-function loginAccessEnabled(value: unknown) {
-  if (value === true) return true;
-  const text = clean(value).toLowerCase();
-  return ["1", "true", "y", "yes", "allow", "allowed", "允許", "啟用"].includes(text);
-}
-
-function memberRowLoginAccess(row: Record<string, unknown>) {
-  return [
-    row.loginAccess,
-    row.loginAllowed,
-    row.allowLogin,
-    row.canLogin,
-    row.adminAccess,
-    row["登入權限"]
-  ].some(loginAccessEnabled);
-}
-
-async function isCheckinOperator(lineUserId: string, env: Env) {
-  const uid = clean(lineUserId);
-  if (!uid) return false;
-  if (await isDynamicAdmin({ lineUserId: uid }, env)) return true;
-  const whitelist = await readAdminWhitelist(env);
-  if (adminWhitelistConfigured(whitelist)) return false;
-  const lowerUid = uid.toLowerCase();
-  const adminRecords = Object.values(await readAdminAccess(env)).filter((record) => record.loginAccess === true);
-  const rows = await readAiweMembers(env);
-  return rows.some((row) => {
-    if (memberLineUid(row).toLowerCase() !== lowerUid) return false;
-    if (memberRowLoginAccess(row)) return true;
-    return adminRecords.some((record) => rowMatchesMemberNo(row, record.memberNo));
   });
 }
 
@@ -281,47 +134,6 @@ async function listAdminAccessApi(request: Request, env: Env) {
   const guard = await requireAdmin(request, env);
   if (guard) return guard;
   return json({ success: true, data: await readAdminAccess(env), staticAdmins: staticAdminEmails(env) });
-}
-
-async function listAdminWhitelistApi(request: Request, env: Env) {
-  const guard = await requireAdmin(request, env);
-  if (guard) return guard;
-  const whitelist = await readAdminWhitelist(env);
-  const rosterWhitelist = await adminWhitelistFromAssociationRoster(env);
-  return json({
-    success: true,
-    data: whitelist,
-    rosterWhitelist,
-    staticAdmins: staticAdminEmails(env),
-    legacyAccess: await readAdminAccess(env),
-    whitelistActive: adminWhitelistConfigured([...whitelist, ...rosterWhitelist])
-  });
-}
-
-async function updateAdminWhitelistApi(request: Request, env: Env) {
-  const guard = await requireAdmin(request, env);
-  if (guard) return guard;
-  if (!env.ASSETS_BUCKET) return json({ success: false, message: "R2 bucket is not configured" }, 503);
-  const input = await request.json().catch(() => ({})) as Record<string, unknown>;
-  const rawRows = Array.isArray(input.records) ? input.records : Array.isArray(input.data) ? input.data : [];
-  const updatedBy = adminEmailFromRequest(request) || adminMemberNoFromRequest(request) || adminLineUserIdFromRequest(request);
-  const records = rawRows
-    .filter((row): row is Record<string, unknown> => Boolean(row) && typeof row === "object")
-    .map((row) => ({
-      id: clean(row.id) || crypto.randomUUID(),
-      enabled: row.enabled !== false,
-      label: clean(row.label || row.name),
-      memberNo: clean(row.memberNo).toUpperCase(),
-      email: clean(row.email).toLowerCase(),
-      lineUserId: firstClean(row.lineUserId, row.lineUid, row.uid, row.LINE_user_id, row.line_user_id),
-      role: clean(row.role) || "admin",
-      note: clean(row.note),
-      createdAt: clean(row.createdAt),
-      updatedBy
-    }))
-    .filter((row) => row.label || row.memberNo || row.email || row.lineUserId);
-  await writeAdminWhitelist(env, records);
-  return json({ success: true, data: await readAdminWhitelist(env), whitelistActive: adminWhitelistConfigured(records) });
 }
 
 async function updateAdminAccessApi(request: Request, env: Env) {
@@ -344,16 +156,6 @@ async function updateAdminAccessApi(request: Request, env: Env) {
     updatedBy: adminEmailFromRequest(request)
   };
   await writeAdminAccess(env, records);
-  const rows = await readAiweMembers(env);
-  const matchedRows = rows.filter((row) => rowMatchesMemberNo(row, memberNo));
-  if (matchedRows.length) {
-    for (const row of matchedRows) {
-      row.loginAccess = Boolean(input.loginAccess);
-      if (lineUserId) setAiweRowLineUid(row, lineUserId);
-      if (email && !clean(row.email)) row.email = email;
-    }
-    await writeAiweMembers(env, rows);
-  }
   return json({ success: true, data: records[memberNo] });
 }
 
@@ -369,48 +171,6 @@ async function writeMonthly(env: Env, config: MonthlyConfig) {
   const normalized = normalizeConfig(config);
   normalized.updatedAt = new Date().toISOString();
   await env.ASSETS_BUCKET.put(monthlyKey, JSON.stringify(normalized, null, 2), { httpMetadata: { contentType: "application/json; charset=utf-8", cacheControl: "no-store" } });
-  return true;
-}
-
-async function readManagerData(env: Env) {
-  const object = env.ASSETS_BUCKET ? await env.ASSETS_BUCKET.get(managerDataKey) : null;
-  if (!object) return null;
-  const data = await object.json().catch(() => null) as Record<string, unknown> | null;
-  return data && typeof data === "object" ? data : null;
-}
-
-function managerDataHasUsefulContent(input: Record<string, unknown> | null) {
-  if (!input || typeof input !== "object") return false;
-  const hasRows = ["activities", "association", "vendor"].some((key) => Array.isArray(input[key]) && (input[key] as unknown[]).length > 0);
-  const formSettings = input.formSettings;
-  const hasFormSettings = formSettings && typeof formSettings === "object" && !Array.isArray(formSettings) && Object.keys(formSettings).length > 0;
-  return hasRows || hasFormSettings || Boolean(input.monthlyActivity);
-}
-
-async function writeManagerData(env: Env, input: Record<string, unknown>) {
-  if (!env.ASSETS_BUCKET) return false;
-  if (!managerDataHasUsefulContent(input)) return false;
-  const previous = await readManagerData(env);
-  if (managerDataHasUsefulContent(previous) && !managerDataHasUsefulContent(input)) return false;
-  const preserveIfOmitted = (key: string) => (
-    Object.prototype.hasOwnProperty.call(input, key)
-      ? input[key]
-      : previous && Object.prototype.hasOwnProperty.call(previous, key)
-        ? previous[key]
-        : undefined
-  );
-  const data = {
-    ...(previous || {}),
-    ...input,
-    association: preserveIfOmitted("association"),
-    vendor: preserveIfOmitted("vendor"),
-    updatedAt: new Date().toISOString()
-  };
-  if (data.association === undefined) delete data.association;
-  if (data.vendor === undefined) delete data.vendor;
-  await env.ASSETS_BUCKET.put(managerDataKey, JSON.stringify(data, null, 2), {
-    httpMetadata: { contentType: "application/json; charset=utf-8", cacheControl: "no-store" }
-  });
   return true;
 }
 
@@ -878,21 +638,6 @@ async function appendRegistrationList(env: Env, keys: string[], entry: Registrat
   return maxCount;
 }
 
-function publicRegistrationEntry(entry: RegistrationEntry): RegistrationEntry & { checkinStatus: string; checkinStatusText: string } {
-  const answers = normalizeAnswersRecord(entry.answers || {});
-  if (isSyntheticLineEmail(answers.email)) answers.email = "";
-  if (isSyntheticLineEmail(answers.Email)) answers.Email = "";
-  if (isSyntheticLineEmail(answers["電子郵件"])) answers["電子郵件"] = "";
-  const checkedInAt = clean(entry.checkedInAt);
-  const cancelled = clean(entry.status || "active") === "cancelled";
-  return {
-    ...entry,
-    answers,
-    checkinStatus: cancelled ? "cancelled" : checkedInAt ? "checked_in" : "pending",
-    checkinStatusText: cancelled ? "已取消" : checkedInAt ? "已完成簽到" : "尚未簽到"
-  };
-}
-
 async function listRegistrations(request: Request, env: Env) {
   if (!env.ASSETS_BUCKET) return json({ success: false, message: "R2 bucket is not configured" }, 503);
   const url = new URL(request.url);
@@ -902,7 +647,7 @@ async function listRegistrations(request: Request, env: Env) {
     .filter(Boolean);
   for (const key of keys) {
     const list = dedupeRegistrations(await readRegistrationList(env, key));
-    if (list.length) return json({ success: true, key, data: list.map(publicRegistrationEntry) });
+    if (list.length) return json({ success: true, key, data: list });
   }
   return json({ success: true, key: keys[0] || "", data: [] });
 }
@@ -1001,10 +746,6 @@ async function syncGoogleFormResponses(request: Request, env: Env) {
 
 function clean(value: unknown) {
   return String(value ?? "").trim();
-}
-
-function isSyntheticLineEmail(value: unknown) {
-  return /^U[a-f0-9]{32}@aiwe\.cc$/i.test(clean(value));
 }
 
 function numberValue(value: unknown) {
@@ -1166,15 +907,15 @@ function redeemKey(token: string) {
 }
 
 function nativeFormUrl(formId: string) {
-  return `${nativeLiffUrl}?register=${encodeURIComponent(formId)}`;
+  return `${publicLiffUrl}?register=${encodeURIComponent(formId)}`;
 }
 
 function redeemUrl(token: string) {
-  return `${nativeLiffUrl}?redeemSession=${encodeURIComponent(token)}`;
+  return `${workerBaseUrl}/?redeemSession=${encodeURIComponent(token)}`;
 }
 
 function nativeCheckinUrl(token: string) {
-  return `${nativeLiffUrl}?checkin=${encodeURIComponent(token)}`;
+  return `${publicAppUrl}?checkin=${encodeURIComponent(token)}`;
 }
 
 function codeToken(length = 8) {
@@ -1258,7 +999,7 @@ async function resolveLineLoginMember(env: Env, lineUserId: string): Promise<Lin
     lineUserId: uid,
     company,
     phone: firstClean(row.phone, row.mobile, row.tel, row.telephone),
-    email: isSyntheticLineEmail(firstClean(row.email, row.user_email)) ? "" : firstClean(row.email, row.user_email),
+    email: firstClean(row.email, row.user_email),
     gender: firstClean(row.gender, row.sex),
     raw: row
   };
@@ -2015,6 +1756,7 @@ async function getNativeForm(request: Request, env: Env, formId: string) {
 async function getNativeLoginMember(request: Request, env: Env, formId: string) {
   const form = await readNativeForm(env, formId);
   if (!form) return json({ success: false, message: "找不到報名表" }, 404);
+  if (!nativeLoginEnabled(form)) return json({ success: false, message: "此報名表未啟用 LINE Login 報名" }, 400);
   const url = new URL(request.url);
   const lineUserId = firstClean(url.searchParams.get("lineUserId"), url.searchParams.get("uid"), url.searchParams.get("LINE_user_id"));
   if (!lineUserId) return json({ success: false, message: "缺少 LINE UID" }, 400);
@@ -2146,6 +1888,7 @@ async function submitNativeLoginRegistration(request: Request, env: Env, formId:
   if (!env.ASSETS_BUCKET) return json({ success: false, message: "R2 bucket is not configured" }, 503);
   const form = await readNativeForm(env, formId);
   if (!form) return json({ success: false, message: "找不到報名表" }, 404);
+  if (!nativeLoginEnabled(form)) return json({ success: false, message: "此報名表未啟用 LINE Login 報名" }, 400);
   const input = await request.json().catch(() => ({})) as Record<string, unknown>;
   const lineUserId = firstClean(input.lineUserId, input.uid, input.LINE_user_id);
   if (!lineUserId) return json({ success: false, message: "請透過 LINE Login 取得會員身份" }, 400);
@@ -2172,7 +1915,7 @@ async function queryNativeRegistration(request: Request, env: Env) {
   }
   const entry = await readNativeRegistration(env, targetId);
   if (!entry || (queryCode && entry.queryCode !== queryCode)) return json({ success: false, message: "查無報名資料" }, 404);
-  return json({ success: true, data: { ...publicRegistrationEntry(entry), checkinUrl: entry.checkinToken ? nativeCheckinUrl(entry.checkinToken) : "" } });
+  return json({ success: true, data: { ...entry, checkinUrl: entry.checkinToken ? nativeCheckinUrl(entry.checkinToken) : "" } });
 }
 
 async function queryNativeRegistrationsByLine(request: Request, env: Env) {
@@ -2186,7 +1929,7 @@ async function queryNativeRegistrationsByLine(request: Request, env: Env) {
     const entry = await readNativeRegistration(env, id);
     if (entry && clean(entry.lineUserId) === lineUserId) entries.push(entry);
   }
-  return json({ success: true, data: entries.map((entry) => ({ ...publicRegistrationEntry(entry), checkinUrl: entry.checkinToken ? nativeCheckinUrl(entry.checkinToken) : "" })) });
+  return json({ success: true, data: entries.map((entry) => ({ ...entry, checkinUrl: entry.checkinToken ? nativeCheckinUrl(entry.checkinToken) : "" })) });
 }
 
 async function updateRegistrationEverywhere(env: Env, entry: RegistrationEntry) {
@@ -2227,15 +1970,13 @@ async function verifyNativeCheckin(request: Request, env: Env) {
   const registrationId = object ? await object.text() : "";
   const entry = await readNativeRegistration(env, registrationId);
   if (!entry || entry.checkinToken !== token) return json({ success: false, message: "核銷碼無效" }, 404);
-  return json({ success: true, data: publicRegistrationEntry(entry) });
+  return json({ success: true, data: entry });
 }
 
 async function confirmNativeCheckin(request: Request, env: Env) {
+  const guard = await requireAdmin(request, env);
+  if (guard) return guard;
   const input = await request.json().catch(() => ({})) as Record<string, unknown>;
-  const operatorLineUserId = firstClean(input.operatorLineUserId, input.operatorUid, input.adminLineUserId, input.lineUserId, adminLineUserIdFromRequest(request));
-  if (!operatorLineUserId || !await isCheckinOperator(operatorLineUserId, env)) {
-    return json({ success: false, message: "Unauthorized" }, 401);
-  }
   const token = clean(input.token);
   if (!token || !env.ASSETS_BUCKET) return json({ success: false, message: "缺少核銷碼" }, 400);
   const object = await env.ASSETS_BUCKET.get(nativeTokenKey(token));
@@ -3912,7 +3653,7 @@ function setAiweRowLineUid(row: Record<string, unknown>, lineUserId: string) {
   row.lineUserId = lineUserId;
   row.LINE_user_id = lineUserId;
   row.uid = lineUserId;
-  if (isSyntheticLineEmail(row.email)) row.email = "";
+  if (clean(row.email).match(/^U[0-9a-f]{32}@aiwe\./i) || !clean(row.email)) row.email = `${lineUserId}@aiwe.cc`;
 }
 
 function inferUidBindMemberNo(rows: Array<Record<string, unknown>>, lineUserId: string, env: Env) {
@@ -4493,7 +4234,7 @@ async function handleMonthlyWebhook(request: Request, env: Env, rawBody: string,
   if (uidBindEvents.length) return bindLineUidEvents(uidBindEvents, env);
   if (pointEvents.length) return handleMotherPointEvents(pointEvents, env);
   if (queryEvents.length) {
-    const queryUrl = `${nativeLiffUrl}?query=1`;
+    const queryUrl = `${publicLiffUrl}?query=1`;
     const queryMessage = {
       type: "template",
       altText: "TDEA 活動查詢",
@@ -4507,7 +4248,7 @@ async function handleMonthlyWebhook(request: Request, env: Env, rawBody: string,
     return json({ success: true, mode: "registration-query", matched: [queryKeyword], forwarded: false, lineReplies });
   }
   if (memberQrEvents.length) {
-    const memberQrUrl = `${nativeLiffUrl}?memberQr=1`;
+    const memberQrUrl = `${publicLiffUrl}?memberQr=1`;
     const memberQrMessage = {
       type: "template",
       altText: "TDEA 會員 QR",
@@ -4521,7 +4262,7 @@ async function handleMonthlyWebhook(request: Request, env: Env, rawBody: string,
     return json({ success: true, mode: "member-qr", matched: [memberQrKeyword], forwarded: false, lineReplies });
   }
   if (calendarEvents.length) {
-    const calendarUrl = `${nativeLiffUrl}?calendar=1`;
+    const calendarUrl = `${publicLiffUrl}?calendar=1`;
     const calendarMessage = {
       type: "template",
       altText: "TDEA 行事曆",
@@ -4551,7 +4292,7 @@ async function handleMonthlyWebhook(request: Request, env: Env, rawBody: string,
     return json({ success: true, mode: "personal-message", matched: [personalMessageKeyword], forwarded: false, lineReplies });
   }
   if (marqueeEvents.length) {
-    const marqueeUrl = `${nativeLiffUrl}?marquee=1`;
+    const marqueeUrl = `${publicLiffUrl}?marquee=1`;
     const marqueeMessage = {
       type: "template",
       altText: "TDEA 跑馬燈",
@@ -4598,8 +4339,6 @@ export default {
 	    if ((request.method === "GET" || request.method === "POST") && url.pathname === "/api/line-activity-ai-check") return testLineActivityAi(request, env);
 	    if (request.method === "GET" && url.pathname === "/api/admin-access") return listAdminAccessApi(request, env);
 	    if ((request.method === "PUT" || request.method === "POST") && url.pathname === "/api/admin-access") return updateAdminAccessApi(request, env);
-	    if (request.method === "GET" && url.pathname === "/api/admin-whitelist") return listAdminWhitelistApi(request, env);
-	    if ((request.method === "PUT" || request.method === "POST") && url.pathname === "/api/admin-whitelist") return updateAdminWhitelistApi(request, env);
 	    if (request.method === "GET" && url.pathname === "/api/member-applications") return listMemberApplicationsApi(request, env);
 	    if (request.method === "GET" && url.pathname === "/api/aiwe-members-public") return listAiweMembersPublicApi(request, env);
 	    if (request.method === "POST" && url.pathname === "/api/aiwe-members/import") return importAiweMembersApi(request, env);
@@ -4611,21 +4350,11 @@ export default {
 	    if (request.method === "GET" && url.pathname === "/api/monthly-activity") return json({ success: true, data: await readMonthly(env) });
 	    if ((request.method === "PUT" || request.method === "POST") && url.pathname === "/api/monthly-activity") { const guard = await requireAdmin(request, env); if (guard) return guard; if (!env.ASSETS_BUCKET) return json({ success: false, message: "R2 bucket is not configured" }, 503); const config = await request.json().catch(() => ({})) as MonthlyConfig; await writeMonthly(env, config); return json({ success: true, data: await readMonthly(env), flex: buildMonthlyFlex(config) }); }
 	    if (request.method === "GET" && url.pathname === "/api/monthly-activity/flex") { const config = await readMonthly(env); return json({ success: true, flex: buildMonthlyFlex(config), data: config }); }
-	    if (request.method === "GET" && url.pathname === "/api/manager-data") return json({ success: true, data: await readManagerData(env) });
-	    if ((request.method === "PUT" || request.method === "POST") && url.pathname === "/api/manager-data") {
-	      const guard = await requireAdmin(request, env);
-	      if (guard) return guard;
-	      if (!env.ASSETS_BUCKET) return json({ success: false, message: "R2 bucket is not configured" }, 503);
-	      const data = await request.json().catch(() => ({})) as Record<string, unknown>;
-	      const saved = await writeManagerData(env, data);
-	      if (!saved) return json({ success: false, message: "拒絕空白或無效的名冊資料覆蓋" }, 400);
-	      return json({ success: true, data: await readManagerData(env) });
-	    }
 	    if (request.method === "GET" && url.pathname === "/api/vendor-card-menu") return json({ success: true, data: await readVendorCardConfig(env) });
 	    if ((request.method === "PUT" || request.method === "POST") && url.pathname === "/api/vendor-card-menu") { const guard = await requireAdmin(request, env); if (guard) return guard; if (!env.ASSETS_BUCKET) return json({ success: false, message: "R2 bucket is not configured" }, 503); const config = await request.json().catch(() => ({})) as VendorCardConfig; await writeVendorCardConfig(env, config); return json({ success: true, data: await readVendorCardConfig(env), flex: buildVendorCardFlex(config) }); }
 	    if (request.method === "GET" && url.pathname === "/api/vendor-card-menu/flex") { const config = await readVendorCardConfig(env); return json({ success: true, flex: buildVendorCardFlex(config), data: config }); }
-	    if (request.method === "GET" && url.pathname === "/api/marquee") return json({ success: true, data: await readMarqueeConfig(env), liffUrl: `${nativeLiffUrl}?marquee=1` });
-	    if ((request.method === "PUT" || request.method === "POST") && url.pathname === "/api/marquee") { const guard = await requireAdmin(request, env); if (guard) return guard; if (!env.ASSETS_BUCKET) return json({ success: false, message: "R2 bucket is not configured" }, 503); const config = await request.json().catch(() => ({})) as MarqueeConfig; await writeMarqueeConfig(env, config); return json({ success: true, data: await readMarqueeConfig(env), liffUrl: `${nativeLiffUrl}?marquee=1` }); }
+	    if (request.method === "GET" && url.pathname === "/api/marquee") return json({ success: true, data: await readMarqueeConfig(env), liffUrl: `${publicLiffUrl}?marquee=1` });
+	    if ((request.method === "PUT" || request.method === "POST") && url.pathname === "/api/marquee") { const guard = await requireAdmin(request, env); if (guard) return guard; if (!env.ASSETS_BUCKET) return json({ success: false, message: "R2 bucket is not configured" }, 503); const config = await request.json().catch(() => ({})) as MarqueeConfig; await writeMarqueeConfig(env, config); return json({ success: true, data: await readMarqueeConfig(env), liffUrl: `${publicLiffUrl}?marquee=1` }); }
 	    if (request.method === "POST" && url.pathname === "/api/marquee/upload") return uploadMarqueeImageApi(request, env);
 	    if (request.method === "POST" && url.pathname === "/api/marquee/reward") return rewardMarqueePoint(request, env);
 	    if (request.method === "POST" && url.pathname === "/api/marquee/points") return queryMarqueePoints(request, env);

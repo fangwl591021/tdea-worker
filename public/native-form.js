@@ -9,8 +9,7 @@
   const calendarMode = params.has("calendar");
   const marqueeMode = params.has("marquee");
   const app = document.querySelector("#app");
-  const liffId = checkinToken ? "2005868456-cfANNVou" : "2005868456-2jmxqyFU";
-  const nativeLiffUrl = "https://liff.line.me/2005868456-cfANNVou";
+  const liffId = "2005868456-2jmxqyFU";
   const calendarId = "7d66f2a96f192dda6cca2b04e60a6e549c7adf74f57721845d5b7e03f8b7ca89@group.calendar.google.com";
   let liffReady = null;
   let lineUserId = "";
@@ -20,36 +19,16 @@
   const esc = (value) => String(value ?? "").replace(/[&<>"']/g, (ch) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#039;" }[ch]));
   const trim = (value) => String(value ?? "").trim();
   const fieldTypes = new Set(["text", "email", "paragraph", "radio", "checkbox", "dropdown"]);
-  const autoMemberKeys = new Set(["line_user_id", "lineuserid", "lineid", "line_id", "lineuid", "line_uid", "uid"]);
+  const autoMemberKeys = new Set(["line_user_id", "lineuserid", "lineid", "line_id", "lineuid", "line_uid", "uid", "name", "phone", "mobile", "email", "company", "memberno", "gender", "ismember", "membertype"]);
 
   function mergedParams() {
     const output = new URLSearchParams(location.search);
-    const merge = (rawValue) => {
-      if (!rawValue) return;
-      let raw = rawValue;
-      for (let i = 0; i < 2; i += 1) {
-        try {
-          const decoded = decodeURIComponent(raw);
-          if (decoded === raw) break;
-          raw = decoded;
-        } catch (_) {
-          break;
-        }
-      }
-      const query = raw.startsWith("?") ? raw.slice(1) : raw.includes("?") ? raw.split("?").slice(1).join("?") : raw;
-      new URLSearchParams(query).forEach((value, key) => {
-        if (!output.has(key)) output.set(key, value);
-      });
-    };
-    merge(output.get("liff.state"));
-    if (location.hash) {
-      const hash = location.hash.startsWith("#") ? location.hash.slice(1) : location.hash;
-      merge(hash);
-      new URLSearchParams(hash).forEach((value, key) => {
-        if (!output.has(key)) output.set(key, value);
-      });
-    }
-    new URLSearchParams(location.search.replace(/^\?/, "")).forEach((value, key) => {
+    const state = output.get("liff.state");
+    if (!state) return output;
+    let raw = state;
+    try { raw = decodeURIComponent(state); } catch (_) {}
+    const query = raw.startsWith("?") ? raw.slice(1) : raw.includes("?") ? raw.split("?").slice(1).join("?") : raw;
+    new URLSearchParams(query).forEach((value, key) => {
       if (!output.has(key)) output.set(key, value);
     });
     return output;
@@ -223,16 +202,6 @@
     return "";
   }
 
-  async function submitLoginRegistration(id, input) {
-    const submitResponse = await fetch(`${api}/api/native-forms/${encodeURIComponent(id)}/login-register`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify(input)
-    });
-    const submitResult = await submitResponse.json().catch(() => ({}));
-    return { response: submitResponse, result: submitResult };
-  }
-
   function sessionFieldHtml(sessions) {
     return sessions.length > 1
       ? `<div class="nf-field"><label>場次 <span class="nf-required">*</span></label><select name="sessionId" required>${sessions.map((session) => `<option value="${esc(session.id)}">${esc(session.name || "場次")}${session.startTime ? ` ${esc(session.startTime)}` : ""}</option>`).join("")}</select></div>`
@@ -265,32 +234,15 @@
     if (liffReady) return liffReady;
     liffReady = new Promise((resolve) => {
       const finish = (value = "") => { lineUserId = value || lineUserId; resolve(lineUserId); };
-      const loadSdk = () => new Promise((sdkResolve) => {
-        if (window.liff) return sdkResolve(true);
-        const existing = document.querySelector("script[data-liff-sdk]");
-        if (existing) {
-          existing.addEventListener("load", () => sdkResolve(true), { once: true });
-          existing.addEventListener("error", () => sdkResolve(false), { once: true });
-          return;
-        }
-        const script = document.createElement("script");
-        script.src = "https://static.line-scdn.net/liff/edge/2/sdk.js";
-        script.async = true;
-        script.dataset.liffSdk = "1";
-        script.onload = () => sdkResolve(true);
-        script.onerror = () => sdkResolve(false);
-        document.head.appendChild(script);
-      });
       const init = async () => {
         try {
-          await loadSdk();
           await window.liff?.init?.({ liffId });
           if (window.liff?.isLoggedIn?.()) {
             const profile = await window.liff.getProfile();
             finish(profile?.userId || "");
             return;
           }
-          if (options.login && window.liff?.login) {
+          if (options.login && window.liff?.login && location.hostname.includes("liff.line.me")) {
             window.liff.login({ redirectUri: location.href });
             return;
           }
@@ -357,32 +309,6 @@
     const image = activity.posterUrl || activity.imageUrl || "";
     const mode = registrationMode(form);
     const showFullForm = mode === "form" || mode === "mixed";
-    let autoLoginNotice = "";
-
-    if (formId) {
-      renderLoading("正在比對會員名冊...");
-      const uid = await loadLiff({ login: true });
-      if (uid) {
-        const memberResponse = await fetch(`${api}/api/native-forms/${encodeURIComponent(id)}/login-member?lineUserId=${encodeURIComponent(uid)}`, { cache: "no-store" });
-        const memberResult = await memberResponse.json().catch(() => ({}));
-        if (memberResponse.ok && memberResult.success) {
-          const member = memberResult.data || {};
-          const sessionId = sessions[0]?.id || "default";
-          renderLoading(`已確認會員 ${member.name || ""}，正在送出報名...`);
-          const { response: submitResponse, result: submitResult } = await submitLoginRegistration(id, { lineUserId: uid, sessionId, answers: {} });
-          if (submitResponse.ok && submitResult.success) {
-            renderReceipt(submitResult);
-            return;
-          }
-          if (mode === "member_login") return renderError(submitResult.message || "報名失敗");
-          autoLoginNotice = submitResult.message || "會員自動報名未完成，請補填必要欄位後送出。";
-        } else if (mode === "member_login") {
-          return renderError(memberResult.message || "此 LINE 帳號尚未綁定會員或廠商會員資料。");
-        }
-      } else if (mode === "member_login") {
-        return renderError("無法取得 LINE UID，請從 LINE LIFF 開啟報名頁。");
-      }
-    }
 
     renderShell(`<section class="nf-card">
       ${image ? `<img class="nf-hero" src="${esc(image)}" alt="${esc(activity.name || "")}">` : ""}
@@ -390,7 +316,6 @@
         <h1 class="nf-title">${esc(activity.name || "活動報名")}</h1>
         <div class="nf-meta">${activity.courseTime ? `<span class="nf-pill">${esc(activity.courseTime)}</span>` : ""}${activity.deadline ? `<span class="nf-pill">截止 ${esc(activity.deadline)}</span>` : ""}</div>
         ${activity.detailText ? `<div class="nf-detail">${esc(activity.detailText)}</div>` : ""}
-        ${autoLoginNotice ? `<div class="nf-alert">${esc(autoLoginNotice)}</div>` : ""}
         ${loginRegisterPanel(mode, sessions)}
         ${showFullForm ? `<form class="nf-form" data-native-register novalidate>
           ${sessionFieldHtml(sessions)}
@@ -431,7 +356,12 @@
       }
       const sessionId = loginBox?.querySelector("[name='sessionId']")?.value || sessions[0]?.id || "default";
       loginButton.textContent = "送出中...";
-      const { response: submitResponse, result: submitResult } = await submitLoginRegistration(id, { lineUserId: uid, sessionId, answers: {} });
+      const submitResponse = await fetch(`${api}/api/native-forms/${encodeURIComponent(id)}/login-register`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ lineUserId: uid, sessionId, answers: {} })
+      });
+      const submitResult = await submitResponse.json().catch(() => ({}));
       if (!submitResponse.ok || !submitResult.success) {
         loginButton.disabled = false;
         loginButton.textContent = "會員/廠商快速報名";
@@ -451,19 +381,13 @@
       const uid = await loadLiff({ login: true });
       const answers = collectAnswers(registerForm, fields);
       if (uid) answers.LINE_user_id = uid;
-      if (!uid && claimIsMember(answers)) {
-        submit.disabled = false;
-        submit.textContent = "送出報名";
-        return alert("無法取得 LINE UID，請從 LINE LIFF 開啟報名頁，或先完成會員報到。");
-      }
-      const sessionId = registerForm.elements.sessionId?.value || "default";
       const claimError = missingMemberClaimIdentity(answers);
       if (claimError) {
         submit.disabled = false;
         submit.textContent = "送出報名";
         return alert(claimError);
       }
-      const payload = { sessionId, lineUserId: uid || "", answers };
+      const payload = { sessionId: registerForm.elements.sessionId?.value || "default", lineUserId: uid || "", answers };
       const submitResponse = await fetch(`${api}/api/native-forms/${encodeURIComponent(id)}`, {
         method: "POST",
         headers: { "content-type": "application/json" },
@@ -490,8 +414,7 @@
     const title = activity.name || row.formId || "活動報名";
     const submittedAt = row.submittedAt ? new Date(row.submittedAt).toLocaleString("zh-TW", { hour12: false }) : "";
     const checkedInAt = row.checkedInAt ? new Date(row.checkedInAt).toLocaleString("zh-TW", { hour12: false }) : "";
-    const isCheckedIn = Boolean(row.checkedInAt);
-    const checkinUrl = row.checkinUrl || (row.checkinToken ? `${nativeLiffUrl}?checkin=${encodeURIComponent(row.checkinToken)}` : "");
+    const checkinUrl = row.checkinUrl || (row.checkinToken ? `${api || location.origin}?checkin=${encodeURIComponent(row.checkinToken)}` : "");
     const qrUrl = checkinUrl ? `https://api.qrserver.com/v1/create-qr-code/?size=220x220&data=${encodeURIComponent(checkinUrl)}` : "";
     const lines = [
       activity.courseTime ? `<div><strong>活動時間：</strong>${esc(activity.courseTime)}</div>` : "",
@@ -506,11 +429,10 @@
       </div>
       <div class="nf-query-body">
         <div class="nf-query-lines">
-          ${isCheckedIn ? `<div class="nf-ok">已完成報到</div>` : ""}
           ${lines || `<div>已找到報名紀錄。</div>`}
-          ${row.status === "cancelled" || isCheckedIn ? "" : `<div class="nf-actions" style="margin-top:10px"><button class="nf-btn danger" data-cancel-registration="${esc(row.id)}" data-query-code="${esc(row.queryCode || "")}">取消報名</button></div>`}
+          ${row.status === "cancelled" ? "" : `<div class="nf-actions" style="margin-top:10px"><button class="nf-btn danger" data-cancel-registration="${esc(row.id)}" data-query-code="${esc(row.queryCode || "")}">取消報名</button></div>`}
         </div>
-        ${!isCheckedIn && qrUrl ? `<div class="nf-query-qr"><img class="nf-qr" src="${qrUrl}" alt="核銷 QR Code"><span>活動核銷 QR</span></div>` : ""}
+        ${qrUrl ? `<div class="nf-query-qr"><img class="nf-qr" src="${qrUrl}" alt="核銷 QR Code"><span>活動核銷 QR</span></div>` : ""}
       </div>
     </article>`;
   }
@@ -593,57 +515,26 @@
     if (!response.ok || !result.success) return renderError(result.message || "核銷資料無效");
     const row = result.data || {};
     const answers = row.answers || {};
-    const activity = row.activity || {};
-    const pickFrom = (source, ...keys) => {
-      for (const key of keys) {
-        const value = source[key];
-        if (value !== undefined && value !== null && String(value).trim()) return value;
-      }
-      return "-";
-    };
-    const attendeeName = pickFrom(answers, "memberName", "name", "姓名", "participantName", "displayName");
-    const activityName = pickFrom(activity, "name", "activityName", "活動名稱", "title");
-    const alreadyCheckedIn = Boolean(row.checkedInAt);
+    const adminEmail = localStorage.getItem("tdea-admin-email") || sessionStorage.getItem("tdea-admin-email") || "";
     renderShell(`<section class="nf-card"><div class="nf-body">
       <h1 class="nf-title">活動報到核銷</h1>
-      <div class="${alreadyCheckedIn ? "nf-ok" : "nf-alert"}">${alreadyCheckedIn ? `已完成報到：${esc(row.checkedInAt)}` : "尚未報到"}</div>
-      <table class="nf-table"><tbody>
-        <tr><th>人名</th><td>${esc(attendeeName)}</td></tr>
-        <tr><th>活動名稱</th><td>${esc(activityName)}</td></tr>
-      </tbody></table>
-      <div class="nf-actions"><button class="nf-btn primary" data-confirm-checkin ${alreadyCheckedIn ? "disabled" : ""}>${alreadyCheckedIn ? "已完成報到" : "確認報到"}</button></div>
+      <div class="${row.checkedInAt ? "nf-ok" : "nf-alert"}">${row.checkedInAt ? `已報到：${esc(row.checkedInAt)}` : "尚未報到"}</div>
+      <table class="nf-table"><tbody>${Object.entries(answers).map(([key, value]) => `<tr><th>${esc(key)}</th><td>${esc(Array.isArray(value) ? value.join(", ") : value)}</td></tr>`).join("")}</tbody></table>
+      <div class="nf-field"><label>管理者 Email</label><input data-admin-email value="${esc(adminEmail)}"></div>
+      <div class="nf-actions"><button class="nf-btn primary" data-confirm-checkin>確認報到</button></div>
     </div></section>`);
-    if (alreadyCheckedIn) return;
-    app.querySelector("[data-confirm-checkin]")?.addEventListener("click", async (event) => {
-      const button = event.currentTarget;
-      if (button?.dataset.busy === "1") return;
-      const originalText = button?.textContent || "確認報到";
-      if (button) {
-        button.dataset.busy = "1";
-        button.disabled = true;
-        button.textContent = "核銷中，請稍候...";
-      }
-      try {
-        const operatorLineUserId = await loadLiff({ login: true });
-        if (!operatorLineUserId) throw new Error("無法取得工作人員 LINE UID，請從 LINE LIFF 開啟。");
-        const confirmResponse = await fetch(`${api}/api/native-checkin/confirm`, {
-          method: "POST",
-          headers: { "content-type": "application/json", "x-line-user-id": operatorLineUserId },
-          body: JSON.stringify({ token, operatorLineUserId })
-        });
-        const confirmResult = await confirmResponse.json().catch(() => ({}));
-        if (!confirmResponse.ok || !confirmResult.success) throw new Error(confirmResult.message || "核銷失敗");
-        if (button) button.textContent = "報到成功";
-        alert("報到成功");
-        showCheckin(token);
-      } catch (error) {
-        if (button) {
-          button.dataset.busy = "0";
-          button.disabled = false;
-          button.textContent = originalText;
-        }
-        alert(error?.message || "核銷失敗");
-      }
+    app.querySelector("[data-confirm-checkin]")?.addEventListener("click", async () => {
+      const email = app.querySelector("[data-admin-email]")?.value?.trim() || "";
+      if (email) localStorage.setItem("tdea-admin-email", email);
+      const confirmResponse = await fetch(`${api}/api/native-checkin/confirm`, {
+        method: "POST",
+        headers: { "content-type": "application/json", "x-admin-email": email },
+        body: JSON.stringify({ token })
+      });
+      const confirmResult = await confirmResponse.json().catch(() => ({}));
+      if (!confirmResponse.ok || !confirmResult.success) return alert(confirmResult.message || "核銷失敗");
+      alert("報到成功");
+      showCheckin(token);
     });
   }
 
