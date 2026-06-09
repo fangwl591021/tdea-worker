@@ -33,6 +33,7 @@ type RichMenuSnapshot = { id: string; savedAt: string; name: string; chatBarText
 type RichMenuConfig = { name?: string; chatBarText?: string; selected?: boolean; size?: { width: number; height: number }; imageUrl?: string; areas?: RichMenuArea[]; lastRichMenuId?: string; updatedAt?: string; deployments?: RichMenuDeployment[]; snapshots?: RichMenuSnapshot[] };
 type LineActivityDraft = { id: string; lineUserId: string; step: string; answers: Record<string, unknown>; status: "active" | "completed" | "cancelled"; activity?: Record<string, unknown>; createdAt: string; updatedAt: string; completedAt?: string };
 type AdminAccessRecord = { memberNo: string; email?: string; lineUserId?: string; name?: string; loginAccess: boolean; updatedAt?: string; updatedBy?: string };
+type AdminWhitelistRecord = { id?: string; enabled?: boolean; label?: string; memberNo?: string; email?: string; lineUserId?: string; role?: string; note?: string; createdAt?: string; updatedAt?: string; updatedBy?: string };
 type LineActivityAiResult = { intent?: string; confidence?: number; question?: string; fields?: Record<string, unknown> };
 type MemberOnboardingSession = { lineUserId: string; step: "askMember" | "memberNo" | "phone" | "joinInterest" | "applicantInfo"; answers: Record<string, unknown>; triggerText?: string; createdAt: string; updatedAt: string };
 type MemberApplication = { id: string; lineUserId: string; status: "pending" | "handled"; source: "line"; name?: string; phone?: string; triggerText?: string; createdAt: string; updatedAt?: string };
@@ -48,6 +49,7 @@ const pushLogKey = "push/logs.json";
 const personalMessagesKey = "personal-messages/messages.json";
 const richMenuKey = "line/rich-menu.json";
 const adminAccessKey = "line/admin-access.json";
+const adminWhitelistKey = "line/admin-whitelist.json";
 const aiweMembersKey = "aiwe/members.json";
 const lineActivityDraftListKey = "line-activity/drafts.json";
 const lineActivityLatestDraftKey = "line-activity/latest-active.json";
@@ -110,11 +112,76 @@ async function writeAdminAccess(env: Env, records: Record<string, AdminAccessRec
   return true;
 }
 
+async function readAdminWhitelist(env: Env): Promise<AdminWhitelistRecord[]> {
+  if (!env.ASSETS_BUCKET) return [];
+  const object = await env.ASSETS_BUCKET.get(adminWhitelistKey);
+  if (!object) return [];
+  const data = await object.json().catch(() => []);
+  const rows = Array.isArray(data) ? data : Array.isArray((data as { records?: unknown[] }).records) ? (data as { records: unknown[] }).records : [];
+  return rows
+    .filter((row): row is Record<string, unknown> => Boolean(row) && typeof row === "object")
+    .map((row) => ({
+      id: clean(row.id) || crypto.randomUUID(),
+      enabled: row.enabled !== false,
+      label: clean(row.label || row.name),
+      memberNo: clean(row.memberNo).toUpperCase(),
+      email: clean(row.email).toLowerCase(),
+      lineUserId: firstClean(row.lineUserId, row.lineUid, row.uid, row.LINE_user_id, row.line_user_id),
+      role: clean(row.role) || "admin",
+      note: clean(row.note),
+      createdAt: clean(row.createdAt),
+      updatedAt: clean(row.updatedAt),
+      updatedBy: clean(row.updatedBy)
+    }));
+}
+
+async function writeAdminWhitelist(env: Env, records: AdminWhitelistRecord[]) {
+  if (!env.ASSETS_BUCKET) return false;
+  const now = new Date().toISOString();
+  const rows = records.map((row) => ({
+    id: clean(row.id) || crypto.randomUUID(),
+    enabled: row.enabled !== false,
+    label: clean(row.label),
+    memberNo: clean(row.memberNo).toUpperCase(),
+    email: clean(row.email).toLowerCase(),
+    lineUserId: clean(row.lineUserId),
+    role: clean(row.role) || "admin",
+    note: clean(row.note),
+    createdAt: clean(row.createdAt) || now,
+    updatedAt: now,
+    updatedBy: clean(row.updatedBy)
+  }));
+  await env.ASSETS_BUCKET.put(adminWhitelistKey, JSON.stringify({ records: rows, updatedAt: now }, null, 2), {
+    httpMetadata: { contentType: "application/json; charset=utf-8", cacheControl: "no-store" }
+  });
+  return true;
+}
+
+function adminWhitelistConfigured(records: AdminWhitelistRecord[]) {
+  return records.some((record) => record.enabled !== false && (clean(record.email) || clean(record.memberNo) || clean(record.lineUserId)));
+}
+
+function adminWhitelistMatches(records: AdminWhitelistRecord[], identity: { email?: string; memberNo?: string; lineUserId?: string }) {
+  const email = clean(identity.email).toLowerCase();
+  const memberNo = clean(identity.memberNo).toUpperCase();
+  const lineUserId = clean(identity.lineUserId);
+  if (!email && !memberNo && !lineUserId) return false;
+  return records.some((record) => {
+    if (record.enabled === false) return false;
+    if (memberNo && clean(record.memberNo).toUpperCase() === memberNo) return true;
+    if (lineUserId && clean(record.lineUserId) === lineUserId) return true;
+    if (email && clean(record.email).toLowerCase() === email) return true;
+    return false;
+  });
+}
+
 async function isDynamicAdmin(identity: { email?: string; memberNo?: string; lineUserId?: string }, env: Env) {
   const email = clean(identity.email).toLowerCase();
   const memberNo = clean(identity.memberNo).toUpperCase();
   const lineUserId = clean(identity.lineUserId);
   if (!email && !memberNo && !lineUserId) return false;
+  const whitelist = await readAdminWhitelist(env);
+  if (adminWhitelistConfigured(whitelist)) return adminWhitelistMatches(whitelist, { email, memberNo, lineUserId });
   const records = await readAdminAccess(env);
   return Object.values(records).some((record) => {
     if (record.loginAccess !== true) return false;
@@ -146,6 +213,8 @@ async function isCheckinOperator(lineUserId: string, env: Env) {
   const uid = clean(lineUserId);
   if (!uid) return false;
   if (await isDynamicAdmin({ lineUserId: uid }, env)) return true;
+  const whitelist = await readAdminWhitelist(env);
+  if (adminWhitelistConfigured(whitelist)) return false;
   const lowerUid = uid.toLowerCase();
   const adminRecords = Object.values(await readAdminAccess(env)).filter((record) => record.loginAccess === true);
   const rows = await readAiweMembers(env);
@@ -167,6 +236,45 @@ async function listAdminAccessApi(request: Request, env: Env) {
   const guard = await requireAdmin(request, env);
   if (guard) return guard;
   return json({ success: true, data: await readAdminAccess(env), staticAdmins: staticAdminEmails(env) });
+}
+
+async function listAdminWhitelistApi(request: Request, env: Env) {
+  const guard = await requireAdmin(request, env);
+  if (guard) return guard;
+  const whitelist = await readAdminWhitelist(env);
+  return json({
+    success: true,
+    data: whitelist,
+    staticAdmins: staticAdminEmails(env),
+    legacyAccess: await readAdminAccess(env),
+    whitelistActive: adminWhitelistConfigured(whitelist)
+  });
+}
+
+async function updateAdminWhitelistApi(request: Request, env: Env) {
+  const guard = await requireAdmin(request, env);
+  if (guard) return guard;
+  if (!env.ASSETS_BUCKET) return json({ success: false, message: "R2 bucket is not configured" }, 503);
+  const input = await request.json().catch(() => ({})) as Record<string, unknown>;
+  const rawRows = Array.isArray(input.records) ? input.records : Array.isArray(input.data) ? input.data : [];
+  const updatedBy = adminEmailFromRequest(request) || adminMemberNoFromRequest(request) || adminLineUserIdFromRequest(request);
+  const records = rawRows
+    .filter((row): row is Record<string, unknown> => Boolean(row) && typeof row === "object")
+    .map((row) => ({
+      id: clean(row.id) || crypto.randomUUID(),
+      enabled: row.enabled !== false,
+      label: clean(row.label || row.name),
+      memberNo: clean(row.memberNo).toUpperCase(),
+      email: clean(row.email).toLowerCase(),
+      lineUserId: firstClean(row.lineUserId, row.lineUid, row.uid, row.LINE_user_id, row.line_user_id),
+      role: clean(row.role) || "admin",
+      note: clean(row.note),
+      createdAt: clean(row.createdAt),
+      updatedBy
+    }))
+    .filter((row) => row.label || row.memberNo || row.email || row.lineUserId);
+  await writeAdminWhitelist(env, records);
+  return json({ success: true, data: await readAdminWhitelist(env), whitelistActive: adminWhitelistConfigured(records) });
 }
 
 async function updateAdminAccessApi(request: Request, env: Env) {
@@ -4431,6 +4539,8 @@ export default {
 	    if ((request.method === "GET" || request.method === "POST") && url.pathname === "/api/line-activity-ai-check") return testLineActivityAi(request, env);
 	    if (request.method === "GET" && url.pathname === "/api/admin-access") return listAdminAccessApi(request, env);
 	    if ((request.method === "PUT" || request.method === "POST") && url.pathname === "/api/admin-access") return updateAdminAccessApi(request, env);
+	    if (request.method === "GET" && url.pathname === "/api/admin-whitelist") return listAdminWhitelistApi(request, env);
+	    if ((request.method === "PUT" || request.method === "POST") && url.pathname === "/api/admin-whitelist") return updateAdminWhitelistApi(request, env);
 	    if (request.method === "GET" && url.pathname === "/api/member-applications") return listMemberApplicationsApi(request, env);
 	    if (request.method === "GET" && url.pathname === "/api/aiwe-members-public") return listAiweMembersPublicApi(request, env);
 	    if (request.method === "POST" && url.pathname === "/api/aiwe-members/import") return importAiweMembersApi(request, env);

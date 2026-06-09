@@ -150,12 +150,25 @@
     });
   }
 
+  function registerAdminWhitelist() {
+    if (!window.TDEAApp) return;
+    register({
+      id: "admin-whitelist",
+      label: "白名單",
+      order: 35,
+      onClick: () => window.TDEAApp.navigate("adminWhitelist"),
+      isActive: () => window.TDEAApp.isView("adminWhitelist")
+    });
+  }
+
   new MutationObserver(() => {
     registerKeywords();
     registerRichMenu();
+    registerAdminWhitelist();
     refresh();
   }).observe(document.body, { childList: true, subtree: true });
   registerKeywords();
   registerRichMenu();
+  registerAdminWhitelist();
   refreshSoon();
 })();
