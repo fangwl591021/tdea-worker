@@ -76,12 +76,14 @@
     queueManagerDataSave();
   }
   function managerDataHasContent(data) {
+    const formSettings = data?.formSettings;
+    const hasFormSettings = formSettings && typeof formSettings === "object" && !Array.isArray(formSettings) && Object.keys(formSettings).length > 0;
     return Boolean(data && (
       (Array.isArray(data.activities) && data.activities.length) ||
       (Array.isArray(data.association) && data.association.length) ||
       (Array.isArray(data.vendor) && data.vendor.length) ||
       data.monthlyActivity ||
-      data.formSettings
+      hasFormSettings
     ));
   }
   function loginAccessEnabled(value) {
@@ -133,6 +135,7 @@
   async function saveManagerDataRemote() {
     const email = localStorage.getItem("tdea-admin-email") || sessionStorage.getItem("tdea-admin-email") || "";
     if (!email) return;
+    if (!managerDataHasContent(state.data)) return;
     try {
       await fetch(api + "/api/manager-data", {
         method: "PUT",
@@ -153,9 +156,6 @@
         localStorage.setItem(key, JSON.stringify(state.data));
         await loadAdminAccessIntoRoster();
         render();
-      } else if (managerDataHasContent(state.data)) {
-        managerDataLoading = false;
-        queueManagerDataSave();
       }
     } catch (_) {
     } finally {

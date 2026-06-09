@@ -234,6 +234,7 @@ function managerDataHasUsefulContent(input: Record<string, unknown> | null) {
 
 async function writeManagerData(env: Env, input: Record<string, unknown>) {
   if (!env.ASSETS_BUCKET) return false;
+  if (!managerDataHasUsefulContent(input)) return false;
   const previous = await readManagerData(env);
   if (managerDataHasUsefulContent(previous) && !managerDataHasUsefulContent(input)) return false;
   const data = {
@@ -4442,7 +4443,15 @@ export default {
 	    if ((request.method === "PUT" || request.method === "POST") && url.pathname === "/api/monthly-activity") { const guard = await requireAdmin(request, env); if (guard) return guard; if (!env.ASSETS_BUCKET) return json({ success: false, message: "R2 bucket is not configured" }, 503); const config = await request.json().catch(() => ({})) as MonthlyConfig; await writeMonthly(env, config); return json({ success: true, data: await readMonthly(env), flex: buildMonthlyFlex(config) }); }
 	    if (request.method === "GET" && url.pathname === "/api/monthly-activity/flex") { const config = await readMonthly(env); return json({ success: true, flex: buildMonthlyFlex(config), data: config }); }
 	    if (request.method === "GET" && url.pathname === "/api/manager-data") return json({ success: true, data: await readManagerData(env) });
-	    if ((request.method === "PUT" || request.method === "POST") && url.pathname === "/api/manager-data") { const guard = await requireAdmin(request, env); if (guard) return guard; if (!env.ASSETS_BUCKET) return json({ success: false, message: "R2 bucket is not configured" }, 503); const data = await request.json().catch(() => ({})) as Record<string, unknown>; await writeManagerData(env, data); return json({ success: true, data: await readManagerData(env) }); }
+	    if ((request.method === "PUT" || request.method === "POST") && url.pathname === "/api/manager-data") {
+	      const guard = await requireAdmin(request, env);
+	      if (guard) return guard;
+	      if (!env.ASSETS_BUCKET) return json({ success: false, message: "R2 bucket is not configured" }, 503);
+	      const data = await request.json().catch(() => ({})) as Record<string, unknown>;
+	      const saved = await writeManagerData(env, data);
+	      if (!saved) return json({ success: false, message: "拒絕空白或無效的名冊資料覆蓋" }, 400);
+	      return json({ success: true, data: await readManagerData(env) });
+	    }
 	    if (request.method === "GET" && url.pathname === "/api/vendor-card-menu") return json({ success: true, data: await readVendorCardConfig(env) });
 	    if ((request.method === "PUT" || request.method === "POST") && url.pathname === "/api/vendor-card-menu") { const guard = await requireAdmin(request, env); if (guard) return guard; if (!env.ASSETS_BUCKET) return json({ success: false, message: "R2 bucket is not configured" }, 503); const config = await request.json().catch(() => ({})) as VendorCardConfig; await writeVendorCardConfig(env, config); return json({ success: true, data: await readVendorCardConfig(env), flex: buildVendorCardFlex(config) }); }
 	    if (request.method === "GET" && url.pathname === "/api/vendor-card-menu/flex") { const config = await readVendorCardConfig(env); return json({ success: true, flex: buildVendorCardFlex(config), data: config }); }
