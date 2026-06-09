@@ -224,8 +224,18 @@ async function readManagerData(env: Env) {
   return data && typeof data === "object" ? data : null;
 }
 
+function managerDataHasUsefulContent(input: Record<string, unknown> | null) {
+  if (!input || typeof input !== "object") return false;
+  const hasRows = ["activities", "association", "vendor"].some((key) => Array.isArray(input[key]) && (input[key] as unknown[]).length > 0);
+  const formSettings = input.formSettings;
+  const hasFormSettings = formSettings && typeof formSettings === "object" && !Array.isArray(formSettings) && Object.keys(formSettings).length > 0;
+  return hasRows || hasFormSettings || Boolean(input.monthlyActivity);
+}
+
 async function writeManagerData(env: Env, input: Record<string, unknown>) {
   if (!env.ASSETS_BUCKET) return false;
+  const previous = await readManagerData(env);
+  if (managerDataHasUsefulContent(previous) && !managerDataHasUsefulContent(input)) return false;
   const data = {
     ...input,
     updatedAt: new Date().toISOString()
