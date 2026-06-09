@@ -175,13 +175,58 @@ function adminWhitelistMatches(records: AdminWhitelistRecord[], identity: { emai
   });
 }
 
+async function adminWhitelistFromAssociationRoster(env: Env): Promise<AdminWhitelistRecord[]> {
+  const data = await readManagerData(env);
+  const rows = Array.isArray(data?.association) ? data.association : [];
+  const fromRoster = rows
+    .filter((row): row is Record<string, unknown> => Boolean(row) && typeof row === "object")
+    .filter((row) => memberRowLoginAccess(row))
+    .map((row) => {
+      const memberNo = clean(row.memberNo || row.rosterMemberNo).toUpperCase();
+      const lineUserId = memberLineUid(row);
+      const email = clean(row.email).toLowerCase();
+      return {
+        id: memberNo || lineUserId || email || crypto.randomUUID(),
+        enabled: true,
+        label: clean(row.name || row.rosterName || row.memberName || memberNo || lineUserId),
+        memberNo,
+        email,
+        lineUserId,
+        role: "admin",
+        note: "from association roster"
+      };
+    })
+    .filter((row) => row.label || row.memberNo || row.email || row.lineUserId);
+  const accessRecords = Object.values(await readAdminAccess(env))
+    .filter((record) => record.loginAccess === true)
+    .map((record) => ({
+      id: clean(record.memberNo || record.lineUserId || record.email || crypto.randomUUID()),
+      enabled: true,
+      label: clean(record.name || record.memberNo || record.lineUserId || record.email),
+      memberNo: clean(record.memberNo).toUpperCase(),
+      email: clean(record.email).toLowerCase(),
+      lineUserId: clean(record.lineUserId),
+      role: "admin",
+      note: "from association access"
+    }))
+    .filter((row) => row.label || row.memberNo || row.email || row.lineUserId);
+  const deduped = new Map<string, AdminWhitelistRecord>();
+  [...fromRoster, ...accessRecords].forEach((row) => {
+    const key = [row.memberNo, row.lineUserId, row.email].filter(Boolean).join("|").toLowerCase() || row.id;
+    if (!deduped.has(key)) deduped.set(key, row);
+  });
+  return [...deduped.values()];
+}
+
 async function isDynamicAdmin(identity: { email?: string; memberNo?: string; lineUserId?: string }, env: Env) {
   const email = clean(identity.email).toLowerCase();
   const memberNo = clean(identity.memberNo).toUpperCase();
   const lineUserId = clean(identity.lineUserId);
   if (!email && !memberNo && !lineUserId) return false;
   const whitelist = await readAdminWhitelist(env);
-  if (adminWhitelistConfigured(whitelist)) return adminWhitelistMatches(whitelist, { email, memberNo, lineUserId });
+  const rosterWhitelist = await adminWhitelistFromAssociationRoster(env);
+  const combinedWhitelist = [...whitelist, ...rosterWhitelist];
+  if (adminWhitelistConfigured(combinedWhitelist)) return adminWhitelistMatches(combinedWhitelist, { email, memberNo, lineUserId });
   const records = await readAdminAccess(env);
   return Object.values(records).some((record) => {
     if (record.loginAccess !== true) return false;
@@ -242,12 +287,14 @@ async function listAdminWhitelistApi(request: Request, env: Env) {
   const guard = await requireAdmin(request, env);
   if (guard) return guard;
   const whitelist = await readAdminWhitelist(env);
+  const rosterWhitelist = await adminWhitelistFromAssociationRoster(env);
   return json({
     success: true,
     data: whitelist,
+    rosterWhitelist,
     staticAdmins: staticAdminEmails(env),
     legacyAccess: await readAdminAccess(env),
-    whitelistActive: adminWhitelistConfigured(whitelist)
+    whitelistActive: adminWhitelistConfigured([...whitelist, ...rosterWhitelist])
   });
 }
 

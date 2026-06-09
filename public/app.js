@@ -327,6 +327,22 @@
     }));
   }
 
+  function associationRosterToWhitelistRows() {
+    return visibleRosterRows("association")
+      .filter(row => memberLoginAllowed(row))
+      .map(row => ({
+        id: rosterMatchKey(row) || memberLineUid(row) || uid(),
+        enabled: true,
+        label: row.name || row.rosterName || row.memberName || row.memberNo || "",
+        memberNo: row.memberNo || row.rosterMemberNo || "",
+        email: row.email || "",
+        lineUserId: memberLineUid(row),
+        role: "admin",
+        note: "from association roster"
+      }))
+      .filter(row => row.label || row.memberNo || row.lineUserId || row.email);
+  }
+
   function whitelistRowsFromForm() {
     return Array.from(document.querySelectorAll("[data-whitelist-row]")).map(row => ({
       id: row.dataset.id || uid(),
@@ -841,7 +857,7 @@
     if (state.view === "creator") return creator();
     if (state.view === "redeem") return redeem();
     if (state.view === "keywords") return keywords();
-    if (state.view === "adminWhitelist") return adminWhitelist();
+    if (state.view === "adminWhitelist") return adminWhitelistClean();
     return memberApplicationsPanel() + dashboard();
   }
 
@@ -877,12 +893,29 @@
     const staticAdmins = Array.isArray(meta.staticAdmins) && meta.staticAdmins.length ? `<div class="muted">固定管理者 Email：${meta.staticAdmins.map(esc).join("、")}</div>` : "";
     const error = meta.error ? `<div class="alert danger">${esc(meta.error)}</div>` : "";
     const bodyRows = rows.length ? rows.map(whitelistRow).join("") : `<tr><td colspan="8">${empty("目前沒有白名單。可新增一筆，或從舊允許名單帶入。")}</td></tr>`;
-    return `<section class="panel"><div class="panel-head"><div><h2 class="panel-title">系統白名單</h2><div class="muted">此處是後台、核銷與 LINE 工具的正式授權來源；會員名冊的「允許」只保留為舊資料參考。</div></div><div class="actions">${status}<button class="btn" data-load-whitelist>重新載入</button></div></div>${error}${staticAdmins}<div class="table-wrap"><table><thead><tr><th>啟用</th><th>名稱</th><th>會員編號</th><th>LINE UID</th><th>Email</th><th>角色</th><th>備註</th><th>操作</th></tr></thead><tbody id="whitelist-body">${bodyRows}</tbody></table></div><div class="panel-actions"><button class="btn" data-add-whitelist-row>新增白名單</button><button class="btn" data-import-legacy-access>從舊允許名單帶入</button><button class="btn" data-check-whitelist>檢查目前身份</button><button class="btn primary" data-save-whitelist>儲存白名單</button></div></section>`;
+    return `<section class="panel"><div class="panel-head"><div><h2 class="panel-title">系統白名單</h2><div class="muted">此處是後台、核銷與 LINE 工具的正式授權來源；可從協會名冊中已勾選「允許」的會員同步產生。</div></div><div class="actions">${status}<button class="btn" data-load-whitelist>重新載入</button></div></div>${error}${staticAdmins}<div class="table-wrap"><table><thead><tr><th>啟用</th><th>名稱</th><th>會員編號</th><th>LINE UID</th><th>Email</th><th>角色</th><th>備註</th><th>操作</th></tr></thead><tbody id="whitelist-body">${bodyRows}</tbody></table></div><div class="panel-actions"><button class="btn" data-import-association-whitelist>從協會名冊同步</button><button class="btn" data-add-whitelist-row>新增白名單</button><button class="btn" data-import-legacy-access>從舊允許名單帶入</button><button class="btn" data-check-whitelist>檢查目前身份</button><button class="btn primary" data-save-whitelist>儲存白名單</button></div></section>`;
   }
 
   function whitelistRow(row = {}) {
     const id = row.id || uid();
     return `<tr data-whitelist-row data-id="${esc(id)}"><td><input type="checkbox" name="enabled" ${row.enabled === false ? "" : "checked"}></td><td><input name="label" value="${esc(row.label || "")}" placeholder="例：秘書"></td><td><input name="memberNo" value="${esc(row.memberNo || "")}" placeholder="Z1160215"></td><td><input name="lineUserId" value="${esc(row.lineUserId || "")}" placeholder="U..."></td><td><input name="email" value="${esc(row.email || "")}" placeholder="name@example.com"></td><td><select name="role"><option value="admin" ${(row.role || "admin") === "admin" ? "selected" : ""}>管理者</option><option value="checkin" ${row.role === "checkin" ? "selected" : ""}>核銷</option><option value="editor" ${row.role === "editor" ? "selected" : ""}>編輯</option></select></td><td><input name="note" value="${esc(row.note || "")}"></td><td><button class="link danger-link" data-remove-whitelist-row>刪除</button></td></tr>`;
+  }
+
+  function adminWhitelistClean() {
+    const rows = state.adminWhitelist || [];
+    const meta = state.adminWhitelistMeta || {};
+    const rosterRows = Array.isArray(meta.rosterWhitelist) ? meta.rosterWhitelist : [];
+    const status = meta.whitelistActive ? `<span class="badge live">白名單已啟用</span>` : `<span class="badge off">尚未建立白名單，暫用舊允許名單</span>`;
+    const staticAdmins = Array.isArray(meta.staticAdmins) && meta.staticAdmins.length ? `<div class="muted">環境變數 ADMIN_EMAILS 仍可進入：${meta.staticAdmins.map(esc).join("、")}</div>` : "";
+    const error = meta.error ? `<div class="alert danger">${esc(meta.error)}</div>` : "";
+    const bodyRows = rows.length ? rows.map(whitelistRowClean).join("") : `<tr><td colspan="8">${empty("目前沒有手動白名單。可新增一筆，或從協會名冊同步。")}</td></tr>`;
+    const rosterBody = rosterRows.length ? rosterRows.map(row => `<tr><td>${esc(row.label || "")}</td><td>${esc(row.memberNo || "")}</td><td>${esc(shortUid(row.lineUserId || ""))}</td><td>${esc(row.email || "")}</td><td>${esc(row.note || "from association roster")}</td></tr>`).join("") : `<tr><td colspan="5">${empty("協會名冊目前沒有勾選允許的授權者。")}</td></tr>`;
+    return `<section class="panel"><div class="panel-head"><div><h2 class="panel-title">系統白名單</h2><div class="muted">正式授權來源包含：下方手動白名單，以及協會名冊中已勾選「允許」的會員。</div></div><div class="actions">${status}<button class="btn" data-load-whitelist>重新載入</button></div></div>${error}${staticAdmins}<div class="table-wrap"><table><thead><tr><th>啟用</th><th>名稱</th><th>會員編號</th><th>LINE UID</th><th>Email</th><th>角色</th><th>備註</th><th>操作</th></tr></thead><tbody id="whitelist-body">${bodyRows}</tbody></table></div><div class="panel-actions"><button class="btn" data-import-association-whitelist>從協會名冊同步</button><button class="btn" data-add-whitelist-row>新增白名單</button><button class="btn" data-import-legacy-access>從舊允許名單帶入</button><button class="btn" data-check-whitelist>檢查目前身份</button><button class="btn primary" data-save-whitelist>儲存白名單</button></div></section><section class="panel"><div class="panel-head"><div><h2 class="panel-title">協會名冊自動授權</h2><div class="muted">這裡直接從協會名冊讀取，名冊勾選「允許」後即納入後台與核銷授權判斷。</div></div><span class="badge live">${rosterRows.length} 筆</span></div><div class="table-wrap"><table><thead><tr><th>名稱</th><th>會員編號</th><th>LINE UID</th><th>Email</th><th>來源</th></tr></thead><tbody>${rosterBody}</tbody></table></div></section>`;
+  }
+
+  function whitelistRowClean(row = {}) {
+    const id = row.id || uid();
+    return `<tr data-whitelist-row data-id="${esc(id)}"><td><input type="checkbox" name="enabled" ${row.enabled === false ? "" : "checked"}></td><td><input name="label" value="${esc(row.label || "")}" placeholder="名稱"></td><td><input name="memberNo" value="${esc(row.memberNo || "")}" placeholder="Z1160215"></td><td><input name="lineUserId" value="${esc(row.lineUserId || "")}" placeholder="U..."></td><td><input name="email" value="${esc(row.email || "")}" placeholder="name@example.com"></td><td><select name="role"><option value="admin" ${(row.role || "admin") === "admin" ? "selected" : ""}>管理員</option><option value="checkin" ${row.role === "checkin" ? "selected" : ""}>核銷</option><option value="editor" ${row.role === "editor" ? "selected" : ""}>編輯</option></select></td><td><input name="note" value="${esc(row.note || "")}"></td><td><button class="link danger-link" data-remove-whitelist-row>刪除</button></td></tr>`;
   }
 
   function creator() {
@@ -1187,6 +1220,20 @@
     document.querySelectorAll("[data-load-whitelist]").forEach(b => b.onclick = async () => { b.disabled = true; await loadAdminWhitelist(true); b.disabled = false; render(); });
     document.querySelectorAll("[data-add-whitelist-row]").forEach(b => b.onclick = () => { state.adminWhitelist = [...(state.adminWhitelist || []), { id: uid(), enabled: true, role: "admin" }]; render(); });
     document.querySelectorAll("[data-remove-whitelist-row]").forEach(b => b.onclick = () => { const row = b.closest("[data-whitelist-row]"); if (row) row.remove(); });
+    document.querySelectorAll("[data-import-association-whitelist]").forEach(b => b.onclick = async () => {
+      await loadAdminWhitelist(true);
+      const imported = associationRosterToWhitelistRows();
+      const current = state.adminWhitelist || [];
+      const keyOf = (row) => [row.memberNo, row.lineUserId, row.email].filter(Boolean).join("|").toLowerCase();
+      const exists = new Set(current.map(keyOf).filter(Boolean));
+      const fresh = imported.filter(row => {
+        const key = keyOf(row);
+        return key && !exists.has(key);
+      });
+      state.adminWhitelist = [...current, ...fresh];
+      render();
+      toast(`已從協會名冊帶入 ${fresh.length} 筆，請確認後儲存白名單`);
+    });
     document.querySelectorAll("[data-import-legacy-access]").forEach(b => b.onclick = async () => {
       await loadAdminWhitelist(true);
       const imported = legacyAccessToWhitelistRows();
