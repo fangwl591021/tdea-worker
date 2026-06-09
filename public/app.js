@@ -16,6 +16,8 @@
     redeem: ["點數折抵", "建立限時店家掃碼工作台，店家掃會員 QR 後執行扣點。"]
   };
   const state = { view: "dashboard", drawer: "", data: load(), registrationLists: {}, memberRegistrationLists: {}, memberApplications: null };
+  let managerDataSaveTimer = null;
+  let managerDataLoading = false;
   let lineDraftAutoImporting = false;
   let lineDraftLastAutoImport = 0;
   let rosterCleanupApplied = false;
@@ -69,7 +71,55 @@
     if (!url) return `<span class="muted">無</span>`;
     return `<a class="link" href="${esc(url)}" target="_blank" rel="noopener noreferrer">${esc(url)}</a>`;
   }
-  function save() { localStorage.setItem(key, JSON.stringify(state.data)); }
+  function save() {
+    localStorage.setItem(key, JSON.stringify(state.data));
+    queueManagerDataSave();
+  }
+  function managerDataHasContent(data) {
+    return Boolean(data && (
+      (Array.isArray(data.activities) && data.activities.length) ||
+      (Array.isArray(data.association) && data.association.length) ||
+      (Array.isArray(data.vendor) && data.vendor.length) ||
+      data.monthlyActivity ||
+      data.formSettings
+    ));
+  }
+  function queueManagerDataSave() {
+    if (managerDataLoading) return;
+    clearTimeout(managerDataSaveTimer);
+    managerDataSaveTimer = setTimeout(saveManagerDataRemote, 700);
+  }
+  async function saveManagerDataRemote() {
+    const email = localStorage.getItem("tdea-admin-email") || sessionStorage.getItem("tdea-admin-email") || "";
+    if (!email) return;
+    try {
+      await fetch(api + "/api/manager-data", {
+        method: "PUT",
+        headers: adminHeaders({ "content-type": "application/json" }),
+        body: JSON.stringify(state.data),
+        keepalive: true
+      });
+    } catch (_) {}
+  }
+  async function loadManagerDataRemote() {
+    if (managerDataLoading) return;
+    managerDataLoading = true;
+    try {
+      const response = await fetch(api + "/api/manager-data", { cache: "no-store" });
+      const result = await response.json().catch(() => ({}));
+      if (result.success && managerDataHasContent(result.data)) {
+        state.data = { ...load(), ...result.data };
+        localStorage.setItem(key, JSON.stringify(state.data));
+        render();
+      } else if (managerDataHasContent(state.data)) {
+        managerDataLoading = false;
+        queueManagerDataSave();
+      }
+    } catch (_) {
+    } finally {
+      managerDataLoading = false;
+    }
+  }
   function isDefinitelyNonRosterRow(row, type) {
     const memberNo = String(row?.memberNo || "").trim().toUpperCase();
     const name = String(row?.name || row?.companyName || row?.keyword || row?.title || "").trim().toUpperCase();
@@ -1159,6 +1209,7 @@
     }
   };
   render();
+  loadManagerDataRemote();
   setTimeout(() => {
     cleanupRosterData();
     if (state.view === "association" || state.view === "vendor") render();

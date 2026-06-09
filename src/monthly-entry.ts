@@ -38,6 +38,7 @@ type MemberOnboardingSession = { lineUserId: string; step: "askMember" | "member
 type MemberApplication = { id: string; lineUserId: string; status: "pending" | "handled"; source: "line"; name?: string; phone?: string; triggerText?: string; createdAt: string; updatedAt?: string };
 
 const monthlyKey = "flex/monthly-activity.json";
+const managerDataKey = "manager/state.json";
 const vendorCardKey = "flex/vendor-card-menu.json";
 const marqueeKey = "line/marquee.json";
 const registrationSummaryKey = "registrations/summary.json";
@@ -213,6 +214,25 @@ async function writeMonthly(env: Env, config: MonthlyConfig) {
   const normalized = normalizeConfig(config);
   normalized.updatedAt = new Date().toISOString();
   await env.ASSETS_BUCKET.put(monthlyKey, JSON.stringify(normalized, null, 2), { httpMetadata: { contentType: "application/json; charset=utf-8", cacheControl: "no-store" } });
+  return true;
+}
+
+async function readManagerData(env: Env) {
+  const object = env.ASSETS_BUCKET ? await env.ASSETS_BUCKET.get(managerDataKey) : null;
+  if (!object) return null;
+  const data = await object.json().catch(() => null) as Record<string, unknown> | null;
+  return data && typeof data === "object" ? data : null;
+}
+
+async function writeManagerData(env: Env, input: Record<string, unknown>) {
+  if (!env.ASSETS_BUCKET) return false;
+  const data = {
+    ...input,
+    updatedAt: new Date().toISOString()
+  };
+  await env.ASSETS_BUCKET.put(managerDataKey, JSON.stringify(data, null, 2), {
+    httpMetadata: { contentType: "application/json; charset=utf-8", cacheControl: "no-store" }
+  });
   return true;
 }
 
@@ -4411,6 +4431,8 @@ export default {
 	    if (request.method === "GET" && url.pathname === "/api/monthly-activity") return json({ success: true, data: await readMonthly(env) });
 	    if ((request.method === "PUT" || request.method === "POST") && url.pathname === "/api/monthly-activity") { const guard = await requireAdmin(request, env); if (guard) return guard; if (!env.ASSETS_BUCKET) return json({ success: false, message: "R2 bucket is not configured" }, 503); const config = await request.json().catch(() => ({})) as MonthlyConfig; await writeMonthly(env, config); return json({ success: true, data: await readMonthly(env), flex: buildMonthlyFlex(config) }); }
 	    if (request.method === "GET" && url.pathname === "/api/monthly-activity/flex") { const config = await readMonthly(env); return json({ success: true, flex: buildMonthlyFlex(config), data: config }); }
+	    if (request.method === "GET" && url.pathname === "/api/manager-data") return json({ success: true, data: await readManagerData(env) });
+	    if ((request.method === "PUT" || request.method === "POST") && url.pathname === "/api/manager-data") { const guard = await requireAdmin(request, env); if (guard) return guard; if (!env.ASSETS_BUCKET) return json({ success: false, message: "R2 bucket is not configured" }, 503); const data = await request.json().catch(() => ({})) as Record<string, unknown>; await writeManagerData(env, data); return json({ success: true, data: await readManagerData(env) }); }
 	    if (request.method === "GET" && url.pathname === "/api/vendor-card-menu") return json({ success: true, data: await readVendorCardConfig(env) });
 	    if ((request.method === "PUT" || request.method === "POST") && url.pathname === "/api/vendor-card-menu") { const guard = await requireAdmin(request, env); if (guard) return guard; if (!env.ASSETS_BUCKET) return json({ success: false, message: "R2 bucket is not configured" }, 503); const config = await request.json().catch(() => ({})) as VendorCardConfig; await writeVendorCardConfig(env, config); return json({ success: true, data: await readVendorCardConfig(env), flex: buildVendorCardFlex(config) }); }
 	    if (request.method === "GET" && url.pathname === "/api/vendor-card-menu/flex") { const config = await readVendorCardConfig(env); return json({ success: true, flex: buildVendorCardFlex(config), data: config }); }
