@@ -4,6 +4,7 @@
   const key = "tdea-manager-v3";
   const api = "https://tdeawork.fangwl591021.workers.dev";
   const liffBase = "https://liff.line.me/2005868456-2jmxqyFU";
+  const nativeLiffBase = "https://liff.line.me/2005868456-cfANNVou";
   const autoSyncKey = "tdea-auto-sync-registrations";
   const sidebarCollapsedKey = "tdea-sidebar-collapsed";
   const labels = {
@@ -12,9 +13,12 @@
     vendor: ["廠商名冊", "維護廠商會員、統編、窗口與備註，可匯入 CSV。"],
     creator: ["創建活動", "建立活動草稿，之後可直接改接 D1。"],
     keywords: ["關鍵字", "整理 LINE OA 觸發關鍵字、用途與回覆行為。"],
+    adminWhitelist: ["白名單", "管理後台、核銷與 LINE 工具使用權限。"],
     redeem: ["點數折抵", "建立限時店家掃碼工作台，店家掃會員 QR 後執行扣點。"]
   };
-  const state = { view: "dashboard", drawer: "", data: load(), registrationLists: {}, memberApplications: null };
+  const state = { view: "dashboard", drawer: "", data: load(), registrationLists: {}, memberRegistrationLists: {}, memberApplications: null, adminWhitelist: null, adminWhitelistMeta: null };
+  let managerDataSaveTimer = null;
+  let managerDataLoading = false;
   let lineDraftAutoImporting = false;
   let lineDraftLastAutoImport = 0;
   let rosterCleanupApplied = false;
@@ -68,7 +72,138 @@
     if (!url) return `<span class="muted">無</span>`;
     return `<a class="link" href="${esc(url)}" target="_blank" rel="noopener noreferrer">${esc(url)}</a>`;
   }
-  function save() { localStorage.setItem(key, JSON.stringify(state.data)); }
+  function save() {
+    localStorage.setItem(key, JSON.stringify(state.data));
+    queueManagerDataSave();
+  }
+  function managerDataHasContent(data) {
+    const formSettings = data?.formSettings;
+    const hasFormSettings = formSettings && typeof formSettings === "object" && !Array.isArray(formSettings) && Object.keys(formSettings).length > 0;
+    return Boolean(data && (
+      (Array.isArray(data.activities) && data.activities.length) ||
+      (Array.isArray(data.association) && data.association.length) ||
+      (Array.isArray(data.vendor) && data.vendor.length) ||
+      data.monthlyActivity ||
+      hasFormSettings
+    ));
+  }
+  function storedValue(...keys) {
+    for (const key of keys) {
+      const value = localStorage.getItem(key) || sessionStorage.getItem(key) || "";
+      if (String(value).trim()) return String(value).trim();
+    }
+    return "";
+  }
+  function firstParam(params, names) {
+    for (const name of names) {
+      const value = params.get(name);
+      if (String(value || "").trim()) return String(value).trim();
+    }
+    return "";
+  }
+  function rememberAdminIdentityFromUrl() {
+    const searchSets = [new URLSearchParams(location.search)];
+    const liffState = searchSets[0].get("liff.state");
+    if (liffState) {
+      try { searchSets.push(new URLSearchParams(decodeURIComponent(liffState).replace(/^\?/, ""))); } catch (_) {}
+    }
+    for (const params of searchSets) {
+      const email = firstParam(params, ["adminEmail", "email"]);
+      const memberNo = firstParam(params, ["adminMemberNo", "memberNo", "rosterMemberNo"]);
+      const lineUserId = firstParam(params, ["adminLineUserId", "lineUserId", "lineUid", "uid"]);
+      if (email) sessionStorage.setItem("tdea-admin-email", email.toLowerCase());
+      if (memberNo) sessionStorage.setItem("tdea-admin-member-no", memberNo.toUpperCase());
+      if (lineUserId) sessionStorage.setItem("tdea-admin-line-user-id", lineUserId);
+    }
+  }
+  rememberAdminIdentityFromUrl();
+  function adminIdentity() {
+    return {
+      email: storedValue("tdea-admin-email").toLowerCase(),
+      memberNo: storedValue("tdea-admin-member-no", "tdea-member-no").toUpperCase(),
+      lineUserId: storedValue("tdea-admin-line-user-id", "tdea-line-user-id", "lineUserId")
+    };
+  }
+  function hasAdminIdentity() {
+    const identity = adminIdentity();
+    return Boolean(identity.email || identity.memberNo || identity.lineUserId);
+  }
+  function loginAccessEnabled(value) {
+    if (value === true) return true;
+    const text = String(value ?? "").trim().toLowerCase();
+    return ["1", "true", "y", "yes", "allow", "allowed", "允許", "啟用"].includes(text);
+  }
+  function memberLoginAllowed(row) {
+    return [
+      row?.loginAccess,
+      row?.loginAllowed,
+      row?.allowLogin,
+      row?.canLogin,
+      row?.adminAccess,
+      row?.["登入權限"]
+    ].some(loginAccessEnabled);
+  }
+  function rosterMatchKey(row) {
+    return String(row?.memberNo || row?.rosterMemberNo || "").trim().toUpperCase();
+  }
+  function mergeRosterRows(localRows = [], remoteRows = []) {
+    if (!Array.isArray(remoteRows)) return Array.isArray(localRows) ? localRows : [];
+    const localByNo = new Map((Array.isArray(localRows) ? localRows : [])
+      .map((row) => [rosterMatchKey(row), row])
+      .filter(([key]) => key));
+    return remoteRows.map((remoteRow) => {
+      const localRow = localByNo.get(rosterMatchKey(remoteRow));
+      const loginAccess = memberLoginAllowed(remoteRow) || memberLoginAllowed(localRow);
+      return {
+        ...(localRow || {}),
+        ...remoteRow,
+        lineUserId: memberLineUid(remoteRow) || memberLineUid(localRow),
+        loginAccess,
+        allowLogin: loginAccess,
+        canLogin: loginAccess
+      };
+    });
+  }
+  function mergeManagerData(localData, remoteData) {
+    const merged = { ...localData, ...remoteData };
+    merged.association = mergeRosterRows(localData?.association, remoteData?.association);
+    merged.vendor = mergeRosterRows(localData?.vendor, remoteData?.vendor);
+    return merged;
+  }
+  function queueManagerDataSave() {
+    if (managerDataLoading) return;
+    clearTimeout(managerDataSaveTimer);
+    managerDataSaveTimer = setTimeout(saveManagerDataRemote, 700);
+  }
+  async function saveManagerDataRemote() {
+    if (!hasAdminIdentity()) return;
+    if (!managerDataHasContent(state.data)) return;
+    try {
+      await fetch(api + "/api/manager-data", {
+        method: "PUT",
+        headers: adminHeaders({ "content-type": "application/json" }),
+        body: JSON.stringify(state.data),
+        keepalive: true
+      });
+    } catch (_) {}
+  }
+  async function loadManagerDataRemote() {
+    if (managerDataLoading) return;
+    managerDataLoading = true;
+    try {
+      const response = await fetch(api + "/api/manager-data", { cache: "no-store" });
+      const result = await response.json().catch(() => ({}));
+      if (result.success && managerDataHasContent(result.data)) {
+        state.data = mergeManagerData(load(), result.data);
+        localStorage.setItem(key, JSON.stringify(state.data));
+        await loadAdminAccessIntoRoster();
+        render();
+      }
+    } catch (_) {
+    } finally {
+      managerDataLoading = false;
+    }
+  }
   function isDefinitelyNonRosterRow(row, type) {
     const memberNo = String(row?.memberNo || "").trim().toUpperCase();
     const name = String(row?.name || row?.companyName || row?.keyword || row?.title || "").trim().toUpperCase();
@@ -99,8 +234,56 @@
     if (changed) save();
   }
   function adminHeaders(extra = {}) {
-    const email = localStorage.getItem("tdea-admin-email") || sessionStorage.getItem("tdea-admin-email") || "";
-    return { ...extra, ...(email ? { "x-admin-email": email } : {}) };
+    const identity = adminIdentity();
+    return {
+      ...extra,
+      ...(identity.email ? { "x-admin-email": identity.email } : {}),
+      ...(identity.memberNo ? { "x-admin-member-no": identity.memberNo } : {}),
+      ...(identity.lineUserId ? { "x-line-user-id": identity.lineUserId } : {})
+    };
+  }
+  async function loadAdminAccessIntoRoster() {
+    if (!hasAdminIdentity()) return;
+    try {
+      const response = await fetch(api + "/api/admin-access", { headers: adminHeaders(), cache: "no-store" });
+      const result = await response.json().catch(() => ({}));
+      const records = result?.data && typeof result.data === "object" ? result.data : {};
+      let changed = false;
+      ["association", "vendor"].forEach((type) => {
+        (state.data[type] || []).forEach((row) => {
+          const memberNo = rosterMatchKey(row);
+          const access = records[memberNo];
+          if (!access) return;
+          const enabled = access.loginAccess === true;
+          if (row.loginAccess !== enabled || row.allowLogin !== enabled || row.canLogin !== enabled || (access.lineUserId && !memberLineUid(row))) {
+            row.loginAccess = enabled;
+            row.allowLogin = enabled;
+            row.canLogin = enabled;
+            if (access.lineUserId && !memberLineUid(row)) row.lineUserId = access.lineUserId;
+            changed = true;
+          }
+        });
+      });
+      if (changed) localStorage.setItem(key, JSON.stringify(state.data));
+    } catch (_) {}
+  }
+  async function syncAdminAccessForMember(type, item) {
+    if (!item || (type !== "association" && type !== "vendor")) return;
+    const memberNo = rosterMatchKey(item);
+    if (!memberNo) return;
+    try {
+      await fetch(api + "/api/admin-access", {
+        method: "PUT",
+        headers: adminHeaders({ "content-type": "application/json" }),
+        body: JSON.stringify({
+          memberNo,
+          name: item.name || item.companyName || "",
+          email: item.email || "",
+          lineUserId: memberLineUid(item),
+          loginAccess: memberLoginAllowed(item)
+        })
+      });
+    } catch (_) {}
   }
   async function loadMemberApplications(force = false) {
     if (state.memberApplications && !force) return state.memberApplications;
@@ -113,6 +296,78 @@
     }
     render();
     return state.memberApplications;
+  }
+
+  async function loadAdminWhitelist(force = false) {
+    if (state.adminWhitelist && !force) return state.adminWhitelist;
+    try {
+      const r = await fetch(api + "/api/admin-whitelist", { headers: adminHeaders(), cache: "no-store" });
+      const j = await r.json();
+      if (!j.success) throw new Error(j.message || "load failed");
+      state.adminWhitelist = Array.isArray(j.data) ? j.data : [];
+      state.adminWhitelistMeta = j;
+    } catch (err) {
+      state.adminWhitelist = [];
+      state.adminWhitelistMeta = { error: err?.message || "白名單讀取失敗" };
+    }
+    return state.adminWhitelist;
+  }
+
+  function legacyAccessToWhitelistRows() {
+    const legacy = state.adminWhitelistMeta?.legacyAccess || {};
+    return Object.values(legacy).filter(row => row && row.loginAccess === true).map(row => ({
+      id: row.memberNo || uid(),
+      enabled: true,
+      label: row.name || row.memberNo || row.email || row.lineUserId || "",
+      memberNo: row.memberNo || "",
+      email: row.email || "",
+      lineUserId: row.lineUserId || "",
+      role: "admin",
+      note: "由舊允許名單帶入"
+    }));
+  }
+
+  function associationRosterToWhitelistRows() {
+    return visibleRosterRows("association")
+      .filter(row => memberLoginAllowed(row))
+      .map(row => ({
+        id: rosterMatchKey(row) || memberLineUid(row) || uid(),
+        enabled: true,
+        label: row.name || row.rosterName || row.memberName || row.memberNo || "",
+        memberNo: row.memberNo || row.rosterMemberNo || "",
+        email: row.email || "",
+        lineUserId: memberLineUid(row),
+        role: "admin",
+        note: "from association roster"
+      }))
+      .filter(row => row.label || row.memberNo || row.lineUserId || row.email);
+  }
+
+  function whitelistRowsFromForm() {
+    return Array.from(document.querySelectorAll("[data-whitelist-row]")).map(row => ({
+      id: row.dataset.id || uid(),
+      enabled: row.querySelector("[name='enabled']")?.checked !== false,
+      label: row.querySelector("[name='label']")?.value.trim() || "",
+      memberNo: row.querySelector("[name='memberNo']")?.value.trim() || "",
+      lineUserId: row.querySelector("[name='lineUserId']")?.value.trim() || "",
+      email: row.querySelector("[name='email']")?.value.trim() || "",
+      role: row.querySelector("[name='role']")?.value.trim() || "admin",
+      note: row.querySelector("[name='note']")?.value.trim() || ""
+    })).filter(row => row.label || row.memberNo || row.lineUserId || row.email);
+  }
+
+  async function saveAdminWhitelist() {
+    const rows = whitelistRowsFromForm();
+    const r = await fetch(api + "/api/admin-whitelist", {
+      method: "PUT",
+      headers: adminHeaders({ "Content-Type": "application/json" }),
+      body: JSON.stringify({ records: rows })
+    });
+    const j = await r.json();
+    if (!j.success) throw new Error(j.message || "白名單儲存失敗");
+    state.adminWhitelist = Array.isArray(j.data) ? j.data : rows;
+    state.adminWhitelistMeta = { ...(state.adminWhitelistMeta || {}), ...j };
+    return state.adminWhitelist;
   }
   async function syncRosterMemberToWorker(type, item) {
     if (!item || (type !== "association" && type !== "vendor")) return;
@@ -150,12 +405,11 @@
     state.data.deletedActivityKeys = [...keys].slice(-300);
   }
   async function deleteRemoteLineActivityDraft(activity) {
-    const email = localStorage.getItem("tdea-admin-email") || sessionStorage.getItem("tdea-admin-email") || "";
-    if (!email) return;
+    if (!hasAdminIdentity()) return;
     try {
       await fetch(api + "/api/line-activity-drafts/delete", {
         method: "POST",
-        headers: { "content-type": "application/json", "x-admin-email": email },
+        headers: adminHeaders({ "content-type": "application/json" }),
         body: JSON.stringify({
           id: activity?.id || "",
           lineDraftId: activity?.lineDraftId || "",
@@ -309,8 +563,7 @@
   }
 
   async function pullGoogleResponses(showMessage = false) {
-    const email = localStorage.getItem("tdea-admin-email") || sessionStorage.getItem("tdea-admin-email") || "";
-    if (!email) {
+    if (!hasAdminIdentity()) {
       if (showMessage) toast("缺少管理者 Email，無法向 GAS 拉取表單回覆");
       return;
     }
@@ -328,7 +581,7 @@
     if (!activities.length) return;
     const response = await fetch(api + "/api/google-forms/sync", {
       method: "POST",
-      headers: { "content-type": "application/json", "x-admin-email": email },
+      headers: adminHeaders({ "content-type": "application/json" }),
       body: JSON.stringify({ activities })
     });
     const result = await response.json().catch(() => ({}));
@@ -337,8 +590,7 @@
   }
 
   async function pullRemoteResponses(showMessage = false) {
-    const email = localStorage.getItem("tdea-admin-email") || sessionStorage.getItem("tdea-admin-email") || "";
-    if (!email) {
+    if (!hasAdminIdentity()) {
       if (showMessage) toast("請先登入管理者，才能同步報名。");
       return;
     }
@@ -365,7 +617,7 @@
       attempted = true;
       const response = await fetch(api + "/api/opnform/sync", {
         method: "POST",
-        headers: { "content-type": "application/json", "x-admin-email": email },
+        headers: adminHeaders({ "content-type": "application/json" }),
         body: JSON.stringify({ activities: opnformActivities })
       });
       const result = await response.json().catch(() => ({}));
@@ -378,7 +630,7 @@
       attempted = true;
       const response = await fetch(api + "/api/google-forms/sync", {
         method: "POST",
-        headers: { "content-type": "application/json", "x-admin-email": email },
+        headers: adminHeaders({ "content-type": "application/json" }),
         body: JSON.stringify({ activities: googleActivities })
       });
       const result = await response.json().catch(() => ({}));
@@ -450,11 +702,11 @@
   }
 
   async function ensureNativeFormForActivity(activity, email) {
-    if (!email || activity.formUrl || activity.nativeFormUrl) return false;
+    if (!hasAdminIdentity() || activity.formUrl || activity.nativeFormUrl) return false;
     const settings = nativeFormSettingsFor(activity);
     const response = await fetch(`${api}/api/native-forms/create`, {
       method: "POST",
-      headers: { "content-type": "application/json", "x-admin-email": email },
+      headers: adminHeaders({ "content-type": "application/json" }),
       body: JSON.stringify({ activity, settings })
     });
     const result = await response.json().catch(() => ({}));
@@ -473,24 +725,23 @@
   }
 
   async function uploadActivityPoster(file, activityId, email) {
-    if (!file || !file.size || !email) return null;
+    if (!file || !file.size || !hasAdminIdentity()) return null;
     const form = new FormData();
     form.append("file", file);
     form.append("folder", `activities/${activityId || "poster"}`);
-    const response = await fetch(`${api}/api/uploads`, { method: "POST", headers: { "x-admin-email": email }, body: form });
+    const response = await fetch(`${api}/api/uploads`, { method: "POST", headers: adminHeaders(), body: form });
     const result = await response.json().catch(() => ({}));
     if (!response.ok || !result.success) throw new Error(result.message || "圖片上傳失敗");
     return { url: result.url?.startsWith("http") ? result.url : api + result.url, key: result.key || "" };
   }
 
   async function importLineActivityDrafts(showMessage = true) {
-    const email = localStorage.getItem("tdea-admin-email") || sessionStorage.getItem("tdea-admin-email") || "";
-    if (!email) {
+    if (!hasAdminIdentity()) {
       if (showMessage) toast("請先設定管理者 Email，才能匯入 LINE 活動草稿");
       return;
     }
     const response = await fetch(api + "/api/line-activity-drafts", {
-      headers: { "x-admin-email": email },
+      headers: adminHeaders(),
       cache: "no-store"
     });
     const result = await response.json().catch(() => ({}));
@@ -586,6 +837,7 @@
     if (state.view === "redeem" && !state.redeemRecords) loadRedeemRecords();
     if (state.view === "redeem" && !state.pointLedger) loadPointLedger();
     if (state.view === "dashboard" && state.memberApplications === null) loadMemberApplications();
+    if (state.view === "adminWhitelist" && !state.adminWhitelist) loadAdminWhitelist().then(() => render()).catch(() => undefined);
     window.TDEALineNav?.refresh?.();
   }
 
@@ -596,6 +848,7 @@
     if (state.view === "creator") return `<button class="btn" data-import-line-drafts>匯入 LINE 草稿</button><button class="btn" data-reset>清空表單</button>`;
     if (state.view === "redeem") return `<button class="btn" data-load-redeem>刷新紀錄</button>`;
     if (state.view === "keywords") return `<button class="btn" data-refresh-keywords>刷新列表</button>`;
+    if (state.view === "adminWhitelist") return `<button class="btn" data-load-whitelist>重新載入</button><button class="btn primary" data-save-whitelist>儲存白名單</button>`;
     return `<label class="sync-toggle"><input type="checkbox" data-auto-sync ${autoSyncEnabled() ? "checked" : ""}> 自動同步</label><button class="btn" data-sync-registrations>同步報名</button><button class="btn" data-worker>檢查 Worker</button><button class="btn danger" data-clear-test>清空測試資料</button><button class="btn primary" data-nav="creator">新增活動</button>`;
   }
   function body() {
@@ -604,6 +857,7 @@
     if (state.view === "creator") return creator();
     if (state.view === "redeem") return redeem();
     if (state.view === "keywords") return keywords();
+    if (state.view === "adminWhitelist") return adminWhitelistClean();
     return memberApplicationsPanel() + dashboard();
   }
 
@@ -629,7 +883,39 @@
   function members(type) {
     const rows = visibleRosterRows(type), vendor = type === "vendor";
     if (!rows.length) return `<section class="panel"><div class="panel-head"><h2 class="panel-title">${vendor ? "廠商會員" : "協會會員"}</h2><button class="btn" data-import="${type}">匯入 CSV</button></div>${empty(`目前沒有${vendor ? "廠商會員" : "協會會員"}資料`)}</section>`;
-    return `<section class="panel"><div class="panel-head"><h2 class="panel-title">${vendor ? "廠商會員" : "協會會員"}</h2><div class="actions"><button class="btn" data-import="${type}">匯入 CSV</button><button class="btn" data-export>匯出備份</button></div></div><div class="table-wrap"><table><thead><tr><th>會員編號</th><th>${vendor ? "公司名稱" : "姓名"}</th><th>${vendor ? "統編" : "身分"}</th><th>${vendor ? "聯絡窗口" : "性別"}</th><th>資格</th><th>備註</th><th>操作</th></tr></thead><tbody>${rows.map(x => `<tr><td>${esc(x.memberNo)}</td><td><strong>${esc(vendor ? x.companyName : x.name)}</strong></td><td>${esc(vendor ? x.taxId : x.identity)}</td><td>${esc(vendor ? x.contact : x.gender)}</td><td><span class="badge ${x.qualification === "Y" ? "live" : "off"}">${esc(x.qualification)}</span></td><td>${esc(x.note)}</td><td><button class="link" data-drawer="${type}:${x.id}">編輯</button><span class="muted"> / </span><button class="link danger-link" data-delete-member="${type}:${x.id}">刪除</button></td></tr>`).join("")}</tbody></table></div></section>`;
+    return `<section class="panel"><div class="panel-head"><h2 class="panel-title">${vendor ? "廠商會員" : "協會會員"}</h2><div class="actions"><button class="btn" data-import="${type}">匯入 CSV</button><button class="btn" data-export>匯出備份</button></div></div><div class="table-wrap"><table><thead><tr><th>會員編號</th><th>${vendor ? "公司名稱" : "姓名"}</th><th>LINE UID</th><th>點數</th><th>${vendor ? "統編" : "身分"}</th><th>${vendor ? "聯絡窗口" : "性別"}</th><th>資格</th><th>舊允許</th><th>備註</th><th>操作</th></tr></thead><tbody>${rows.map(x => `<tr><td>${esc(x.memberNo)}</td><td><strong>${esc(vendor ? x.companyName : x.name)}</strong></td><td>${esc(shortUid(memberLineUid(x)))}</td><td>${esc(x.pointBalance ?? x.points ?? "")}</td><td>${esc(vendor ? x.taxId : x.identity)}</td><td>${esc(vendor ? x.contact : x.gender)}</td><td><span class="badge ${x.qualification === "Y" ? "live" : "off"}">${esc(x.qualification)}</span></td><td><label class="sync-toggle"><input type="checkbox" data-member-login-toggle="${type}:${x.id}" ${memberLoginAllowed(x) ? "checked" : ""}> 舊資料</label></td><td>${esc(x.note)}</td><td><button class="link" data-drawer="${type}:${x.id}">編輯</button><span class="muted"> / </span><button class="link danger-link" data-delete-member="${type}:${x.id}">刪除</button></td></tr>`).join("")}</tbody></table></div></section>`;
+  }
+
+  function adminWhitelist() {
+    const rows = state.adminWhitelist || [];
+    const meta = state.adminWhitelistMeta || {};
+    const status = meta.whitelistActive ? `<span class="badge live">白名單已啟用</span>` : `<span class="badge off">尚未建立白名單，暫用舊允許名單</span>`;
+    const staticAdmins = Array.isArray(meta.staticAdmins) && meta.staticAdmins.length ? `<div class="muted">固定管理者 Email：${meta.staticAdmins.map(esc).join("、")}</div>` : "";
+    const error = meta.error ? `<div class="alert danger">${esc(meta.error)}</div>` : "";
+    const bodyRows = rows.length ? rows.map(whitelistRow).join("") : `<tr><td colspan="8">${empty("目前沒有白名單。可新增一筆，或從舊允許名單帶入。")}</td></tr>`;
+    return `<section class="panel"><div class="panel-head"><div><h2 class="panel-title">系統白名單</h2><div class="muted">此處是後台、核銷與 LINE 工具的正式授權來源；可從協會名冊中已勾選「允許」的會員同步產生。</div></div><div class="actions">${status}<button class="btn" data-load-whitelist>重新載入</button></div></div>${error}${staticAdmins}<div class="table-wrap"><table><thead><tr><th>啟用</th><th>名稱</th><th>會員編號</th><th>LINE UID</th><th>Email</th><th>角色</th><th>備註</th><th>操作</th></tr></thead><tbody id="whitelist-body">${bodyRows}</tbody></table></div><div class="panel-actions"><button class="btn" data-import-association-whitelist>從協會名冊同步</button><button class="btn" data-add-whitelist-row>新增白名單</button><button class="btn" data-import-legacy-access>從舊允許名單帶入</button><button class="btn" data-check-whitelist>檢查目前身份</button><button class="btn primary" data-save-whitelist>儲存白名單</button></div></section>`;
+  }
+
+  function whitelistRow(row = {}) {
+    const id = row.id || uid();
+    return `<tr data-whitelist-row data-id="${esc(id)}"><td><input type="checkbox" name="enabled" ${row.enabled === false ? "" : "checked"}></td><td><input name="label" value="${esc(row.label || "")}" placeholder="例：秘書"></td><td><input name="memberNo" value="${esc(row.memberNo || "")}" placeholder="Z1160215"></td><td><input name="lineUserId" value="${esc(row.lineUserId || "")}" placeholder="U..."></td><td><input name="email" value="${esc(row.email || "")}" placeholder="name@example.com"></td><td><select name="role"><option value="admin" ${(row.role || "admin") === "admin" ? "selected" : ""}>管理者</option><option value="checkin" ${row.role === "checkin" ? "selected" : ""}>核銷</option><option value="editor" ${row.role === "editor" ? "selected" : ""}>編輯</option></select></td><td><input name="note" value="${esc(row.note || "")}"></td><td><button class="link danger-link" data-remove-whitelist-row>刪除</button></td></tr>`;
+  }
+
+  function adminWhitelistClean() {
+    const rows = state.adminWhitelist || [];
+    const meta = state.adminWhitelistMeta || {};
+    const rosterRows = Array.isArray(meta.rosterWhitelist) ? meta.rosterWhitelist : [];
+    const status = meta.whitelistActive ? `<span class="badge live">白名單已啟用</span>` : `<span class="badge off">尚未建立白名單，暫用舊允許名單</span>`;
+    const staticAdmins = Array.isArray(meta.staticAdmins) && meta.staticAdmins.length ? `<div class="muted">環境變數 ADMIN_EMAILS 仍可進入：${meta.staticAdmins.map(esc).join("、")}</div>` : "";
+    const error = meta.error ? `<div class="alert danger">${esc(meta.error)}</div>` : "";
+    const bodyRows = rows.length ? rows.map(whitelistRowClean).join("") : `<tr><td colspan="8">${empty("目前沒有手動白名單。可新增一筆，或從協會名冊同步。")}</td></tr>`;
+    const rosterBody = rosterRows.length ? rosterRows.map(row => `<tr><td>${esc(row.label || "")}</td><td>${esc(row.memberNo || "")}</td><td>${esc(shortUid(row.lineUserId || ""))}</td><td>${esc(row.email || "")}</td><td>${esc(row.note || "from association roster")}</td></tr>`).join("") : `<tr><td colspan="5">${empty("協會名冊目前沒有勾選允許的授權者。")}</td></tr>`;
+    return `<section class="panel"><div class="panel-head"><div><h2 class="panel-title">系統白名單</h2><div class="muted">正式授權來源包含：下方手動白名單，以及協會名冊中已勾選「允許」的會員。</div></div><div class="actions">${status}<button class="btn" data-load-whitelist>重新載入</button></div></div>${error}${staticAdmins}<div class="table-wrap"><table><thead><tr><th>啟用</th><th>名稱</th><th>會員編號</th><th>LINE UID</th><th>Email</th><th>角色</th><th>備註</th><th>操作</th></tr></thead><tbody id="whitelist-body">${bodyRows}</tbody></table></div><div class="panel-actions"><button class="btn" data-import-association-whitelist>從協會名冊同步</button><button class="btn" data-add-whitelist-row>新增白名單</button><button class="btn" data-import-legacy-access>從舊允許名單帶入</button><button class="btn" data-check-whitelist>檢查目前身份</button><button class="btn primary" data-save-whitelist>儲存白名單</button></div></section><section class="panel"><div class="panel-head"><div><h2 class="panel-title">協會名冊自動授權</h2><div class="muted">這裡直接從協會名冊讀取，名冊勾選「允許」後即納入後台與核銷授權判斷。</div></div><span class="badge live">${rosterRows.length} 筆</span></div><div class="table-wrap"><table><thead><tr><th>名稱</th><th>會員編號</th><th>LINE UID</th><th>Email</th><th>來源</th></tr></thead><tbody>${rosterBody}</tbody></table></div></section>`;
+  }
+
+  function whitelistRowClean(row = {}) {
+    const id = row.id || uid();
+    return `<tr data-whitelist-row data-id="${esc(id)}"><td><input type="checkbox" name="enabled" ${row.enabled === false ? "" : "checked"}></td><td><input name="label" value="${esc(row.label || "")}" placeholder="名稱"></td><td><input name="memberNo" value="${esc(row.memberNo || "")}" placeholder="Z1160215"></td><td><input name="lineUserId" value="${esc(row.lineUserId || "")}" placeholder="U..."></td><td><input name="email" value="${esc(row.email || "")}" placeholder="name@example.com"></td><td><select name="role"><option value="admin" ${(row.role || "admin") === "admin" ? "selected" : ""}>管理員</option><option value="checkin" ${row.role === "checkin" ? "selected" : ""}>核銷</option><option value="editor" ${row.role === "editor" ? "selected" : ""}>編輯</option></select></td><td><input name="note" value="${esc(row.note || "")}"></td><td><button class="link danger-link" data-remove-whitelist-row>刪除</button></td></tr>`;
   }
 
   function creator() {
@@ -653,9 +939,9 @@
       { keyword: "TDEA建立活動", aliases: "TDEA新增活動、TDEA活動上稿、TDEA製作活動", purpose: "在 LINE 對話中建立活動草稿", reply: "逐步詢問活動名稱、類型、時間、截止、名額、點數、報名方式與狀態；完成後可在後台匯入 LINE 草稿", entry: "", owner: "LINE 對話上稿", status: "啟用中" },
       { keyword: "TDEA每月活動", aliases: "無", purpose: "推送每月活動橫式多頁 FLEX", reply: "回覆每月活動 carousel，詳細說明走 LIFF，報名按鈕走自建報名表", entry: `${liffBase}?monthlyDetail={活動編號}`, owner: "每月活動", status: "啟用中" },
       { keyword: "TDEA廠商列表", aliases: "TDEA廠商名片、TDEA合作廠商", purpose: "推送可點擊的廠商名片 FLEX 選單", reply: "回覆廠商 logo 九宮格；點擊後送出對應廠商名稱", entry: "", owner: "廠商名片", status: "啟用中" },
-      { keyword: "TDEA活動查詢", aliases: "無", purpose: "讓會員查詢或取消自己的活動報名", reply: "開啟 LIFF「我的活動報名」，以 LINE Login 查詢", entry: `${liffBase}?query=1`, owner: "報名系統", status: "啟用中" },
-      { keyword: "TDEA會員QR", aliases: "無", purpose: "會員開啟自己的扣點 QR，給合作店家掃描", reply: "開啟 LIFF「會員 QR」頁面", entry: `${liffBase}?memberQr=1`, owner: "點數折抵", status: "啟用中" },
-      { keyword: "TDEA行事曆", aliases: "TDEA日曆、TDEA年度活動", purpose: "開啟協會 Google 行事曆", reply: "開啟 LIFF 行事曆頁面，嵌入 TDEA Google Calendar", entry: `${liffBase}?calendar=1`, owner: "行事曆", status: "啟用中" },
+      { keyword: "TDEA活動查詢", aliases: "無", purpose: "讓會員查詢或取消自己的活動報名", reply: "開啟 LIFF「我的活動報名」，以 LINE Login 查詢", entry: `${nativeLiffBase}?query=1`, owner: "報名系統", status: "啟用中" },
+      { keyword: "TDEA會員QR", aliases: "無", purpose: "會員開啟自己的扣點 QR，給合作店家掃描", reply: "開啟 LIFF「會員 QR」頁面", entry: `${nativeLiffBase}?memberQr=1`, owner: "點數折抵", status: "啟用中" },
+      { keyword: "TDEA行事曆", aliases: "TDEA日曆、TDEA年度活動", purpose: "開啟協會 Google 行事曆", reply: "開啟 LIFF 行事曆頁面，嵌入 TDEA Google Calendar", entry: `${nativeLiffBase}?calendar=1`, owner: "行事曆", status: "啟用中" },
       { keyword: "TDEA點數", aliases: "TDEA查點、TDEA點數查詢、TDEA紅利", purpose: "查詢發話者自己的母站點數", reply: "以 LINE userId 查母站點數 API，回覆餘額與最近紀錄", entry: "", owner: "母站點數", status: "啟用中" },
       { keyword: "TDEA點數+UID", aliases: "例：TDEA點數+Ub68b9724664b889e790c789ece72f717", purpose: "管理測試或客服查指定 LINE UID 點數", reply: "以指定 UID 查母站點數 API", entry: "", owner: "母站點數", status: "啟用中" },
       { keyword: "TDEA會員專區", aliases: "TDEA會員、TDEA會員中心、TDEA專區", purpose: "顯示會員入口選單", reply: "回覆會員專區 FLEX，含活動與點數入口", entry: liffBase, owner: "內建關鍵字", status: "啟用中" },
@@ -704,8 +990,38 @@
     const rows = state.registrationLists[rowId];
     if (!rows) return `<section class="panel"><div class="panel-head"><h2 class="panel-title">${esc(activity.name || "活動")} 報名名單</h2><button class="btn" data-refresh-registration-list="${esc(rowId)}">重新載入</button></div>${empty("正在載入報名名單...")}</section>`;
     if (!rows.length) return `<section class="panel"><div class="panel-head"><h2 class="panel-title">${esc(activity.name || "活動")} 報名名單</h2><button class="btn" data-refresh-registration-list="${esc(rowId)}">重新載入</button></div>${empty("目前 Worker 沒有收到這個活動的報名資料")}</section>`;
-    const headers = [...new Set(rows.flatMap(row => Object.keys(row.answers || {})))];
-    return `<section class="panel"><div class="panel-head"><h2 class="panel-title">${esc(activity.name || "活動")} 報名名單</h2><button class="btn" data-refresh-registration-list="${esc(rowId)}">重新載入</button></div><div class="table-wrap"><table><thead><tr><th>送出時間</th>${headers.map(h => `<th>${esc(h)}</th>`).join("")}</tr></thead><tbody>${rows.map(row => `<tr><td>${esc(formatTime(row.submittedAt))}</td>${headers.map(h => `<td>${esc(valueText(row.answers?.[h]))}</td>`).join("")}</tr>`).join("")}</tbody></table></div></section>`;
+    const systemFields = new Set(["LINE_user_id", "lineUserId", "line_user_id", "uid", "UID", "memberName", "registrationSource"]);
+    const baseFields = [
+      ["送出時間", row => formatTime(row.submittedAt)],
+      ["姓名", row => answerPick(row.answers, ["name", "姓名", "memberName", "memberName"])],
+      ["會員編號", row => answerPick(row.answers, ["memberNo", "會員編號"])],
+      ["電話", row => answerPick(row.answers, ["phone", "mobile", "手機", "電話"])],
+      ["Email", row => cleanFakeEmail(answerPick(row.answers, ["email", "Email", "電子郵件"]))],
+      ["會員類型", row => answerPick(row.answers, ["memberType", "isMember", "是否為會員"])],
+      ["來源", row => sourceLabel(answerPick(row.answers, ["registrationSource"]))],
+      ["簽到狀態", row => row.checkinStatusText || (row.checkedInAt ? "已完成簽到" : "尚未簽到")],
+      ["簽到時間", row => row.checkedInAt ? formatTime(row.checkedInAt) : ""]
+    ];
+    const customHeaders = [...new Set(rows.flatMap(row => Object.keys(row.answers || {})))]
+      .filter(key => !systemFields.has(key) && !baseFields.some(([label]) => label === key) && !["name", "姓名", "memberNo", "會員編號", "phone", "mobile", "手機", "電話", "email", "Email", "電子郵件", "memberType", "isMember", "是否為會員"].includes(key));
+    return `<section class="panel"><div class="panel-head"><h2 class="panel-title">${esc(activity.name || "活動")} 報名名單</h2><button class="btn" data-refresh-registration-list="${esc(rowId)}">重新載入</button></div><div class="table-wrap"><table><thead><tr>${baseFields.map(([label]) => `<th>${esc(label)}</th>`).join("")}${customHeaders.map(h => `<th>${esc(h)}</th>`).join("")}</tr></thead><tbody>${rows.map(row => `<tr>${baseFields.map(([, getter]) => `<td>${esc(getter(row))}</td>`).join("")}${customHeaders.map(h => `<td>${esc(valueText(row.answers?.[h]))}</td>`).join("")}</tr>`).join("")}</tbody></table></div></section>`;
+  }
+  function answerPick(answers, keys) {
+    const source = answers || {};
+    for (const key of keys) {
+      const value = valueText(source[key]);
+      if (value) return value;
+    }
+    return "";
+  }
+  function cleanFakeEmail(value) {
+    const text = String(value || "").trim();
+    return /^U[a-f0-9]{32}@aiwe\.cc$/i.test(text) ? "" : text;
+  }
+  function sourceLabel(value) {
+    if (value === "line_login" || value === "line_member_claim") return "LINE 登入";
+    if (value === "form") return "填表";
+    return value || "";
   }
   function valueText(value) {
     if (Array.isArray(value)) return value.map(valueText).filter(Boolean).join("、");
@@ -737,7 +1053,7 @@
   }
   function memberForm(type, rowId) {
     const x = state.data[type].find(r => r.id === rowId) || {}, vendor = type === "vendor";
-    return `<form class="form-grid" id="drawer-member" data-type="${type}">${hidden("id", x.id)}${field("會員編號", "memberNo", x.memberNo)}${vendor ? `${field("公司名稱", "companyName", x.companyName)}${field("統一編號", "taxId", x.taxId)}${field("負責人", "owner", x.owner)}${field("聯絡窗口", "contact", x.contact)}` : `${field("身分", "identity", x.identity)}${field("姓名", "name", x.name)}${select("性別", "gender", ["", "男", "女"], x.gender)}`}${select("會員資格", "qualification", ["Y", "N"], x.qualification || "Y")}<div class="field"><label>備註</label><textarea name="note">${esc(x.note)}</textarea></div><button class="btn primary" type="submit">儲存</button></form>`;
+    return `<form class="form-grid" id="drawer-member" data-type="${type}">${hidden("id", x.id)}${field("會員編號", "memberNo", x.memberNo)}${field("LINE UID", "lineUserId", memberLineUid(x), "例如：Ub68b9724664b889e790c789ece72f717")}${vendor ? `${field("公司名稱", "companyName", x.companyName)}${field("統一編號", "taxId", x.taxId)}${field("負責人", "owner", x.owner)}${field("聯絡窗口", "contact", x.contact)}` : `${field("身分", "identity", x.identity)}${field("姓名", "name", x.name)}${select("性別", "gender", ["", "男", "女"], x.gender)}`}${select("會員資格", "qualification", ["Y", "N"], x.qualification || "Y")}<label class="sync-toggle"><input type="checkbox" name="loginAccess" value="Y" ${memberLoginAllowed(x) ? "checked" : ""}> 舊允許資料（正式權限請到 LINE 專區 / 白名單設定）</label><div class="field"><label>備註</label><textarea name="note">${esc(x.note)}</textarea></div><button class="btn primary" type="submit">儲存</button></form>`;
   }
   function importForm(type) {
     const vendor = type === "vendor";
@@ -901,12 +1217,66 @@
       applySidebarCollapsed(next);
     };
     document.querySelectorAll("[data-nav]").forEach(b => b.onclick = () => { state.view = b.dataset.nav; state.drawer = ""; render(); });
+    document.querySelectorAll("[data-load-whitelist]").forEach(b => b.onclick = async () => { b.disabled = true; await loadAdminWhitelist(true); b.disabled = false; render(); });
+    document.querySelectorAll("[data-add-whitelist-row]").forEach(b => b.onclick = () => { state.adminWhitelist = [...(state.adminWhitelist || []), { id: uid(), enabled: true, role: "admin" }]; render(); });
+    document.querySelectorAll("[data-remove-whitelist-row]").forEach(b => b.onclick = () => { const row = b.closest("[data-whitelist-row]"); if (row) row.remove(); });
+    document.querySelectorAll("[data-import-association-whitelist]").forEach(b => b.onclick = async () => {
+      await loadAdminWhitelist(true);
+      const imported = associationRosterToWhitelistRows();
+      const current = state.adminWhitelist || [];
+      const keyOf = (row) => [row.memberNo, row.lineUserId, row.email].filter(Boolean).join("|").toLowerCase();
+      const exists = new Set(current.map(keyOf).filter(Boolean));
+      const fresh = imported.filter(row => {
+        const key = keyOf(row);
+        return key && !exists.has(key);
+      });
+      state.adminWhitelist = [...current, ...fresh];
+      render();
+      toast(`已從協會名冊帶入 ${fresh.length} 筆，請確認後儲存白名單`);
+    });
+    document.querySelectorAll("[data-import-legacy-access]").forEach(b => b.onclick = async () => {
+      await loadAdminWhitelist(true);
+      const imported = legacyAccessToWhitelistRows();
+      const exists = new Set((state.adminWhitelist || []).map(row => [row.memberNo, row.lineUserId, row.email].filter(Boolean).join("|")));
+      state.adminWhitelist = [...(state.adminWhitelist || []), ...imported.filter(row => !exists.has([row.memberNo, row.lineUserId, row.email].filter(Boolean).join("|")))];
+      render();
+      toast(`已帶入 ${imported.length} 筆舊允許名單，請檢查後儲存`);
+    });
+    document.querySelectorAll("[data-check-whitelist]").forEach(b => b.onclick = () => {
+      const identity = adminIdentity();
+      alert(`目前送出的身份\nEmail：${identity.email || "-"}\n會員編號：${identity.memberNo || "-"}\nLINE UID：${identity.lineUserId || "-"}`);
+    });
+    document.querySelectorAll("[data-save-whitelist]").forEach(b => b.onclick = async () => {
+      try {
+        b.disabled = true;
+        await saveAdminWhitelist();
+        toast("白名單已儲存");
+        render();
+      } catch (err) {
+        alert(err?.message || "白名單儲存失敗");
+      } finally {
+        b.disabled = false;
+      }
+    });
     document.querySelectorAll("[data-drawer]").forEach(b => b.onclick = () => { state.drawer = b.dataset.drawer; render(); });
+    mountMemberRegistrationPanel();
+    document.querySelectorAll("[data-refresh-member-registrations]").forEach(b => b.onclick = () => loadMemberRegistrationList(b.dataset.memberType, b.dataset.memberId, true));
     document.querySelectorAll("[data-import]").forEach(b => b.onclick = () => { state.drawer = "import-" + b.dataset.import + ":new"; render(); });
     document.querySelectorAll("[data-close]").forEach(b => b.onclick = () => { state.drawer = ""; render(); });
     document.querySelectorAll("[data-toggle]").forEach(b => b.onclick = () => { const x = state.data.activities.find(r => r.id === b.dataset.toggle); if (x) x.status = x.status === "上架" ? "下架" : "上架"; save(); render(); });
     document.querySelectorAll("[data-delete-activity]").forEach(b => b.onclick = () => deleteActivity(b.dataset.deleteActivity));
     document.querySelectorAll("[data-delete-member]").forEach(b => b.onclick = () => deleteMember(b.dataset.deleteMember));
+    document.querySelectorAll("[data-member-login-toggle]").forEach(input => input.onchange = () => {
+      const [type, rowId] = String(input.dataset.memberLoginToggle || "").split(":");
+      const row = state.data[type]?.find(item => item.id === rowId);
+      if (!row) return;
+      row.loginAccess = input.checked;
+      row.allowLogin = input.checked;
+      row.canLogin = input.checked;
+      save();
+      syncAdminAccessForMember(type, row);
+      toast(input.checked ? "已允許登入權限" : "已取消登入權限");
+    });
     document.querySelectorAll("[data-registration-list]").forEach(b => b.onclick = () => openRegistrationList(b.dataset.registrationList));
     document.querySelectorAll("[data-refresh-registration-list]").forEach(b => b.onclick = () => loadRegistrationList(b.dataset.refreshRegistrationList, true));
     document.querySelectorAll("[data-load-member-applications]").forEach(b => b.onclick = () => loadMemberApplications(true));
@@ -929,7 +1299,7 @@
     });
     const af = document.querySelector("#activity-form"); if (af) af.onsubmit = e => { e.preventDefault(); const d = Object.fromEntries(new FormData(af)); const templateMode = d.templateMode || "custom"; const registrationMode = d.registrationMode || (templateMode === "mode1_vendor_visit" ? "member_login" : "form"); state.data.activities.unshift({ id: uid(), name: d.name.trim(), templateMode, type: d.type, typeLabel: formTypeLabel(d), courseTime: d.courseTime, deadline: d.deadline, capacity: Number(d.capacity || 0), checkinPoints: Number(d.checkinPoints || 0), feePoints: Number(d.feePoints || 0), registrationMode, detailText: d.detailText || "", reg: 0, check: 0, status: d.status, formUrl: "" }); save(); state.view = "dashboard"; render(); toast("活動已建立"); };
     const ea = document.querySelector("#drawer-activity"); if (ea) ea.onsubmit = e => { e.preventDefault(); const d = Object.fromEntries(new FormData(ea)); const x = state.data.activities.find(r => r.id === d.id); if (x) Object.assign(x, { name: d.name, templateMode: d.templateMode || x.templateMode || "custom", type: d.type, typeLabel: formTypeLabel(d), courseTime: d.courseTime, deadline: d.deadline, capacity: Number(d.capacity || 0), checkinPoints: Number(d.checkinPoints || 0), feePoints: Number(d.feePoints || 0), registrationMode: d.registrationMode || "form", reg: Number(d.reg || 0), check: Number(d.check || 0), status: d.status, formUrl: d.formUrl }); state.drawer = ""; save(); render(); toast("活動已儲存"); };
-    const mf = document.querySelector("#drawer-member"); if (mf) mf.onsubmit = e => { e.preventDefault(); const type = mf.dataset.type; const d = Object.fromEntries(new FormData(mf)); const rows = state.data[type]; const old = rows.find(r => r.id === d.id); const item = { ...d, id: d.id || uid() }; old ? Object.assign(old, item) : rows.unshift(item); state.drawer = ""; save(); syncRosterMemberToWorker(type, item); render(); toast("名冊已儲存"); };
+    const mf = document.querySelector("#drawer-member"); if (mf) mf.onsubmit = e => { e.preventDefault(); const type = mf.dataset.type; const d = Object.fromEntries(new FormData(mf)); const rows = state.data[type]; const old = rows.find(r => r.id === d.id); const loginAccess = d.loginAccess === "Y"; const item = { ...d, id: d.id || uid(), loginAccess, allowLogin: loginAccess, canLogin: loginAccess }; old ? Object.assign(old, item) : rows.unshift(item); state.drawer = ""; save(); syncRosterMemberToWorker(type, item); syncAdminAccessForMember(type, item); render(); toast("名冊已儲存"); };
     const im = document.querySelector("#import-form"); if (im) im.onsubmit = e => { e.preventDefault(); const d = Object.fromEntries(new FormData(im)); const count = importRows(im.dataset.type, d.csv || ""); state.drawer = ""; render(); toast(`已導入 ${count} 筆資料`); };
     const loadRoster = document.querySelector("[data-load-roster]"); if (loadRoster) loadRoster.onclick = () => loadRosterSeed(true);
     const worker = document.querySelector("[data-worker]"); if (worker) worker.onclick = async () => { try { const r = await fetch(api + "/api/activities"); const j = await r.json(); toast(j.success ? "Worker API 連線正常" : "Worker API 回應異常"); } catch (_) { toast("Worker API 無法連線"); } };
@@ -943,15 +1313,73 @@
     loadRegistrationList(rowId);
   }
 
+  function memberLineUid(row) {
+    return String(row?.lineUserId || row?.lineUid || row?.uid || row?.LINE_user_id || row?.line_user_id || "").trim();
+  }
+  function shortUid(value) {
+    const text = String(value || "").trim();
+    if (!text) return "";
+    return text.length > 18 ? `${text.slice(0, 10)}...${text.slice(-8)}` : text;
+  }
+
+  function currentMemberDrawer() {
+    const [type, rowId] = String(state.drawer || "").split(":");
+    if (!["association", "vendor"].includes(type) || !rowId || rowId === "new") return null;
+    const row = state.data[type]?.find(item => item.id === rowId);
+    return row ? { type, rowId, row } : null;
+  }
+
+  function memberRegistrationRowsHtml(rows) {
+    if (!rows?.length) return `<div class="empty">目前沒有報名活動記錄。</div>`;
+    return `<div class="table-wrap"><table><thead><tr><th>活動名稱</th><th>報名時間</th><th>簽到狀態</th><th>簽到時間</th></tr></thead><tbody>${rows.map(item => `<tr><td>${esc(item.activity?.name || item.activityName || item.eventName || "-")}</td><td>${esc(formatTime(item.submittedAt || item.createdAt || item.timestamp))}</td><td>${esc(item.checkinStatusText || (item.checkedInAt ? "已完成簽到" : "尚未簽到"))}</td><td>${esc(item.checkedInAt ? formatTime(item.checkedInAt) : "-")}</td></tr>`).join("")}</tbody></table></div>`;
+  }
+
+  function mountMemberRegistrationPanel() {
+    const form = document.querySelector("#drawer-member");
+    const info = currentMemberDrawer();
+    if (!form || !info || document.querySelector("[data-member-registration-panel]")) return;
+    const key = `${info.type}:${info.rowId}`;
+    const lineUserId = memberLineUid(info.row);
+    const rows = state.memberRegistrationLists[key];
+    const panel = document.createElement("section");
+    panel.className = "panel member-registration-history";
+    panel.dataset.memberRegistrationPanel = "1";
+    panel.innerHTML = `<div class="panel-head"><h3>報名活動記錄</h3><button class="btn" type="button" data-refresh-member-registrations data-member-type="${esc(info.type)}" data-member-id="${esc(info.rowId)}">重新載入</button></div>${!lineUserId ? `<div class="empty">此會員尚未綁定 LINE UID，無法查詢報名活動記錄。</div>` : rows ? memberRegistrationRowsHtml(rows) : `<div class="empty">正在載入報名活動記錄...</div>`}`;
+    form.insertAdjacentElement("afterend", panel);
+    if (lineUserId && !rows) loadMemberRegistrationList(info.type, info.rowId);
+  }
+
+  async function loadMemberRegistrationList(type, rowId, showMessage = false) {
+    const row = state.data[type]?.find(item => item.id === rowId);
+    const key = `${type}:${rowId}`;
+    const lineUserId = memberLineUid(row);
+    if (!lineUserId) {
+      state.memberRegistrationLists[key] = [];
+      if (showMessage) toast("此會員尚未綁定 LINE UID");
+      render();
+      return;
+    }
+    try {
+      const res = await fetch(api + "/api/native-registrations/me?lineUserId=" + encodeURIComponent(lineUserId), { cache: "no-store" });
+      const result = await res.json().catch(() => ({}));
+      state.memberRegistrationLists[key] = Array.isArray(result.data) ? result.data : [];
+      if (showMessage) toast("報名活動記錄已更新");
+    } catch (_) {
+      state.memberRegistrationLists[key] = [];
+      if (showMessage) toast("報名活動記錄載入失敗");
+    }
+    render();
+  }
+
   async function createRedeem(event) {
     event.preventDefault();
-    const email = localStorage.getItem("tdea-admin-email") || sessionStorage.getItem("tdea-admin-email") || "";
+    const email = adminIdentity().email || (hasAdminIdentity() ? "dynamic-admin" : "");
     if (!email) return toast("請先設定管理者 Email");
     const form = event.currentTarget;
     const data = Object.fromEntries(new FormData(form));
     const response = await fetch(api + "/api/redeem/create", {
       method: "POST",
-      headers: { "content-type": "application/json", "x-admin-email": email },
+      headers: adminHeaders({ "content-type": "application/json" }),
       body: JSON.stringify(data)
     });
     const result = await response.json().catch(() => ({}));
@@ -964,12 +1392,12 @@
   }
 
   async function loadRedeemRecords(showMessage = false) {
-    const email = localStorage.getItem("tdea-admin-email") || sessionStorage.getItem("tdea-admin-email") || "";
+    const email = adminIdentity().email || (hasAdminIdentity() ? "dynamic-admin" : "");
     if (!email) {
       if (showMessage) toast("請先設定管理者 Email");
       return;
     }
-    const response = await fetch(api + "/api/redeem/list", { headers: { "x-admin-email": email }, cache: "no-store" });
+    const response = await fetch(api + "/api/redeem/list", { headers: adminHeaders(), cache: "no-store" });
     const result = await response.json().catch(() => ({}));
     if (!response.ok || !result.success) {
       if (showMessage) toast(result.message || "折抵紀錄載入失敗");
@@ -982,14 +1410,14 @@
 
   async function syncLegacyPoints(event) {
     event.preventDefault();
-    const email = localStorage.getItem("tdea-admin-email") || sessionStorage.getItem("tdea-admin-email") || "";
+    const email = adminIdentity().email || (hasAdminIdentity() ? "dynamic-admin" : "");
     if (!email) return toast("請先設定管理者 Email");
     const data = Object.fromEntries(new FormData(event.currentTarget));
     const lineUserId = String(data.lineUserId || "").trim();
     if (!lineUserId) return toast("請輸入會員 LINE UID");
     const response = await fetch(api + "/api/points/sync-legacy", {
       method: "POST",
-      headers: { "content-type": "application/json", "x-admin-email": email },
+      headers: adminHeaders({ "content-type": "application/json" }),
       body: JSON.stringify({ lineUserId, force: Boolean(data.force) })
     });
     const result = await response.json().catch(() => ({}));
@@ -1004,13 +1432,13 @@
   }
 
   async function loadPointLedger(showMessage = false) {
-    const email = localStorage.getItem("tdea-admin-email") || sessionStorage.getItem("tdea-admin-email") || "";
+    const email = adminIdentity().email || (hasAdminIdentity() ? "dynamic-admin" : "");
     if (!email) {
       if (showMessage) toast("請先設定管理者 Email");
       return;
     }
     const response = await fetch(api + "/api/points/ledger?limit=200", {
-      headers: { "x-admin-email": email },
+      headers: adminHeaders(),
       cache: "no-store"
     });
     const result = await response.json().catch(() => ({}));
@@ -1073,6 +1501,7 @@
     }
   };
   render();
+  loadManagerDataRemote();
   setTimeout(() => {
     cleanupRosterData();
     if (state.view === "association" || state.view === "vendor") render();
