@@ -424,10 +424,7 @@
   function load() {
     try { const raw = localStorage.getItem(key); if (raw) return JSON.parse(raw); } catch (_) {}
     return {
-      activities: [
-        { id: uid(), name: "中秋聯歡活動", type: "聯誼類", courseTime: "2026/09/20 14:00", deadline: "2026/09/10", capacity: 80, reg: 0, check: 0, status: "上架", formUrl: "" },
-        { id: uid(), name: "AI 教學工作坊", type: "教學類", courseTime: "2026/06/15 10:00", deadline: "2026/06/08", capacity: 40, reg: 0, check: 0, status: "下架", formUrl: "" }
-      ],
+      activities: [],
       association: [],
       vendor: [],
       deletedActivityKeys: []
@@ -1506,5 +1503,4 @@
     cleanupRosterData();
     if (state.view === "association" || state.view === "vendor") render();
   }, 0);
-  loadRosterSeed();
 })();
