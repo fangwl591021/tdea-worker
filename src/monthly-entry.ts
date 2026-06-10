@@ -1,6 +1,6 @@
 ﻿import baseEntry from "./roster-sync-entry4";
 
-type Env = { ADMIN_EMAILS?: string; ASSETS_BUCKET?: R2Bucket; LINE_CHANNEL_SECRET?: string; LINE_CHANNEL_ACCESS_TOKEN?: string; FORWARD_WEBHOOK_URL?: string; GOOGLE_FORMS_SCRIPT_URL?: string; GOOGLE_FORMS_SHARED_SECRET?: string; OPNFORM_API_BASE?: string; OPNFORM_PUBLIC_BASE?: string; OPNFORM_API_TOKEN?: string; OPNFORM_WORKSPACE_ID?: string; OPNFORM_WEBHOOK_SECRET?: string; WETW_POINT_API_KEY?: string; WETW_SHOP_ID?: string; WETW_POINT_TYPE?: string; TDEA_POINT_EXTERNAL_SYNC?: string; TDEA_ADMIN_LINE_USER_IDS?: string; OPENAI_API_KEY?: string; OPENAI_MODEL?: string };
+type Env = { ADMIN_EMAILS?: string; ADMIN_LOGIN_USER?: string; ADMIN_LOGIN_PASSWORD?: string; ASSETS_BUCKET?: R2Bucket; LINE_CHANNEL_SECRET?: string; LINE_CHANNEL_ACCESS_TOKEN?: string; FORWARD_WEBHOOK_URL?: string; GOOGLE_FORMS_SCRIPT_URL?: string; GOOGLE_FORMS_SHARED_SECRET?: string; OPNFORM_API_BASE?: string; OPNFORM_PUBLIC_BASE?: string; OPNFORM_API_TOKEN?: string; OPNFORM_WORKSPACE_ID?: string; OPNFORM_WEBHOOK_SECRET?: string; WETW_POINT_API_KEY?: string; WETW_SHOP_ID?: string; WETW_POINT_TYPE?: string; TDEA_POINT_EXTERNAL_SYNC?: string; TDEA_ADMIN_LINE_USER_IDS?: string; OPENAI_API_KEY?: string; OPENAI_MODEL?: string };
 type LineEvent = { type?: string; replyToken?: string; message?: { type?: string; id?: string; text?: string }; postback?: { data?: string }; source?: { type?: string; userId?: string; groupId?: string; roomId?: string } };
 type MonthlyPage = { id?: string; activityNo?: string; activityId?: string; activityName?: string; imageUrl?: string; galleryUrls?: string[]; formImageUrl?: string; detailTitle?: string; detailText?: string; detailUrl?: string; formUrl?: string; shareUrl?: string; order?: number };
 type MonthlyConfig = { enabled?: boolean; keyword?: string; month?: string; altText?: string; detailBaseUrl?: string; pages?: MonthlyPage[]; updatedAt?: string };
@@ -275,6 +275,39 @@ async function requireAdmin(request: Request, env: Env) {
   if (email && staticAdminEmails(env).includes(email)) return null;
   if (await isDynamicAdmin({ email, memberNo: adminMemberNoFromRequest(request), lineUserId: adminLineUserIdFromRequest(request) }, env)) return null;
   return json({ success: false, message: "Unauthorized" }, 401);
+}
+
+function adminSessionPayload(identity: { email?: string; memberNo?: string; lineUserId?: string; displayName?: string }) {
+  return {
+    email: clean(identity.email).toLowerCase(),
+    memberNo: clean(identity.memberNo).toUpperCase(),
+    lineUserId: clean(identity.lineUserId),
+    displayName: clean(identity.displayName),
+    expiresAt: Date.now() + 12 * 60 * 60 * 1000
+  };
+}
+
+async function adminPasswordLoginApi(request: Request, env: Env) {
+  const body = await request.json().catch(() => ({})) as Record<string, unknown>;
+  const username = clean(body.username);
+  const password = clean(body.password);
+  const expectedUser = clean(env.ADMIN_LOGIN_USER || "admin");
+  const expectedPassword = clean(env.ADMIN_LOGIN_PASSWORD);
+  if (!expectedPassword) return json({ success: false, message: "尚未設定 ADMIN_LOGIN_PASSWORD" }, 503);
+  if (username !== expectedUser || password !== expectedPassword) return json({ success: false, message: "帳號或密碼錯誤" }, 401);
+  const email = staticAdminEmails(env)[0] || "admin@example.com";
+  return json({ success: true, data: adminSessionPayload({ email, displayName: username }) });
+}
+
+async function adminLineLoginApi(request: Request, env: Env) {
+  const url = new URL(request.url);
+  const body = await request.json().catch(() => ({})) as Record<string, unknown>;
+  const lineUserId = firstClean(body.lineUserId, body.lineUid, body.uid, body.userId, url.searchParams.get("lineUserId"), url.searchParams.get("lineUid"), url.searchParams.get("uid"));
+  const displayName = clean(body.displayName || body.name);
+  if (!lineUserId) return json({ success: false, message: "無法取得 LINE UID" }, 400);
+  const allowed = await isDynamicAdmin({ lineUserId }, env);
+  if (!allowed) return json({ success: false, message: "此 LINE 帳號未在管理白名單或登入權限名冊內" }, 401);
+  return json({ success: true, data: adminSessionPayload({ lineUserId, displayName }) });
 }
 
 async function listAdminAccessApi(request: Request, env: Env) {
@@ -4682,6 +4715,8 @@ export default {
 	    if ((request.method === "DELETE" || request.method === "POST") && url.pathname === "/api/line-activity-drafts/delete") return deleteLineActivityDraft(request, env);
 	    if (request.method === "GET" && url.pathname === "/api/line-activity-debug") return getLineActivityDebug(request, env);
 	    if ((request.method === "GET" || request.method === "POST") && url.pathname === "/api/line-activity-ai-check") return testLineActivityAi(request, env);
+	    if (request.method === "POST" && url.pathname === "/api/admin-login/password") return adminPasswordLoginApi(request, env);
+	    if (request.method === "POST" && url.pathname === "/api/admin-login/line") return adminLineLoginApi(request, env);
 	    if (request.method === "GET" && url.pathname === "/api/admin-access") return listAdminAccessApi(request, env);
 	    if ((request.method === "PUT" || request.method === "POST") && url.pathname === "/api/admin-access") return updateAdminAccessApi(request, env);
 	    if (request.method === "GET" && url.pathname === "/api/admin-whitelist") return listAdminWhitelistApi(request, env);
