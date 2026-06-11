@@ -73,7 +73,6 @@
     return `<a class="link" href="${esc(url)}" target="_blank" rel="noopener noreferrer">${esc(url)}</a>`;
   }
   function save() {
-    localStorage.setItem(key, JSON.stringify(state.data));
     queueManagerDataSave();
   }
   function managerDataHasContent(data) {
@@ -178,11 +177,15 @@
   async function saveManagerDataRemote() {
     if (!hasAdminIdentity()) return;
     if (!managerDataHasContent(state.data)) return;
+    const payload = { ...state.data };
+    ["association", "vendor"].forEach((name) => {
+      if (Array.isArray(payload[name]) && payload[name].length === 0) delete payload[name];
+    });
     try {
       await fetch(api + "/api/manager-data", {
         method: "PUT",
         headers: adminHeaders({ "content-type": "application/json" }),
-        body: JSON.stringify(state.data),
+        body: JSON.stringify(payload),
         keepalive: true
       });
     } catch (_) {}
@@ -194,8 +197,7 @@
       const response = await fetch(api + "/api/manager-data", { cache: "no-store" });
       const result = await response.json().catch(() => ({}));
       if (result.success && managerDataHasContent(result.data)) {
-        state.data = mergeManagerData(load(), result.data);
-        localStorage.setItem(key, JSON.stringify(state.data));
+        state.data = mergeManagerData(emptyManagerData(), result.data);
         await loadAdminAccessIntoRoster();
         render();
       }
@@ -422,7 +424,9 @@
     } catch (_) {}
   }
   function load() {
-    try { const raw = localStorage.getItem(key); if (raw) return JSON.parse(raw); } catch (_) {}
+    return emptyManagerData();
+  }
+  function emptyManagerData() {
     return {
       activities: [],
       association: [],

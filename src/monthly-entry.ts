@@ -425,18 +425,20 @@ async function writeManagerData(env: Env, input: Record<string, unknown>) {
   if (!managerDataHasUsefulContent(input)) return false;
   const previous = await readManagerData(env);
   if (managerDataHasUsefulContent(previous) && !managerDataHasUsefulContent(input)) return false;
-  const preserveIfOmitted = (key: string) => (
-    Object.prototype.hasOwnProperty.call(input, key)
-      ? input[key]
-      : previous && Object.prototype.hasOwnProperty.call(previous, key)
-        ? previous[key]
-        : undefined
-  );
+  const preserveRosterIfOmittedOrEmpty = (key: string) => {
+    const previousValue = previous && Object.prototype.hasOwnProperty.call(previous, key) ? previous[key] : undefined;
+    const inputHasKey = Object.prototype.hasOwnProperty.call(input, key);
+    const inputValue = inputHasKey ? input[key] : undefined;
+    if (Array.isArray(previousValue) && previousValue.length > 0 && (!inputHasKey || (Array.isArray(inputValue) && inputValue.length === 0))) {
+      return previousValue;
+    }
+    return inputHasKey ? inputValue : previousValue;
+  };
   const data = {
     ...(previous || {}),
     ...input,
-    association: preserveIfOmitted("association"),
-    vendor: preserveIfOmitted("vendor"),
+    association: preserveRosterIfOmittedOrEmpty("association"),
+    vendor: preserveRosterIfOmittedOrEmpty("vendor"),
     updatedAt: new Date().toISOString()
   };
   if (data.association === undefined) delete data.association;
