@@ -40,7 +40,7 @@
   ];
 
   const appRoot = document.getElementById("app");
-  const prefix = location.pathname.includes("/public/") ? "" : "public/";
+  const scriptBase = new URL(".", document.currentScript?.src || `${location.origin}/tdea-worker/public/`).href;
 
   function clean(value) {
     return String(value || "").trim();
@@ -136,7 +136,7 @@
   async function loadApp() {
     document.body.classList.remove("admin-login-body");
     for (const file of scriptVersions) {
-      await loadScript(prefix + file).catch((error) => {
+      await loadScript(file).catch((error) => {
         if (!file.startsWith("line-monitor-link")) throw error;
       });
     }
@@ -145,7 +145,7 @@
   function loadScript(src) {
     return new Promise((resolve, reject) => {
       const script = document.createElement("script");
-      script.src = src;
+      script.src = new URL(src, scriptBase).href;
       script.onload = resolve;
       script.onerror = () => reject(new Error(`script load failed: ${src}`));
       document.body.appendChild(script);
