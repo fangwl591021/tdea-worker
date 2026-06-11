@@ -194,7 +194,7 @@
     if (managerDataLoading) return;
     managerDataLoading = true;
     try {
-      const response = await fetch(api + "/api/manager-data", { cache: "no-store" });
+      const response = await fetch(api + "/api/manager-data", { headers: adminHeaders(), cache: "no-store" });
       const result = await response.json().catch(() => ({}));
       if (result.success && managerDataHasContent(result.data)) {
         state.data = mergeManagerData(emptyManagerData(), result.data);
