@@ -41,6 +41,7 @@ type MemberApplication = { id: string; lineUserId: string; status: "pending" | "
 const monthlyKey = "flex/monthly-activity.json";
 const managerDataKey = "manager/state.json";
 const activityIndexKey = "activities/index.json";
+const activityMigrationKey = "activities/migration-v1.json";
 const activityRecordPrefix = "activities/records/";
 const vendorCardKey = "flex/vendor-card-menu.json";
 const marqueeKey = "line/marquee.json";
@@ -482,11 +483,23 @@ async function upsertActivityRecord(env: Env, input: Record<string, unknown>, ac
 
 async function migrateLegacyActivities(env: Env, rawData?: Record<string, unknown> | null) {
   if (!env.ASSETS_BUCKET) return [];
+  const marker = await env.ASSETS_BUCKET.get(activityMigrationKey);
+  if (marker) return [];
   const raw = rawData ?? await readManagerDataRaw(env);
   const legacy = Array.isArray(raw?.activities) ? raw.activities : [];
-  if (!legacy.length) return [];
+  if (!legacy.length) {
+    await env.ASSETS_BUCKET.put(activityMigrationKey, JSON.stringify({ migratedAt: new Date().toISOString(), count: 0 }, null, 2), {
+      httpMetadata: { contentType: "application/json; charset=utf-8", cacheControl: "no-store" }
+    });
+    return [];
+  }
   const index = await readActivityIndex(env);
-  if (index.length) return [];
+  if (index.length) {
+    await env.ASSETS_BUCKET.put(activityMigrationKey, JSON.stringify({ migratedAt: new Date().toISOString(), skipped: true, reason: "activity-index-not-empty" }, null, 2), {
+      httpMetadata: { contentType: "application/json; charset=utf-8", cacheControl: "no-store" }
+    });
+    return [];
+  }
   const ids: string[] = [];
   for (const item of legacy) {
     if (!item || typeof item !== "object") continue;
@@ -494,6 +507,9 @@ async function migrateLegacyActivities(env: Env, rawData?: Record<string, unknow
     const id = cleanActivityId(record?.id);
     if (id) ids.push(id);
   }
+  await env.ASSETS_BUCKET.put(activityMigrationKey, JSON.stringify({ migratedAt: new Date().toISOString(), count: ids.length }, null, 2), {
+    httpMetadata: { contentType: "application/json; charset=utf-8", cacheControl: "no-store" }
+  });
   return ids;
 }
 
@@ -502,11 +518,7 @@ async function listActivityRecords(env: Env, rawData?: Record<string, unknown> |
     const raw = rawData ?? await readManagerDataRaw(env);
     return Array.isArray(raw?.activities) ? raw.activities : [];
   }
-  let ids = await readActivityIndex(env);
-  if (!ids.length) {
-    await migrateLegacyActivities(env, rawData);
-    ids = await readActivityIndex(env);
-  }
+  const ids = await readActivityIndex(env);
   const records: Record<string, unknown>[] = [];
   for (const id of ids) {
     const record = await readActivityRecord(env, id);

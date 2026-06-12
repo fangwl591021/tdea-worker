@@ -16,6 +16,7 @@
     adminWhitelist: ["白名單", "管理後台、核銷與 LINE 工具使用權限。"],
     redeem: ["點數折抵", "建立限時店家掃碼工作台，店家掃會員 QR 後執行扣點。"]
   };
+  purgeLegacyManagerCache();
   const state = { view: "dashboard", drawer: "", data: load(), registrationLists: {}, memberRegistrationLists: {}, memberApplications: null, adminWhitelist: null, adminWhitelistMeta: null, rosterSearch: { association: "", vendor: "" } };
   let managerDataSaveTimer = null;
   let managerDataLoading = false;
@@ -25,6 +26,14 @@
 
   function sidebarCollapsed() { return localStorage.getItem(sidebarCollapsedKey) === "Y"; }
   function setSidebarCollapsed(value) { localStorage.setItem(sidebarCollapsedKey, value ? "Y" : "N"); }
+  function purgeLegacyManagerCache() {
+    try {
+      ["tdea-manager-v3", "tdea-manager-v2", "tdea-manager"].forEach((name) => {
+        localStorage.removeItem(name);
+        sessionStorage.removeItem(name);
+      });
+    } catch (_) {}
+  }
   function applySidebarCollapsed(value = sidebarCollapsed()) {
     const shell = document.querySelector(".shell");
     if (shell) shell.classList.toggle("sidebar-collapsed", value);
@@ -331,7 +340,7 @@
           }
         });
       });
-      if (changed) localStorage.setItem(key, JSON.stringify(state.data));
+      // Manager data is server-owned. Do not write roster/activity data to browser storage.
     } catch (_) {}
   }
   async function syncAdminAccessForMember(type, item) {
