@@ -4757,6 +4757,20 @@ async function handleMonthlyWebhook(request: Request, env: Env, rawBody: string,
   if (!queryEvents.length && !memberQrEvents.length && !calendarEvents.length && !personalMessageEvents.length && !uidBindEvents.length && !vendorCardEvents.length && !marqueeEvents.length && !pointEvents.length && !events.length && !onboardingActive) return null;
   const signature = request.headers.get("x-line-signature");
   if (!await verifyLineSignature(rawBody, signature, env.LINE_CHANNEL_SECRET)) return new Response("Invalid Signature", { status: 403, headers });
+  const bareUidBindEvents = uidBindEvents.filter((event) => !parseUidBindKeyword(extractTriggerText(event)).memberNo);
+  const gatedEvents = [
+    ...events,
+    ...queryEvents,
+    ...memberQrEvents,
+    ...calendarEvents,
+    ...personalMessageEvents,
+    ...vendorCardEvents,
+    ...marqueeEvents,
+    ...pointEvents.map((item) => item.event),
+    ...bareUidBindEvents
+  ];
+  const closedGate = await handleClosedMemberGate(allEvents, gatedEvents, env);
+  if (closedGate) return json({ success: true, mode: "member-gate", lineReply: closedGate });
   if (events.length) {
     const config = await readEffectiveMonthly(env);
     const pages = config.pages || [];
@@ -4774,19 +4788,6 @@ async function handleMonthlyWebhook(request: Request, env: Env, rawBody: string,
     }));
     return json({ success: true, mode: "monthly-activity", matched: [fixedKeyword], forwarded: false, lineReplies });
   }
-  const bareUidBindEvents = uidBindEvents.filter((event) => !parseUidBindKeyword(extractTriggerText(event)).memberNo);
-  const gatedEvents = [
-    ...queryEvents,
-    ...memberQrEvents,
-    ...calendarEvents,
-    ...personalMessageEvents,
-    ...vendorCardEvents,
-    ...marqueeEvents,
-    ...pointEvents.map((item) => item.event),
-    ...bareUidBindEvents
-  ];
-  const closedGate = await handleClosedMemberGate(allEvents, gatedEvents, env);
-  if (closedGate) return json({ success: true, mode: "member-gate", lineReply: closedGate });
   if (uidBindEvents.length) return bindLineUidEvents(uidBindEvents, env);
   if (pointEvents.length) return handleMotherPointEvents(pointEvents, env);
   if (queryEvents.length) {
