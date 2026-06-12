@@ -4386,8 +4386,12 @@ async function startMemberOnboarding(env: Env, event: LineEvent, triggerText: st
   const lineUserId = clean(event.source?.userId);
   if (!lineUserId || !event.replyToken) return { ok: false, status: 400, message: "Missing LINE UID or replyToken" };
   const now = new Date().toISOString();
-  await writeMemberOnboardingSession(env, { lineUserId, step: "askMember", answers: {}, triggerText, createdAt: now, updatedAt: now });
-  return replyToLine(event.replyToken, [membershipQuestionMessage()], env);
+  await writeMemberOnboardingSession(env, { lineUserId, step: "memberNo", answers: {}, triggerText, createdAt: now, updatedAt: now });
+  return replyToLine(event.replyToken, [{
+    type: "text",
+    text: "尚未完成 LINE 綁定。\n若你是 TDEA 會員或廠商會員，請輸入會員編號，下一步會核對行動電話。",
+    quickReply: quickReply(["不是會員", "取消"])
+  }], env);
 }
 
 async function handleMemberOnboardingEvent(event: LineEvent, env: Env): Promise<Record<string, unknown> | null> {
@@ -4415,6 +4419,11 @@ async function handleMemberOnboardingEvent(event: LineEvent, env: Env): Promise<
     return replyToLine(event.replyToken, [membershipQuestionMessage()], env) as unknown as Record<string, unknown>;
   }
   if (session.step === "memberNo") {
+    if (intent === "no") {
+      session.step = "joinInterest";
+      await writeMemberOnboardingSession(env, session);
+      return replyToLine(event.replyToken, [{ type: "text", text: "歡迎加入 TDEA。\n請問你是否有加入協會或成為廠商會員的意願？", quickReply: quickReply(["有興趣", "暫時不用"]) }], env) as unknown as Record<string, unknown>;
+    }
     session.answers.memberNo = clean(text).toUpperCase();
     session.step = "phone";
     await writeMemberOnboardingSession(env, session);
