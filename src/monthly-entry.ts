@@ -40,6 +40,8 @@ type MemberApplication = { id: string; lineUserId: string; status: "pending" | "
 
 const monthlyKey = "flex/monthly-activity.json";
 const managerDataKey = "manager/state.json";
+const activityIndexKey = "activities/index.json";
+const activityRecordPrefix = "activities/records/";
 const vendorCardKey = "flex/vendor-card-menu.json";
 const marqueeKey = "line/marquee.json";
 const registrationSummaryKey = "registrations/summary.json";
@@ -405,11 +407,166 @@ async function writeMonthly(env: Env, config: MonthlyConfig) {
   return true;
 }
 
-async function readManagerData(env: Env) {
+async function readManagerDataRaw(env: Env) {
   const object = env.ASSETS_BUCKET ? await env.ASSETS_BUCKET.get(managerDataKey) : null;
   if (!object) return null;
   const data = await object.json().catch(() => null) as Record<string, unknown> | null;
   return data && typeof data === "object" ? data : null;
+}
+
+function activityActorFromRequest(request: Request) {
+  return adminEmailFromRequest(request) || adminMemberNoFromRequest(request) || adminLineUserIdFromRequest(request) || "admin";
+}
+
+function cleanActivityId(value: unknown) {
+  return clean(value).replace(/[^\w.-]/g, "_").slice(0, 120);
+}
+
+function activityRecordKey(id: string) {
+  return `${activityRecordPrefix}${encodeURIComponent(id)}.json`;
+}
+
+function normalizeActivityRecord(input: Record<string, unknown>, existing: Record<string, unknown> | null, actor: string) {
+  const now = new Date().toISOString();
+  const id = cleanActivityId(input.id || existing?.id) || `id-${crypto.randomUUID()}`;
+  return {
+    ...(existing || {}),
+    ...input,
+    id,
+    createdAt: clean(existing?.createdAt) || clean(input.createdAt) || now,
+    createdBy: clean(existing?.createdBy) || clean(input.createdBy) || actor,
+    updatedAt: now,
+    updatedBy: actor,
+    revision: Number(existing?.revision || 0) + 1
+  };
+}
+
+async function readActivityIndex(env: Env): Promise<string[]> {
+  if (!env.ASSETS_BUCKET) return [];
+  const object = await env.ASSETS_BUCKET.get(activityIndexKey);
+  const data = object ? await object.json().catch(() => []) : [];
+  return Array.isArray(data) ? data.map(cleanActivityId).filter(Boolean) : [];
+}
+
+async function writeActivityIndex(env: Env, ids: string[]) {
+  if (!env.ASSETS_BUCKET) return false;
+  const unique = [...new Set(ids.map(cleanActivityId).filter(Boolean))];
+  await env.ASSETS_BUCKET.put(activityIndexKey, JSON.stringify(unique, null, 2), {
+    httpMetadata: { contentType: "application/json; charset=utf-8", cacheControl: "no-store" }
+  });
+  return true;
+}
+
+async function readActivityRecord(env: Env, id: string) {
+  if (!env.ASSETS_BUCKET) return null;
+  const cleanId = cleanActivityId(id);
+  if (!cleanId) return null;
+  const object = await env.ASSETS_BUCKET.get(activityRecordKey(cleanId));
+  const data = object ? await object.json().catch(() => null) as Record<string, unknown> | null : null;
+  return data && typeof data === "object" ? data : null;
+}
+
+async function upsertActivityRecord(env: Env, input: Record<string, unknown>, actor: string) {
+  if (!env.ASSETS_BUCKET) return null;
+  const existingId = cleanActivityId(input.id);
+  const existing = existingId ? await readActivityRecord(env, existingId) : null;
+  const record = normalizeActivityRecord(input, existing, actor);
+  const id = cleanActivityId(record.id);
+  await env.ASSETS_BUCKET.put(activityRecordKey(id), JSON.stringify(record, null, 2), {
+    httpMetadata: { contentType: "application/json; charset=utf-8", cacheControl: "no-store" }
+  });
+  const index = await readActivityIndex(env);
+  if (!index.includes(id)) await writeActivityIndex(env, [id, ...index]);
+  return record;
+}
+
+async function migrateLegacyActivities(env: Env, rawData?: Record<string, unknown> | null) {
+  if (!env.ASSETS_BUCKET) return [];
+  const raw = rawData ?? await readManagerDataRaw(env);
+  const legacy = Array.isArray(raw?.activities) ? raw.activities : [];
+  if (!legacy.length) return [];
+  const index = await readActivityIndex(env);
+  if (index.length) return [];
+  const ids: string[] = [];
+  for (const item of legacy) {
+    if (!item || typeof item !== "object") continue;
+    const record = await upsertActivityRecord(env, item as Record<string, unknown>, "legacy-migration");
+    const id = cleanActivityId(record?.id);
+    if (id) ids.push(id);
+  }
+  return ids;
+}
+
+async function listActivityRecords(env: Env, rawData?: Record<string, unknown> | null) {
+  if (!env.ASSETS_BUCKET) {
+    const raw = rawData ?? await readManagerDataRaw(env);
+    return Array.isArray(raw?.activities) ? raw.activities : [];
+  }
+  let ids = await readActivityIndex(env);
+  if (!ids.length) {
+    await migrateLegacyActivities(env, rawData);
+    ids = await readActivityIndex(env);
+  }
+  const records: Record<string, unknown>[] = [];
+  for (const id of ids) {
+    const record = await readActivityRecord(env, id);
+    if (record) records.push(record);
+  }
+  return records;
+}
+
+async function deleteActivityRecord(env: Env, id: string, actor: string) {
+  if (!env.ASSETS_BUCKET) return false;
+  const cleanId = cleanActivityId(id);
+  if (!cleanId) return false;
+  const record = await readActivityRecord(env, cleanId);
+  if (record) {
+    await env.ASSETS_BUCKET.put(`activities/deleted/${encodeURIComponent(cleanId)}-${Date.now()}.json`, JSON.stringify({ ...record, deletedAt: new Date().toISOString(), deletedBy: actor }, null, 2), {
+      httpMetadata: { contentType: "application/json; charset=utf-8", cacheControl: "no-store" }
+    });
+  }
+  await env.ASSETS_BUCKET.delete(activityRecordKey(cleanId));
+  const index = await readActivityIndex(env);
+  await writeActivityIndex(env, index.filter((item) => item !== cleanId));
+  return true;
+}
+
+async function activityRecordsApi(request: Request, env: Env, url: URL) {
+  if (!env.ASSETS_BUCKET) return json({ success: false, message: "R2 bucket is not configured" }, 503);
+  const itemMatch = url.pathname.match(/^\/api\/activities\/([^/]+)$/);
+  if (request.method === "GET" && url.pathname === "/api/activities") {
+    return json({ success: true, data: { activities: await listActivityRecords(env) } });
+  }
+  if (request.method === "POST" && url.pathname === "/api/activities") {
+    const guard = await requireAdmin(request, env);
+    if (guard) return guard;
+    const body = await request.json().catch(() => ({})) as Record<string, unknown>;
+    if (!body || typeof body !== "object") return json({ success: false, message: "Invalid activity payload" }, 400);
+    const record = await upsertActivityRecord(env, body, activityActorFromRequest(request));
+    return json({ success: true, data: record, activities: await listActivityRecords(env) });
+  }
+  if (itemMatch && request.method === "PUT") {
+    const guard = await requireAdmin(request, env);
+    if (guard) return guard;
+    const id = decodeURIComponent(itemMatch[1]);
+    const body = await request.json().catch(() => ({})) as Record<string, unknown>;
+    if (!body || typeof body !== "object") return json({ success: false, message: "Invalid activity payload" }, 400);
+    const record = await upsertActivityRecord(env, { ...body, id }, activityActorFromRequest(request));
+    return json({ success: true, data: record, activities: await listActivityRecords(env) });
+  }
+  if (itemMatch && request.method === "DELETE") {
+    const guard = await requireAdmin(request, env);
+    if (guard) return guard;
+    const ok = await deleteActivityRecord(env, decodeURIComponent(itemMatch[1]), activityActorFromRequest(request));
+    return json({ success: ok, activities: await listActivityRecords(env) }, ok ? 200 : 404);
+  }
+  return json({ success: false, message: "Not found" }, 404);
+}
+
+async function readManagerData(env: Env) {
+  const raw = await readManagerDataRaw(env);
+  if (!raw) return raw;
+  return { ...raw, activities: await listActivityRecords(env, raw) };
 }
 
 function managerDataHasUsefulContent(input: Record<string, unknown> | null) {
@@ -420,15 +577,21 @@ function managerDataHasUsefulContent(input: Record<string, unknown> | null) {
   return hasRows || hasFormSettings || Boolean(input.monthlyActivity);
 }
 
-async function writeManagerData(env: Env, input: Record<string, unknown>) {
+async function writeManagerData(env: Env, input: Record<string, unknown>, actor = "admin") {
   if (!env.ASSETS_BUCKET) return false;
   if (!managerDataHasUsefulContent(input)) return false;
-  const previous = await readManagerData(env);
+  const incomingActivities = Array.isArray(input.activities) ? input.activities : [];
+  for (const item of incomingActivities) {
+    if (item && typeof item === "object") await upsertActivityRecord(env, item as Record<string, unknown>, actor);
+  }
+  const managerInput = { ...input };
+  delete managerInput.activities;
+  const previous = await readManagerDataRaw(env);
   if (managerDataHasUsefulContent(previous) && !managerDataHasUsefulContent(input)) return false;
   const preserveRosterIfOmittedOrEmpty = (key: string) => {
     const previousValue = previous && Object.prototype.hasOwnProperty.call(previous, key) ? previous[key] : undefined;
-    const inputHasKey = Object.prototype.hasOwnProperty.call(input, key);
-    const inputValue = inputHasKey ? input[key] : undefined;
+    const inputHasKey = Object.prototype.hasOwnProperty.call(managerInput, key);
+    const inputValue = inputHasKey ? managerInput[key] : undefined;
     if (Array.isArray(previousValue) && previousValue.length > 0 && (!inputHasKey || (Array.isArray(inputValue) && inputValue.length === 0))) {
       return previousValue;
     }
@@ -436,11 +599,12 @@ async function writeManagerData(env: Env, input: Record<string, unknown>) {
   };
   const data = {
     ...(previous || {}),
-    ...input,
+    ...managerInput,
     association: preserveRosterIfOmittedOrEmpty("association"),
     vendor: preserveRosterIfOmittedOrEmpty("vendor"),
     updatedAt: new Date().toISOString()
   };
+  delete data.activities;
   if (data.association === undefined) delete data.association;
   if (data.vendor === undefined) delete data.vendor;
   await env.ASSETS_BUCKET.put(managerDataKey, JSON.stringify(data, null, 2), {
@@ -4734,13 +4898,14 @@ export default {
 	    if (request.method === "GET" && url.pathname === "/api/monthly-activity") return json({ success: true, data: await readEffectiveMonthly(env) });
 	    if ((request.method === "PUT" || request.method === "POST") && url.pathname === "/api/monthly-activity") { const guard = await requireAdmin(request, env); if (guard) return guard; if (!env.ASSETS_BUCKET) return json({ success: false, message: "R2 bucket is not configured" }, 503); const config = await request.json().catch(() => ({})) as MonthlyConfig; await writeMonthly(env, config); const effective = await readEffectiveMonthly(env); return json({ success: true, data: effective, flex: buildMonthlyFlex(effective) }); }
 	    if (request.method === "GET" && url.pathname === "/api/monthly-activity/flex") { const config = await readEffectiveMonthly(env); return json({ success: true, flex: buildMonthlyFlex(config), data: config }); }
+	    if (url.pathname === "/api/activities" || /^\/api\/activities\/[^/]+$/.test(url.pathname)) return activityRecordsApi(request, env, url);
 	    if (request.method === "GET" && url.pathname === "/api/manager-data") return json({ success: true, data: await readManagerData(env) });
 	    if ((request.method === "PUT" || request.method === "POST") && url.pathname === "/api/manager-data") {
 	      const guard = await requireAdmin(request, env);
 	      if (guard) return guard;
 	      if (!env.ASSETS_BUCKET) return json({ success: false, message: "R2 bucket is not configured" }, 503);
 	      const data = await request.json().catch(() => ({})) as Record<string, unknown>;
-	      const saved = await writeManagerData(env, data);
+	      const saved = await writeManagerData(env, data, activityActorFromRequest(request));
 	      if (!saved) return json({ success: false, message: "拒絕空白或無效的名冊資料覆蓋" }, 400);
 	      return json({ success: true, data: await readManagerData(env) });
 	    }

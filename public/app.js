@@ -185,6 +185,7 @@
     if (!hasAdminIdentity()) return;
     if (!managerDataHasContent(state.data)) return;
     const payload = { ...state.data };
+    delete payload.activities;
     ["association", "vendor"].forEach((name) => {
       if (Array.isArray(payload[name]) && payload[name].length === 0) delete payload[name];
     });
@@ -197,14 +198,44 @@
       });
     } catch (_) {}
   }
+  async function loadActivitiesRemote() {
+    const response = await fetch(api + "/api/activities", { headers: adminHeaders(), cache: "no-store" });
+    const result = await response.json().catch(() => ({}));
+    const activities = Array.isArray(result?.data?.activities) ? result.data.activities : Array.isArray(result?.activities) ? result.activities : [];
+    if (result.success) state.data.activities = activities;
+    return state.data.activities;
+  }
+  async function saveActivityRemote(activity) {
+    if (!hasAdminIdentity()) return activity;
+    const id = String(activity?.id || "").trim();
+    const response = await fetch(api + (id ? "/api/activities/" + encodeURIComponent(id) : "/api/activities"), {
+      method: id ? "PUT" : "POST",
+      headers: adminHeaders({ "content-type": "application/json" }),
+      body: JSON.stringify(activity)
+    });
+    const result = await response.json().catch(() => ({}));
+    if (!response.ok || !result.success) throw new Error(result.message || "活動儲存失敗");
+    return result.data || activity;
+  }
+  async function deleteActivityRemote(id) {
+    if (!hasAdminIdentity()) return false;
+    const response = await fetch(api + "/api/activities/" + encodeURIComponent(id), {
+      method: "DELETE",
+      headers: adminHeaders()
+    });
+    const result = await response.json().catch(() => ({}));
+    if (!response.ok || !result.success) throw new Error(result.message || "活動刪除失敗");
+    return true;
+  }
   async function loadManagerDataRemote() {
     if (managerDataLoading) return;
     managerDataLoading = true;
     try {
       const response = await fetch(api + "/api/manager-data", { headers: adminHeaders(), cache: "no-store" });
       const result = await response.json().catch(() => ({}));
-      if (result.success && managerDataHasContent(result.data)) {
-        state.data = mergeManagerData(emptyManagerData(), result.data);
+      if (result.success) {
+        state.data = mergeManagerData(emptyManagerData(), result.data || {});
+        await loadActivitiesRemote();
         await loadAdminAccessIntoRoster();
         render();
       }
@@ -800,6 +831,12 @@
         if (!existing.posterUrl && activity.posterUrl) existing.posterUrl = activity.posterUrl;
         if (!existing.imageUrl && (activity.imageUrl || existing.posterUrl)) existing.imageUrl = activity.imageUrl || existing.posterUrl;
         if (!existing.formUrl && await ensureNativeFormForActivity(existing, email)) formsCreated += 1;
+        try {
+          const saved = await saveActivityRemote(existing);
+          Object.assign(existing, saved || {});
+        } catch (err) {
+          if (showMessage) toast(err?.message || "活動同步失敗");
+        }
         repaired += 1;
         continue;
       }
@@ -825,6 +862,13 @@
         lineDraftId: key,
         lineCreatedBy: activity.lineCreatedBy || row.lineUserId || ""
       };
+      try {
+        const saved = await saveActivityRemote(item);
+        Object.assign(item, saved || {});
+      } catch (err) {
+        if (showMessage) toast(err?.message || "活動同步失敗");
+        continue;
+      }
       state.data.activities.unshift(item);
       if (await ensureNativeFormForActivity(item, email)) formsCreated += 1;
       added += 1;
@@ -1136,11 +1180,17 @@
     state.data[type] = mapped.concat(state.data[type]); save(); return mapped.length;
   }
 
-  function deleteActivity(rowId) {
+  async function deleteActivity(rowId) {
     const row = state.data.activities.find(x => x.id === rowId);
     if (!row || !confirm(`確定刪除活動「${row.name || rowId}」？`)) return;
     markActivityDeleted(row);
-    deleteRemoteLineActivityDraft(row);
+    try {
+      await deleteActivityRemote(rowId);
+      deleteRemoteLineActivityDraft(row);
+    } catch (err) {
+      toast(err?.message || "活動刪除失敗");
+      return;
+    }
     state.data.activities = state.data.activities.filter(x => x.id !== rowId);
     if (state.data.formSettings) {
       delete state.data.formSettings[rowId];
@@ -1252,6 +1302,13 @@
           formMode: activity.formMode || ""
         });
         if (activity.activityNo) state.data.formSettings[activity.activityNo] = state.data.formSettings[activity.id];
+        try {
+          const saved = await saveActivityRemote(activity);
+          Object.assign(activity, saved || {});
+        } catch (error) {
+          toast(error?.message || "活動儲存失敗");
+          return;
+        }
         state.drawer = "";
         save();
         render();
@@ -1327,7 +1384,23 @@
     document.querySelectorAll("[data-refresh-member-registrations]").forEach(b => b.onclick = () => loadMemberRegistrationList(b.dataset.memberType, b.dataset.memberId, true));
     document.querySelectorAll("[data-import]").forEach(b => b.onclick = () => { state.drawer = "import-" + b.dataset.import + ":new"; render(); });
     document.querySelectorAll("[data-close]").forEach(b => b.onclick = () => { state.drawer = ""; render(); });
-    document.querySelectorAll("[data-toggle]").forEach(b => b.onclick = () => { const x = state.data.activities.find(r => r.id === b.dataset.toggle); if (x) x.status = x.status === "上架" ? "下架" : "上架"; save(); render(); });
+    document.querySelectorAll("[data-toggle]").forEach(b => b.onclick = async () => {
+      const x = state.data.activities.find(r => r.id === b.dataset.toggle);
+      if (!x) return;
+      const previous = x.status;
+      x.status = x.status === "上架" ? "下架" : "上架";
+      b.disabled = true;
+      try {
+        const saved = await saveActivityRemote(x);
+        Object.assign(x, saved || {});
+      } catch (err) {
+        x.status = previous;
+        toast(err?.message || "活動狀態儲存失敗");
+      } finally {
+        b.disabled = false;
+        render();
+      }
+    });
     document.querySelectorAll("[data-delete-activity]").forEach(b => b.onclick = () => deleteActivity(b.dataset.deleteActivity));
     document.querySelectorAll("[data-delete-member]").forEach(b => b.onclick = () => deleteMember(b.dataset.deleteMember));
     document.querySelectorAll("[data-member-login-toggle]").forEach(input => input.onchange = () => {
@@ -1361,8 +1434,8 @@
       if (url) location.href = url;
       else toast("這個活動尚未建立報名表，請到編輯活動產生。");
     });
-    const af = document.querySelector("#activity-form"); if (af) af.onsubmit = e => { e.preventDefault(); const d = Object.fromEntries(new FormData(af)); const templateMode = d.templateMode || "custom"; const registrationMode = d.registrationMode || (templateMode === "mode1_vendor_visit" ? "member_login" : "form"); state.data.activities.unshift({ id: uid(), name: d.name.trim(), templateMode, type: d.type, typeLabel: formTypeLabel(d), courseTime: d.courseTime, deadline: d.deadline, capacity: Number(d.capacity || 0), checkinPoints: Number(d.checkinPoints || 0), feePoints: Number(d.feePoints || 0), registrationMode, detailText: d.detailText || "", reg: 0, check: 0, status: d.status, formUrl: "" }); save(); state.view = "dashboard"; render(); toast("活動已建立"); };
-    const ea = document.querySelector("#drawer-activity"); if (ea) ea.onsubmit = e => { e.preventDefault(); const d = Object.fromEntries(new FormData(ea)); const x = state.data.activities.find(r => r.id === d.id); if (x) Object.assign(x, { name: d.name, templateMode: d.templateMode || x.templateMode || "custom", type: d.type, typeLabel: formTypeLabel(d), courseTime: d.courseTime, deadline: d.deadline, capacity: Number(d.capacity || 0), checkinPoints: Number(d.checkinPoints || 0), feePoints: Number(d.feePoints || 0), registrationMode: d.registrationMode || "form", reg: Number(d.reg || 0), check: Number(d.check || 0), status: d.status, formUrl: d.formUrl }); state.drawer = ""; save(); render(); toast("活動已儲存"); };
+    const af = document.querySelector("#activity-form"); if (af) af.onsubmit = async e => { e.preventDefault(); const d = Object.fromEntries(new FormData(af)); const templateMode = d.templateMode || "custom"; const registrationMode = d.registrationMode || (templateMode === "mode1_vendor_visit" ? "member_login" : "form"); const item = { id: uid(), name: d.name.trim(), templateMode, type: d.type, typeLabel: formTypeLabel(d), courseTime: d.courseTime, deadline: d.deadline, capacity: Number(d.capacity || 0), checkinPoints: Number(d.checkinPoints || 0), feePoints: Number(d.feePoints || 0), registrationMode, detailText: d.detailText || "", reg: 0, check: 0, status: d.status, formUrl: "" }; try { const saved = await saveActivityRemote(item); state.data.activities.unshift(saved || item); state.view = "dashboard"; render(); toast("活動已建立"); } catch (err) { toast(err?.message || "活動建立失敗"); } };
+    const ea = document.querySelector("#drawer-activity"); if (ea) ea.onsubmit = async e => { e.preventDefault(); const d = Object.fromEntries(new FormData(ea)); const x = state.data.activities.find(r => r.id === d.id); if (x) { Object.assign(x, { name: d.name, templateMode: d.templateMode || x.templateMode || "custom", type: d.type, typeLabel: formTypeLabel(d), courseTime: d.courseTime, deadline: d.deadline, capacity: Number(d.capacity || 0), checkinPoints: Number(d.checkinPoints || 0), feePoints: Number(d.feePoints || 0), registrationMode: d.registrationMode || "form", reg: Number(d.reg || 0), check: Number(d.check || 0), status: d.status, formUrl: d.formUrl }); try { const saved = await saveActivityRemote(x); Object.assign(x, saved || {}); } catch (err) { toast(err?.message || "活動儲存失敗"); return; } } state.drawer = ""; save(); render(); toast("活動已儲存"); };
     const mf = document.querySelector("#drawer-member"); if (mf) mf.onsubmit = e => { e.preventDefault(); const type = mf.dataset.type; const d = Object.fromEntries(new FormData(mf)); const rows = state.data[type]; const old = rows.find(r => r.id === d.id); const loginAccess = d.loginAccess === "Y"; const item = { ...d, id: d.id || uid(), loginAccess, allowLogin: loginAccess, canLogin: loginAccess }; old ? Object.assign(old, item) : rows.unshift(item); state.drawer = ""; save(); syncRosterMemberToWorker(type, item); syncAdminAccessForMember(type, item); render(); toast("名冊已儲存"); };
     const im = document.querySelector("#import-form"); if (im) im.onsubmit = e => { e.preventDefault(); const d = Object.fromEntries(new FormData(im)); const count = importRows(im.dataset.type, d.csv || ""); state.drawer = ""; render(); toast(`已導入 ${count} 筆資料`); };
     const loadRoster = document.querySelector("[data-load-roster]"); if (loadRoster) loadRoster.onclick = () => loadRosterSeed(true);
