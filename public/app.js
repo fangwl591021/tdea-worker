@@ -16,7 +16,7 @@
     adminWhitelist: ["白名單", "管理後台、核銷與 LINE 工具使用權限。"],
     redeem: ["點數折抵", "建立限時店家掃碼工作台，店家掃會員 QR 後執行扣點。"]
   };
-  const state = { view: "dashboard", drawer: "", data: load(), registrationLists: {}, memberRegistrationLists: {}, memberApplications: null, adminWhitelist: null, adminWhitelistMeta: null };
+  const state = { view: "dashboard", drawer: "", data: load(), registrationLists: {}, memberRegistrationLists: {}, memberApplications: null, adminWhitelist: null, adminWhitelistMeta: null, rosterSearch: { association: "", vendor: "" } };
   let managerDataSaveTimer = null;
   let managerDataLoading = false;
   let lineDraftAutoImporting = false;
@@ -220,6 +220,33 @@
   function visibleRosterRows(type) {
     const rows = Array.isArray(state.data[type]) ? state.data[type] : [];
     return rows.filter((row) => !isDefinitelyNonRosterRow(row, type));
+  }
+  function rosterSearchValue(row, vendor) {
+    const values = [
+      row.memberNo,
+      memberLineUid(row),
+      row.lineUserId,
+      row.uid,
+      row.email,
+      row.phone,
+      row.mobile,
+      row.note,
+      row.qualification,
+      vendor ? row.companyName : row.name,
+      vendor ? row.taxId : row.identity,
+      vendor ? row.owner : row.gender,
+      vendor ? row.contact : ""
+    ];
+    return values.map((value) => String(value || "").toLowerCase()).join(" ");
+  }
+  function rosterSearchQuery(type) {
+    return String(state.rosterSearch?.[type] || "").trim().toLowerCase();
+  }
+  function filterRosterRows(type, rows) {
+    const query = rosterSearchQuery(type);
+    if (!query) return rows;
+    const vendor = type === "vendor";
+    return rows.filter((row) => rosterSearchValue(row, vendor).includes(query));
   }
   function cleanupRosterData() {
     if (rosterCleanupApplied) return;
@@ -882,9 +909,19 @@
   }
 
   function members(type) {
-    const rows = visibleRosterRows(type), vendor = type === "vendor";
-    if (!rows.length) return `<section class="panel"><div class="panel-head"><h2 class="panel-title">${vendor ? "廠商會員" : "協會會員"}</h2><button class="btn" data-import="${type}">匯入 CSV</button></div>${empty(`目前沒有${vendor ? "廠商會員" : "協會會員"}資料`)}</section>`;
-    return `<section class="panel"><div class="panel-head"><h2 class="panel-title">${vendor ? "廠商會員" : "協會會員"}</h2><div class="actions"><button class="btn" data-import="${type}">匯入 CSV</button><button class="btn" data-export>匯出備份</button></div></div><div class="table-wrap"><table><thead><tr><th>會員編號</th><th>${vendor ? "公司名稱" : "姓名"}</th><th>LINE UID</th><th>點數</th><th>${vendor ? "統編" : "身分"}</th><th>${vendor ? "聯絡窗口" : "性別"}</th><th>資格</th><th>舊允許</th><th>備註</th><th>操作</th></tr></thead><tbody>${rows.map(x => `<tr><td>${esc(x.memberNo)}</td><td><strong>${esc(vendor ? x.companyName : x.name)}</strong></td><td>${esc(shortUid(memberLineUid(x)))}</td><td>${esc(x.pointBalance ?? x.points ?? "")}</td><td>${esc(vendor ? x.taxId : x.identity)}</td><td>${esc(vendor ? x.contact : x.gender)}</td><td><span class="badge ${x.qualification === "Y" ? "live" : "off"}">${esc(x.qualification)}</span></td><td><label class="sync-toggle"><input type="checkbox" data-member-login-toggle="${type}:${x.id}" ${memberLoginAllowed(x) ? "checked" : ""}> 舊資料</label></td><td>${esc(x.note)}</td><td><button class="link" data-drawer="${type}:${x.id}">編輯</button><span class="muted"> / </span><button class="link danger-link" data-delete-member="${type}:${x.id}">刪除</button></td></tr>`).join("")}</tbody></table></div></section>`;
+    const allRows = visibleRosterRows(type), vendor = type === "vendor";
+    const rows = filterRosterRows(type, allRows);
+    const title = vendor ? "廠商會員" : "協會會員";
+    const query = state.rosterSearch?.[type] || "";
+    const search = `<div class="field" style="min-width:280px;max-width:460px;margin-left:auto"><input data-roster-search="${type}" value="${esc(query)}" placeholder="搜尋${title}：編號、名稱、UID、電話、Email"></div>`;
+    const count = `<span class="muted" data-roster-count="${type}">${rows.length} / ${allRows.length} 筆</span>`;
+    if (!allRows.length) return `<section class="panel"><div class="panel-head"><h2 class="panel-title">${title}</h2><button class="btn" data-import="${type}">匯入 CSV</button></div>${empty(`目前沒有${title}資料`)}</section>`;
+    const body = `<div class="table-wrap"><table><thead><tr><th>會員編號</th><th>${vendor ? "公司名稱" : "姓名"}</th><th>LINE UID</th><th>點數</th><th>${vendor ? "統編" : "身分"}</th><th>${vendor ? "聯絡窗口" : "性別"}</th><th>資格</th><th>舊允許</th><th>備註</th><th>操作</th></tr></thead><tbody>${allRows.map(x => {
+      const searchText = rosterSearchValue(x, vendor);
+      const hidden = rosterSearchQuery(type) && !searchText.includes(rosterSearchQuery(type));
+      return `<tr data-roster-row="${type}" data-roster-search-text="${esc(searchText)}" ${hidden ? `style="display:none"` : ""}><td>${esc(x.memberNo)}</td><td><strong>${esc(vendor ? x.companyName : x.name)}</strong></td><td>${esc(shortUid(memberLineUid(x)))}</td><td>${esc(x.pointBalance ?? x.points ?? "")}</td><td>${esc(vendor ? x.taxId : x.identity)}</td><td>${esc(vendor ? x.contact : x.gender)}</td><td><span class="badge ${x.qualification === "Y" ? "live" : "off"}">${esc(x.qualification)}</span></td><td><label class="sync-toggle"><input type="checkbox" data-member-login-toggle="${type}:${x.id}" ${memberLoginAllowed(x) ? "checked" : ""}> 舊資料</label></td><td>${esc(x.note)}</td><td><button class="link" data-drawer="${type}:${x.id}">編輯</button><span class="muted"> / </span><button class="link danger-link" data-delete-member="${type}:${x.id}">刪除</button></td></tr>`;
+    }).join("")}</tbody></table></div>`;
+    return `<section class="panel"><div class="panel-head"><h2 class="panel-title">${title}</h2><div class="actions">${search}${count}<button class="btn" data-import="${type}">匯入 CSV</button><button class="btn" data-export>匯出備份</button></div></div>${body}</section>`;
   }
 
   function adminWhitelist() {
@@ -1218,6 +1255,22 @@
       applySidebarCollapsed(next);
     };
     document.querySelectorAll("[data-nav]").forEach(b => b.onclick = () => { state.view = b.dataset.nav; state.drawer = ""; render(); });
+    document.querySelectorAll("[data-roster-search]").forEach(input => {
+      input.oninput = () => {
+        const type = input.dataset.rosterSearch;
+        const query = String(input.value || "").trim().toLowerCase();
+        state.rosterSearch[type] = input.value || "";
+        const rows = Array.from(document.querySelectorAll(`[data-roster-row="${type}"]`));
+        let visible = 0;
+        rows.forEach((row) => {
+          const matched = !query || String(row.dataset.rosterSearchText || "").includes(query);
+          row.style.display = matched ? "" : "none";
+          if (matched) visible += 1;
+        });
+        const count = document.querySelector(`[data-roster-count="${type}"]`);
+        if (count) count.textContent = `${visible} / ${rows.length} 筆`;
+      };
+    });
     document.querySelectorAll("[data-load-whitelist]").forEach(b => b.onclick = async () => { b.disabled = true; await loadAdminWhitelist(true); b.disabled = false; render(); });
     document.querySelectorAll("[data-add-whitelist-row]").forEach(b => b.onclick = () => { state.adminWhitelist = [...(state.adminWhitelist || []), { id: uid(), enabled: true, role: "admin" }]; render(); });
     document.querySelectorAll("[data-remove-whitelist-row]").forEach(b => b.onclick = () => { const row = b.closest("[data-whitelist-row]"); if (row) row.remove(); });
