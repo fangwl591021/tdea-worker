@@ -39,6 +39,8 @@
 
   function uid() { return "id-" + Math.random().toString(36).slice(2) + Date.now().toString(36); }
   function esc(v) { return String(v ?? "").replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;").replaceAll("'", "&#039;"); }
+  function cleanValue(v) { return String(v ?? "").trim(); }
+  function firstValue(...values) { return values.map(cleanValue).find(Boolean) || ""; }
   function n(v) { return Number(v || 0).toLocaleString("zh-TW"); }
   function activityTypeLabel(row) { return row?.typeLabel || row?.type || ""; }
   function formTypeLabel(data) {
@@ -157,6 +159,11 @@
         ...(localRow || {}),
         ...remoteRow,
         lineUserId: memberLineUid(remoteRow) || memberLineUid(localRow),
+        legacyAccount: firstValue(remoteRow?.legacyAccount, remoteRow?.aiweMemberNo, remoteRow?.motherAccount, localRow?.legacyAccount, localRow?.aiweMemberNo, localRow?.motherAccount),
+        phone: firstValue(remoteRow?.phone, remoteRow?.mobile, remoteRow?.tel, localRow?.phone, localRow?.mobile, localRow?.tel),
+        email: firstValue(remoteRow?.email, remoteRow?.mail, localRow?.email, localRow?.mail),
+        jobTitle: firstValue(remoteRow?.jobTitle, remoteRow?.title, remoteRow?.position, localRow?.jobTitle, localRow?.title, localRow?.position),
+        company: firstValue(remoteRow?.company, remoteRow?.companyName, remoteRow?.unit, localRow?.company, localRow?.companyName, localRow?.unit),
         loginAccess,
         allowLogin: loginAccess,
         canLogin: loginAccess
@@ -1091,7 +1098,10 @@
   }
   function memberForm(type, rowId) {
     const x = state.data[type].find(r => r.id === rowId) || {}, vendor = type === "vendor";
-    return `<form class="form-grid" id="drawer-member" data-type="${type}">${hidden("id", x.id)}${field("會員編號", "memberNo", x.memberNo)}${field("LINE UID", "lineUserId", memberLineUid(x), "例如：Ub68b9724664b889e790c789ece72f717")}${vendor ? `${field("公司名稱", "companyName", x.companyName)}${field("統一編號", "taxId", x.taxId)}${field("負責人", "owner", x.owner)}${field("聯絡窗口", "contact", x.contact)}` : `${field("身分", "identity", x.identity)}${field("姓名", "name", x.name)}${select("性別", "gender", ["", "男", "女"], x.gender)}`}${select("會員資格", "qualification", ["Y", "N"], x.qualification || "Y")}<label class="sync-toggle"><input type="checkbox" name="loginAccess" value="Y" ${memberLoginAllowed(x) ? "checked" : ""}> 舊允許資料（正式權限請到 LINE 專區 / 白名單設定）</label><div class="field"><label>備註</label><textarea name="note">${esc(x.note)}</textarea></div><button class="btn primary" type="submit">儲存</button></form>`;
+    const profileFields = `${field("會員編號", "memberNo", x.memberNo)}${field("LINE UID", "lineUserId", memberLineUid(x), "例如：Ub68b9724664b889e790c789ece72f717")}${field("母站帳號", "legacyAccount", firstValue(x.legacyAccount, x.aiweMemberNo, x.motherAccount), "母站帳號")}${field("手機", "phone", firstValue(x.phone, x.mobile, x.tel), "手機")}${field("Email", "email", x.email, "會員 Email", false, "email")}`;
+    const vendorFields = `${field("公司名稱", "companyName", x.companyName)}${field("統一編號", "taxId", x.taxId)}${field("負責人", "owner", x.owner)}${field("聯絡窗口", "contact", x.contact)}`;
+    const memberFields = `${field("身分", "identity", x.identity)}${field("姓名", "name", x.name)}${select("性別", "gender", ["", "男", "女"], x.gender)}${field("本職", "jobTitle", firstValue(x.jobTitle, x.title, x.position), "本職")}${field("公司/單位", "company", firstValue(x.company, x.companyName, x.unit), "公司/單位")}`;
+    return `<form class="form-grid" id="drawer-member" data-type="${type}">${hidden("id", x.id)}${profileFields}${vendor ? vendorFields : memberFields}${select("會員資格", "qualification", ["Y", "N"], x.qualification || "Y")}<label class="sync-toggle"><input type="checkbox" name="loginAccess" value="Y" ${memberLoginAllowed(x) ? "checked" : ""}> 舊允許資料（正式權限請到 LINE 專區 / 白名單設定）</label><div class="field"><label>備註</label><textarea name="note">${esc(x.note)}</textarea></div><button class="btn primary" type="submit">儲存</button></form>`;
   }
   function importForm(type) {
     const vendor = type === "vendor";
