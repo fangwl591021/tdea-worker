@@ -513,16 +513,21 @@ async function migrateLegacyActivities(env: Env, rawData?: Record<string, unknow
   return ids;
 }
 
-async function listActivityRecords(env: Env, rawData?: Record<string, unknown> | null) {
+function isArchivedActivityRecord(record: Record<string, unknown>) {
+  return record.archived === true || record.deleted === true || clean(record.deletedAt) !== "" || clean(record.status) === "已封存";
+}
+
+async function listActivityRecords(env: Env, rawData?: Record<string, unknown> | null, options: { includeArchived?: boolean } = {}) {
   if (!env.ASSETS_BUCKET) {
     const raw = rawData ?? await readManagerDataRaw(env);
-    return Array.isArray(raw?.activities) ? raw.activities : [];
+    const rows = Array.isArray(raw?.activities) ? raw.activities as Record<string, unknown>[] : [];
+    return options.includeArchived ? rows : rows.filter((record) => !isArchivedActivityRecord(record));
   }
   const ids = await readActivityIndex(env);
   const records: Record<string, unknown>[] = [];
   for (const id of ids) {
     const record = await readActivityRecord(env, id);
-    if (record) records.push(record);
+    if (record && (options.includeArchived || !isArchivedActivityRecord(record))) records.push(record);
   }
   return records;
 }
@@ -533,21 +538,25 @@ async function deleteActivityRecord(env: Env, id: string, actor: string) {
   if (!cleanId) return false;
   const record = await readActivityRecord(env, cleanId);
   if (record) {
-    await env.ASSETS_BUCKET.put(`activities/deleted/${encodeURIComponent(cleanId)}-${Date.now()}.json`, JSON.stringify({ ...record, deletedAt: new Date().toISOString(), deletedBy: actor }, null, 2), {
+    const archivedAt = new Date().toISOString();
+    const archived = { ...record, archived: true, deleted: true, deletedAt: archivedAt, deletedBy: actor, status: "已封存" };
+    await env.ASSETS_BUCKET.put(`activities/deleted/${encodeURIComponent(cleanId)}-${Date.now()}.json`, JSON.stringify(archived, null, 2), {
       httpMetadata: { contentType: "application/json; charset=utf-8", cacheControl: "no-store" }
     });
+    await env.ASSETS_BUCKET.put(activityRecordKey(cleanId), JSON.stringify(archived, null, 2), {
+      httpMetadata: { contentType: "application/json; charset=utf-8", cacheControl: "no-store" }
+    });
+    return true;
   }
-  await env.ASSETS_BUCKET.delete(activityRecordKey(cleanId));
-  const index = await readActivityIndex(env);
-  await writeActivityIndex(env, index.filter((item) => item !== cleanId));
-  return true;
+  return false;
 }
 
 async function activityRecordsApi(request: Request, env: Env, url: URL) {
   if (!env.ASSETS_BUCKET) return json({ success: false, message: "R2 bucket is not configured" }, 503);
   const itemMatch = url.pathname.match(/^\/api\/activities\/([^/]+)$/);
   if (request.method === "GET" && url.pathname === "/api/activities") {
-    return json({ success: true, data: { activities: await listActivityRecords(env) } });
+    const includeArchived = ["1", "true", "Y", "yes"].includes(clean(url.searchParams.get("includeArchived")).toLowerCase());
+    return json({ success: true, data: { activities: await listActivityRecords(env, null, { includeArchived }) } });
   }
   if (request.method === "POST" && url.pathname === "/api/activities") {
     const guard = await requireAdmin(request, env);

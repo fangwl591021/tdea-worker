@@ -244,7 +244,7 @@
       headers: adminHeaders()
     });
     const result = await response.json().catch(() => ({}));
-    if (!response.ok || !result.success) throw new Error(result.message || "活動刪除失敗");
+    if (!response.ok || !result.success) throw new Error(result.message || "活動封存失敗");
     return true;
   }
   async function loadManagerDataRemote() {
@@ -989,7 +989,7 @@
   }
   function stat(label, value) { return `<div class="stat"><span>${label}</span><strong>${n(value)}</strong></div>`; }
   function activityTable(rows) {
-    return `<div class="table-wrap"><table><thead><tr><th>活動名稱</th><th>類型</th><th>課程時間</th><th>報名</th><th>簽到</th><th>狀態</th><th>操作</th></tr></thead><tbody>${rows.map(x => `<tr><td><strong>${esc(x.name)}</strong></td><td>${esc(activityTypeLabel(x))}</td><td>${esc(x.courseTime || "-")}</td><td>${n(x.reg)}</td><td>${n(x.check)}</td><td><span class="badge ${x.status === "上架" ? "live" : "off"}">${esc(x.status)}</span></td><td><button class="link" data-drawer="activity:${x.id}">編輯</button><span class="muted"> / </span><button class="link" data-registration-list="${x.id}">名單</button><span class="muted"> / </span><button class="link" data-toggle="${x.id}">${x.status === "上架" ? "下架" : "上架"}</button><span class="muted"> / </span><button class="link danger-link" data-delete-activity="${x.id}">刪除</button></td></tr>`).join("")}</tbody></table></div>`;
+    return `<div class="table-wrap"><table><thead><tr><th>活動名稱</th><th>類型</th><th>課程時間</th><th>報名</th><th>簽到</th><th>狀態</th><th>操作</th></tr></thead><tbody>${rows.map(x => `<tr><td><strong>${esc(x.name)}</strong></td><td>${esc(activityTypeLabel(x))}</td><td>${esc(x.courseTime || "-")}</td><td>${n(x.reg)}</td><td>${n(x.check)}</td><td><span class="badge ${x.status === "上架" ? "live" : "off"}">${esc(x.status)}</span></td><td><button class="link" data-drawer="activity:${x.id}">編輯</button><span class="muted"> / </span><button class="link" data-registration-list="${x.id}">名單</button><span class="muted"> / </span><button class="link" data-toggle="${x.id}">${x.status === "上架" ? "下架" : "上架"}</button><span class="muted"> / </span><button class="link danger-link" data-delete-activity="${x.id}">封存</button></td></tr>`).join("")}</tbody></table></div>`;
   }
 
   function members(type) {
@@ -1215,23 +1215,19 @@
 
   async function deleteActivity(rowId) {
     const row = state.data.activities.find(x => x.id === rowId);
-    if (!row || !confirm(`確定刪除活動「${row.name || rowId}」？`)) return;
+    if (!row || !confirm(`確定封存活動「${row.name || rowId}」？\n\n活動會從清單隱藏，但報名、簽到、抽獎與表單設定會保留。`)) return;
     markActivityDeleted(row);
     try {
       await deleteActivityRemote(rowId);
       deleteRemoteLineActivityDraft(row);
     } catch (err) {
-      toast(err?.message || "活動刪除失敗");
+      toast(err?.message || "活動封存失敗");
       return;
     }
     state.data.activities = state.data.activities.filter(x => x.id !== rowId);
-    if (state.data.formSettings) {
-      delete state.data.formSettings[rowId];
-      if (row.activityNo) delete state.data.formSettings[row.activityNo];
-    }
     save();
     render();
-    toast("活動已刪除");
+    toast("活動已封存，可保留既有報名資料");
   }
 
   function ensureActivityEditorFields() {
