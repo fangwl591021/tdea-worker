@@ -62,7 +62,7 @@
 
   function activities() {
     const rows = remoteActivities.length ? remoteActivities : localData().activities;
-    return Array.isArray(rows) ? rows.filter((item) => item && (item.name || item.activityNo || item.id)) : [];
+    return Array.isArray(rows) ? rows.filter((item) => item && (item.name || item.activityNo || item.id) && !isArchivedActivity(item)) : [];
   }
 
   async function loadRemoteActivities() {
@@ -83,7 +83,13 @@
     return trim(value).replace(/\s+/g, "");
   }
 
+  function isArchivedActivity(activity) {
+    const status = normalizeStatus(activity?.status);
+    return activity?.archived === true || activity?.deleted === true || Boolean(trim(activity?.deletedAt)) || status.includes("已封存") || status.includes("封存");
+  }
+
   function isLiveActivity(activity) {
+    if (isArchivedActivity(activity)) return false;
     const status = normalizeStatus(activity?.status);
     return status.includes("上架") && !status.includes("下架");
   }
@@ -293,17 +299,15 @@
       const matched = keys.map((key) => existing.get(key)).find(Boolean) || {};
       return pageFromActivity(activity, matched);
     });
-    if (nextPages.length || options.allowEmpty) {
-      config.pages = nextPages;
-      selected = Math.max(0, Math.min(selected, Math.max(config.pages.length - 1, 0)));
-    }
+    config.pages = nextPages;
+    selected = Math.max(0, Math.min(selected, Math.max(config.pages.length - 1, 0)));
     const changed = before !== pagesSignature();
     if (changed && options.autoPublish !== false) scheduleAutoPublish();
     return nextPages.length;
   }
 
   function blankConfig() {
-    return { enabled: true, keyword: fixedKeyword, month: new Date().toISOString().slice(0, 7), altText: "TDEA 每月活動", detailBaseUrl: defaultLiffBase, pages: [blankPage()] };
+    return { enabled: true, keyword: fixedKeyword, month: new Date().toISOString().slice(0, 7), altText: "TDEA 每月活動", detailBaseUrl: defaultLiffBase, pages: [] };
   }
 
   function blankPage() {
@@ -315,7 +319,7 @@
     config.keyword = fixedKeyword;
     config.altText = config.altText || "TDEA 每月活動";
     config.detailBaseUrl = config.detailBaseUrl || defaultLiffBase;
-    if (!Array.isArray(config.pages) || !config.pages.length) config.pages = [blankPage()];
+    if (!Array.isArray(config.pages)) config.pages = [];
     config.pages = config.pages.map((page) => {
       const next = { ...blankPage(), ...page, id: page.id || id() };
       if (!next.activityNo && page.detailUrl && !String(page.detailUrl).startsWith("http")) next.activityNo = page.detailUrl;
@@ -436,13 +440,14 @@
     syncPagesFromPublishedActivities();
     const main = document.querySelector(".main");
     if (!main || !config) return;
-    selected = Math.min(selected, config.pages.length - 1);
-    const page = config.pages[selected];
+    selected = Math.max(0, Math.min(selected, Math.max(config.pages.length - 1, 0)));
+    const page = config.pages[selected] || blankPage();
     main.innerHTML = `<div class="topbar"><div><h1>每月活動</h1></div><div class="actions"><button class="btn" data-monthly-json>複製 FLEX JSON</button><button class="btn primary" data-monthly-publish>發布</button></div></div><div class="monthly-workspace"><div class="monthly-left"><section class="panel"><div class="panel-head"><h2 class="panel-title">基本設定</h2></div><div class="monthly-form">${basicFields()}</div></section><section class="panel"><div class="panel-head"><h2 class="panel-title">活動頁數</h2><div class="actions"><button class="btn" data-monthly-add>新增頁</button><button class="btn danger" data-monthly-delete>刪除頁</button></div></div><div class="monthly-pages">${pageButtons()}</div></section><section class="panel"><div class="panel-head"><h2 class="panel-title">第 ${selected + 1} 頁設定</h2></div>${pageForm(page)}</section></div><aside class="panel monthly-preview-panel ${previewCollapsed() ? "is-collapsed" : ""}"><div class="panel-head" data-monthly-preview-head><div class="actions" style="justify-content:flex-start"><button class="monthly-preview-toggle" type="button" data-monthly-preview-toggle>${previewCollapsed() ? "▴" : "▾"}</button><h2 class="panel-title">預覽</h2></div><span class="muted">橫式多頁 FLEX</span></div><div class="monthly-preview-body" data-monthly-preview-wrap>${preview()}</div></aside></div><div class="toast" id="monthly-toast"></div>`;
     bind();
   }
 
   function pageButtons() {
+    if (!config.pages.length) return `<div class="monthly-warning">目前沒有可連動的上架活動，月活動不會顯示任何活動卡。</div>`;
     return config.pages.map((item, index) => {
       const page = hydratePage(item);
       const rawLabel = page.activityName || page.activityNo || "";
@@ -478,17 +483,20 @@
     return `<div class="monthly-linked-box"><strong>${esc(hydrated.activityName || hydrated.activityNo)}</strong><div class="monthly-status-row"><span class="monthly-status ${meaningfulText(hydrated.detailText) ? "ok" : "bad"}">詳細說明：${meaningfulText(hydrated.detailText) ? "已帶入" : "未填"}</span><span class="monthly-status ${trim(hydrated.formUrl) ? "ok" : "bad"}">報名表：${trim(hydrated.formUrl) ? "已連動" : "未連動"}</span></div></div>`;
   }
   function pageForm(page) {
+    if (!config.pages.length) return `<div class="monthly-form"><div class="monthly-warning">目前沒有可連動的上架活動。請先到「創建活動」建立活動並上架，這裡才會產生活動卡。</div></div>`;
     const hydrated = hydratePage(page);
     const linked = trim(hydrated.activityNo || hydrated.activityId);
     return `<div class="monthly-form"><div class="field"><label>連動活動</label>${activitySelect(page)}<div class="monthly-link-note">只要選活動即可。詳細說明走 LIFF，報名按鈕走該活動的報名表。</div></div>${linkedInfo(page)}<div class="field"><label>活動圖片</label><input type="file" accept="image/*" data-monthly-file><div class="muted">上傳後會自動更新預覽圖片。</div></div><div class="field"><label>圖片網址</label><input name="imageUrl" data-monthly-page value="${esc(page.imageUrl)}" placeholder="上傳後自動填入，也可貼既有海報網址"></div>${!linked ? `<div class="monthly-warning">這頁尚未選擇活動，發布前請先選擇活動。</div>` : ""}${linked && !trim(hydrated.formUrl) ? `<div class="monthly-warning">這個活動還沒有報名表；發布時系統會自動產生並寫回活動。</div>` : ""}${linked && !meaningfulText(hydrated.detailText) ? `<div class="monthly-warning">此活動沒有詳細說明，請回到活動編輯補上「詳細說明」。</div>` : ""}</div>`;
   }
   function pageForm(page) {
+    if (!config.pages.length) return `<div class="monthly-form"><div class="monthly-warning">目前沒有可連動的上架活動。請先到「創建活動」建立活動並上架，這裡才會產生活動卡。</div></div>`;
     const hydrated = hydratePage(page);
     const linked = trim(hydrated.activityNo || hydrated.activityId);
     return `<div class="monthly-form"><div class="field"><label>連動活動</label>${activitySelect(page)}<div class="monthly-link-note">只要選活動即可。LINE Flex 使用主圖；詳細說明 LIFF 會顯示多張活動圖片輪播。</div></div>${linkedInfo(page)}<div class="field"><label>主圖 / LINE Flex 圖片</label><input type="file" accept="image/*" data-monthly-file><div class="muted">主圖會用在 LINE Flex 卡片與第一張輪播圖。</div></div><div class="field"><label>主圖網址</label><input name="imageUrl" data-monthly-page value="${esc(page.imageUrl)}" placeholder="上傳後自動填入，也可貼既有海報網址"></div><div class="field"><label>活動圖集</label><input type="file" accept="image/*" multiple data-monthly-gallery-file><div class="muted">可一次選多張；LIFF 詳細頁會每 3 秒自動左移換圖。</div></div><div class="field"><label>圖集網址</label><textarea name="galleryUrls" data-monthly-gallery placeholder="每行一張圖片網址">${esc((page.galleryUrls || []).join("\n"))}</textarea></div>${!linked ? `<div class="monthly-warning">這頁尚未選擇活動，發布前請先選擇活動。</div>` : ""}${linked && !trim(hydrated.formUrl) ? `<div class="monthly-warning">這個活動還沒有報名表；發布時系統會自動產生並寫回活動。</div>` : ""}${linked && !meaningfulText(hydrated.detailText) ? `<div class="monthly-warning">此活動沒有詳細說明，請回到活動編輯補上「詳細說明」。</div>` : ""}</div>`;
   }
 
   function preview() {
+    if (!config.pages.length) return `<div class="monthly-phone"><div class="monthly-screen"><div class="monthly-image-empty">目前沒有上架活動</div></div></div>`;
     return `<div class="monthly-phone"><div class="monthly-screen"><div class="monthly-carousel">${config.pages.map((rawPage, index) => {
       const page = hydratePage(rawPage);
       const imageUrl = page.imageUrl || defaultImageUrl;
@@ -496,6 +504,7 @@
     }).join("")}</div></div></div>`;
   }
   function preview() {
+    if (!config.pages.length) return `<div class="monthly-phone"><div class="monthly-screen"><div class="monthly-image-empty">目前沒有上架活動</div></div></div>`;
     return `<div class="monthly-phone"><div class="monthly-screen"><div class="monthly-carousel">${config.pages.map((rawPage, index) => {
       const page = hydratePage(rawPage);
       const images = pageGallery(page);

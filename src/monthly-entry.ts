@@ -2752,7 +2752,7 @@ function normalizeConfig(config: MonthlyConfig): MonthlyConfig {
     order: Number(page.order ?? index)
   })).filter((page) => page.activityNo || page.activityId || page.imageUrl || page.formUrl || page.detailText || page.detailUrl);
   return {
-    enabled: config.enabled !== false || normalizedPages.length > 0,
+    enabled: config.enabled !== false && normalizedPages.length > 0,
     keyword: fixedKeyword,
     month: String(config.month || "").trim(),
     altText: String(config.altText || "TDEA 每月活動").trim() || "TDEA 每月活動",
@@ -2764,6 +2764,8 @@ function normalizeConfig(config: MonthlyConfig): MonthlyConfig {
 
 function activityStatusIsOnline(activity: Record<string, unknown>) {
   const status = clean(activity.status || activity["狀態"]);
+  if (activity.archived === true || activity.deleted === true || clean(activity.deletedAt)) return false;
+  if (status === "已封存" || status === "封存") return false;
   return !status || status === "上架" || /online|active|published/i.test(status);
 }
 
@@ -2817,7 +2819,7 @@ async function readEffectiveMonthly(env: Env): Promise<MonthlyConfig> {
     .filter((item): item is Record<string, unknown> => Boolean(item) && typeof item === "object" && activityStatusIsOnline(item as Record<string, unknown>))
     .map((item, index) => pageFromActivity(item, index))
     .filter((page): page is MonthlyPage => Boolean(page));
-  if (!activityPages.length) return monthly;
+  if (!activityPages.length) return normalizeConfig({ ...monthly, enabled: false, pages: [] });
 
   const merged = new Map<string, MonthlyPage>();
   activityPages.forEach((page) => merged.set(pageIdentity(page), page));
@@ -2825,6 +2827,7 @@ async function readEffectiveMonthly(env: Env): Promise<MonthlyConfig> {
     const key = pageIdentity(page);
     if (!key) return;
     const base = merged.get(key);
+    if (!base) return;
     merged.set(key, {
       ...(base || {}),
       ...page,
@@ -2873,6 +2876,7 @@ function registerUrlForPage(page: MonthlyPage) {
 
 function buildMonthlyFlex(config: MonthlyConfig) {
   const normalized = normalizeConfig(config);
+  if (!(normalized.pages || []).length) return { type: "text", text: "TDEA 每月活動目前沒有上架活動。" };
   return { type: "flex", altText: normalized.altText || "TDEA 每月活動", contents: { type: "carousel", contents: (normalized.pages || []).map((page) => buildMonthlyBubble(page, normalized)) } };
 }
 
