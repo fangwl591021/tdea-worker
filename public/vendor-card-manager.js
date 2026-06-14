@@ -9,7 +9,31 @@
   const esc = (value) => String(value ?? "").replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;").replaceAll("'", "&#039;");
   const loadData = () => { try { return JSON.parse(localStorage.getItem(storageKey) || "{}"); } catch (_) { return {}; } };
   const saveData = (data) => localStorage.setItem(storageKey, JSON.stringify(data));
-  const adminEmail = () => localStorage.getItem("tdea-admin-email") || sessionStorage.getItem("tdea-admin-email") || "";
+  const storedValue = (...keys) => {
+    for (const key of keys) {
+      const value = sessionStorage.getItem(key) || localStorage.getItem(key) || "";
+      if (String(value).trim()) return String(value).trim();
+    }
+    return "";
+  };
+  const adminIdentity = () => ({
+    email: storedValue("tdea-admin-email").toLowerCase(),
+    memberNo: storedValue("tdea-admin-member-no", "tdea-member-no").toUpperCase(),
+    lineUserId: storedValue("tdea-admin-line-user-id", "tdea-line-user-id", "lineUserId")
+  });
+  const hasAdminIdentity = () => {
+    const identity = adminIdentity();
+    return Boolean(identity.email || identity.memberNo || identity.lineUserId);
+  };
+  const adminHeaders = (extra = {}) => {
+    const identity = adminIdentity();
+    return {
+      ...extra,
+      ...(identity.email ? { "x-admin-email": identity.email } : {}),
+      ...(identity.memberNo ? { "x-admin-member-no": identity.memberNo } : {}),
+      ...(identity.lineUserId ? { "x-line-user-id": identity.lineUserId } : {})
+    };
+  };
 
   function blankConfig() {
     return { enabled: true, keyword: fixedKeyword, altText: "TDEA 廠商列表", title: "TDEA 廠商列表", items: [] };
@@ -322,14 +346,13 @@
   }
 
   async function uploadImage(index, file) {
-    const email = adminEmail();
-    if (!email) return toast("請先登入管理者");
+    if (!hasAdminIdentity()) return toast("請先登入管理者");
     if (!file) return;
     const form = new FormData();
     form.append("file", file);
     form.append("purpose", "vendor-card");
     form.append("activityId", "menu");
-    const response = await fetch(api + "/api/uploads", { method: "POST", headers: { "x-admin-email": email }, body: form });
+    const response = await fetch(api + "/api/uploads", { method: "POST", headers: adminHeaders(), body: form });
     const result = await response.json().catch(() => ({}));
     if (!response.ok || !result.success) return toast(result.message || "圖片上傳失敗");
     const config = readFromDom();
@@ -341,15 +364,14 @@
   }
 
   async function publish() {
-    const email = adminEmail();
-    if (!email) return toast("請先登入管理者");
+    if (!hasAdminIdentity()) return toast("請先登入管理者");
     const config = readFromDom();
     config.enabled = true;
     draft = normalizeConfig(config);
     saveLocal(draft);
     const response = await fetch(api + "/api/vendor-card-menu", {
       method: "PUT",
-      headers: { "content-type": "application/json", "x-admin-email": email },
+      headers: adminHeaders({ "content-type": "application/json" }),
       body: JSON.stringify(draft)
     });
     const result = await response.json().catch(() => ({}));

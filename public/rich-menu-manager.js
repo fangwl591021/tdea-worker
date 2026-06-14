@@ -1,7 +1,27 @@
 (() => {
   const api = "https://tdeawork.fangwl591021.workers.dev";
   const storageKey = "tdea-rich-menu-draft";
-  const adminEmail = () => localStorage.getItem("tdea-admin-email") || sessionStorage.getItem("tdea-admin-email") || "fangwl591021@gmail.com";
+  const storedValue = (...keys) => {
+    for (const key of keys) {
+      const value = sessionStorage.getItem(key) || localStorage.getItem(key) || "";
+      if (String(value).trim()) return String(value).trim();
+    }
+    return "";
+  };
+  const adminIdentity = () => ({
+    email: storedValue("tdea-admin-email").toLowerCase(),
+    memberNo: storedValue("tdea-admin-member-no", "tdea-member-no").toUpperCase(),
+    lineUserId: storedValue("tdea-admin-line-user-id", "tdea-line-user-id", "lineUserId")
+  });
+  const adminHeaders = (extra = {}) => {
+    const identity = adminIdentity();
+    return {
+      ...extra,
+      ...(identity.email ? { "x-admin-email": identity.email } : {}),
+      ...(identity.memberNo ? { "x-admin-member-no": identity.memberNo } : {}),
+      ...(identity.lineUserId ? { "x-line-user-id": identity.lineUserId } : {})
+    };
+  };
 
   let active = false;
   let canvas = null;
@@ -127,7 +147,7 @@
 
   async function loadRemote() {
     try {
-      const response = await fetch(api + "/api/rich-menu", { cache: "no-store", headers: { "x-admin-email": adminEmail() } });
+      const response = await fetch(api + "/api/rich-menu", { cache: "no-store", headers: adminHeaders() });
       const result = await response.json().catch(() => ({}));
       if (response.ok && result.success) {
         draft = normalizeConfig(result.data);
@@ -469,7 +489,7 @@
     form.append("file", uploadFile);
     form.append("purpose", "rich-menu");
     form.append("activityId", "default");
-    const response = await fetch(api + "/api/uploads", { method: "POST", headers: { "x-admin-email": adminEmail() }, body: form });
+    const response = await fetch(api + "/api/uploads", { method: "POST", headers: adminHeaders(), body: form });
     const result = await response.json().catch(() => ({}));
     if (!response.ok || !result.success) return toast(result.message || "上傳失敗");
     draft.imageUrl = result.url?.startsWith("http") ? result.url : api + result.url;
@@ -519,7 +539,7 @@
 
   async function validateRemote() {
     updateOutput();
-    const response = await fetch(api + "/api/rich-menu/validate", { method: "POST", headers: { "content-type": "application/json", "x-admin-email": adminEmail() }, body: JSON.stringify({ ...draft, areas: getCanvasAreas() }) });
+    const response = await fetch(api + "/api/rich-menu/validate", { method: "POST", headers: adminHeaders({ "content-type": "application/json" }), body: JSON.stringify({ ...draft, areas: getCanvasAreas() }) });
     const result = await response.json().catch(() => ({}));
     if (!response.ok || !result.success) {
       showHealth(false, result.message || "選單健檢未通過");
@@ -543,7 +563,7 @@
 
   async function saveRemote() {
     updateOutput();
-    const response = await fetch(api + "/api/rich-menu", { method: "PUT", headers: { "content-type": "application/json", "x-admin-email": adminEmail() }, body: JSON.stringify({ ...draft, areas: getCanvasAreas() }) });
+    const response = await fetch(api + "/api/rich-menu", { method: "PUT", headers: adminHeaders({ "content-type": "application/json" }), body: JSON.stringify({ ...draft, areas: getCanvasAreas() }) });
     const result = await response.json().catch(() => ({}));
     if (!response.ok || !result.success) return toast(result.message || "儲存失敗");
     draft = normalizeConfig(result.data);
@@ -553,7 +573,7 @@
 
   async function saveRemote() {
     updateOutput();
-    const response = await fetch(api + "/api/rich-menu", { method: "PUT", headers: { "content-type": "application/json", "x-admin-email": adminEmail() }, body: JSON.stringify({ ...draft, areas: getCanvasAreas() }) });
+    const response = await fetch(api + "/api/rich-menu", { method: "PUT", headers: adminHeaders({ "content-type": "application/json" }), body: JSON.stringify({ ...draft, areas: getCanvasAreas() }) });
     const result = await response.json().catch(() => ({}));
     if (!response.ok || !result.success) return toast(result.message || "儲存失敗");
     draft = normalizeConfig(result.data);
@@ -573,7 +593,7 @@
     if (!draft.imageUrl) return toast("請先上傳底圖");
     if (!draft.areas.length) return toast("請至少建立一個熱區");
     if (!confirm("確定發布到 LINE 並設為預設圖文選單？")) return;
-    const response = await fetch(api + "/api/rich-menu/deploy", { method: "POST", headers: { "content-type": "application/json", "x-admin-email": adminEmail() }, body: JSON.stringify({ ...draft, setDefault: true }) });
+    const response = await fetch(api + "/api/rich-menu/deploy", { method: "POST", headers: adminHeaders({ "content-type": "application/json" }), body: JSON.stringify({ ...draft, setDefault: true }) });
     const result = await response.json().catch(() => ({}));
     if (!response.ok || !result.success) return toast(result.message || "發布失敗");
     draft = normalizeConfig(result.data);

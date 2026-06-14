@@ -9,7 +9,27 @@
   let previewTimer = null;
 
   const esc = (value) => String(value ?? "").replace(/[&<>"']/g, (ch) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#039;" }[ch]));
-  const adminEmail = () => localStorage.getItem("tdea-admin-email") || sessionStorage.getItem("tdea-admin-email") || "";
+  const storedValue = (...keys) => {
+    for (const key of keys) {
+      const value = sessionStorage.getItem(key) || localStorage.getItem(key) || "";
+      if (String(value).trim()) return String(value).trim();
+    }
+    return "";
+  };
+  const adminIdentity = () => ({
+    email: storedValue("tdea-admin-email").toLowerCase(),
+    memberNo: storedValue("tdea-admin-member-no", "tdea-member-no").toUpperCase(),
+    lineUserId: storedValue("tdea-admin-line-user-id", "tdea-line-user-id", "lineUserId")
+  });
+  const adminHeaders = (extra = {}) => {
+    const identity = adminIdentity();
+    return {
+      ...extra,
+      ...(identity.email ? { "x-admin-email": identity.email } : {}),
+      ...(identity.memberNo ? { "x-admin-member-no": identity.memberNo } : {}),
+      ...(identity.lineUserId ? { "x-line-user-id": identity.lineUserId } : {})
+    };
+  };
   const loadData = () => { try { return JSON.parse(localStorage.getItem(storageKey) || "{}"); } catch (_) { return {}; } };
   const saveData = (data) => localStorage.setItem(storageKey, JSON.stringify(data));
   const id = () => (crypto?.randomUUID ? crypto.randomUUID() : `img-${Date.now()}-${Math.random().toString(36).slice(2)}`);
@@ -280,7 +300,7 @@
     updateDraftOnly();
     const response = await fetch(api + "/api/marquee", {
       method: "POST",
-      headers: { "content-type": "application/json", "x-admin-email": adminEmail() },
+      headers: adminHeaders({ "content-type": "application/json" }),
       body: JSON.stringify(draft)
     });
     const result = await response.json().catch(() => ({}));
@@ -298,7 +318,7 @@
     for (const file of list) {
       const body = new FormData();
       body.append("file", file);
-      const response = await fetch(api + "/api/marquee/upload", { method: "POST", headers: { "x-admin-email": adminEmail() }, body });
+      const response = await fetch(api + "/api/marquee/upload", { method: "POST", headers: adminHeaders(), body });
       const result = await response.json().catch(() => ({}));
       if (!response.ok || !result.success) throw new Error(result.message || `HTTP ${response.status}`);
       uploaded.push(result.url);

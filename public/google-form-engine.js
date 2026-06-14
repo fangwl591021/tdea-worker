@@ -15,7 +15,34 @@
   }
 
   function adminEmail() {
-    return sessionStorage.getItem(adminKey) || localStorage.getItem(adminKey) || "";
+    return storedValue(adminKey).toLowerCase();
+  }
+  function storedValue(...keys) {
+    for (const key of keys) {
+      const value = sessionStorage.getItem(key) || localStorage.getItem(key) || "";
+      if (trim(value)) return trim(value);
+    }
+    return "";
+  }
+  function adminIdentity() {
+    return {
+      email: adminEmail(),
+      memberNo: storedValue("tdea-admin-member-no", "tdea-member-no").toUpperCase(),
+      lineUserId: storedValue("tdea-admin-line-user-id", "tdea-line-user-id", "lineUserId")
+    };
+  }
+  function hasAdminIdentity() {
+    const identity = adminIdentity();
+    return Boolean(identity.email || identity.memberNo || identity.lineUserId);
+  }
+  function adminHeaders(extra = {}) {
+    const identity = adminIdentity();
+    return {
+      ...extra,
+      ...(identity.email ? { "x-admin-email": identity.email } : {}),
+      ...(identity.memberNo ? { "x-admin-member-no": identity.memberNo } : {}),
+      ...(identity.lineUserId ? { "x-line-user-id": identity.lineUserId } : {})
+    };
   }
 
   function formRowId(form) {
@@ -206,9 +233,8 @@
   }
 
   async function generateForm(form, options = {}) {
-    const email = adminEmail();
-    if (!email) {
-      setStatus(form, "尚未取得管理者權限，之後接 LINE Login 後會自動帶入。", "warn");
+    if (!hasAdminIdentity()) {
+      setStatus(form, "尚未取得管理者權限，請先登入管理中心。", "warn");
       return null;
     }
 
@@ -216,7 +242,7 @@
     try {
       const response = await fetch(`${apiBase}/api/google-forms/create`, {
         method: "POST",
-        headers: { "content-type": "application/json", "x-admin-email": email },
+        headers: adminHeaders({ "content-type": "application/json" }),
         body: JSON.stringify(payloadFor(form))
       });
       const result = await response.json().catch(() => ({}));
@@ -241,11 +267,11 @@
     }
   }
 
-  async function createManagedForm(form, email) {
+  async function createManagedForm(form) {
     const payload = payloadFor(form);
     const native = await fetch(`${apiBase}/api/native-forms/create`, {
       method: "POST",
-      headers: { "content-type": "application/json", "x-admin-email": email },
+      headers: adminHeaders({ "content-type": "application/json" }),
       body: JSON.stringify(payload)
     });
     const nativeResult = await native.json().catch(() => ({}));
@@ -257,15 +283,14 @@
   }
 
   async function generateForm(form, options = {}) {
-    const email = adminEmail();
-    if (!email) {
+    if (!hasAdminIdentity()) {
       setStatus(form, "請先登入管理者，才能產生報名表。", "warn");
       return null;
     }
 
     setStatus(form, "正在產生報名表...", "info");
     try {
-      const result = await createManagedForm(form, email);
+      const result = await createManagedForm(form);
       const formUrl = result.formUrl || result.nativeFormUrl || result.opnformFormUrl || result.responderUri || result.data?.formUrl || result.data?.nativeFormUrl || result.data?.opnformFormUrl || result.data?.responderUri;
       if (!formUrl) {
         setStatus(form, "報名表已建立，但沒有取得公開網址。", "warn");

@@ -24,15 +24,37 @@
   }
 
   function adminEmail() {
-    return localStorage.getItem("tdea-admin-email") ||
-      sessionStorage.getItem("tdea-admin-email") ||
-      localStorage.getItem("adminEmail") ||
-      sessionStorage.getItem("adminEmail") ||
-      "";
+    return storedValue("tdea-admin-email", "adminEmail").toLowerCase();
+  }
+
+  function storedValue(...keys) {
+    for (const key of keys) {
+      const value = sessionStorage.getItem(key) || localStorage.getItem(key) || "";
+      if (String(value).trim()) return String(value).trim();
+    }
+    return "";
+  }
+
+  function adminIdentity() {
+    return {
+      email: adminEmail(),
+      memberNo: storedValue("tdea-admin-member-no", "tdea-member-no").toUpperCase(),
+      lineUserId: storedValue("tdea-admin-line-user-id", "tdea-line-user-id", "lineUserId")
+    };
+  }
+
+  function hasAdminIdentity() {
+    const identity = adminIdentity();
+    return Boolean(identity.email || identity.memberNo || identity.lineUserId);
   }
 
   function adminHeaders(json) {
-    const headers = { "x-admin-email": adminEmail().trim() };
+    const identity = adminIdentity();
+    const headers = {
+      ...(identity.email ? { "x-admin-email": identity.email } : {}),
+      ...(identity.memberNo ? { "x-admin-member-no": identity.memberNo } : {}),
+      ...(identity.lineUserId ? { "x-line-user-id": identity.lineUserId } : {})
+    };
     if (json) headers["content-type"] = "application/json";
     return headers;
   }
@@ -159,7 +181,7 @@
       button.disabled = true;
       button.textContent = "送出中...";
       try {
-        if (!adminEmail().trim()) throw new Error("尚未登入管理者，請先完成後台管理者驗證。");
+        if (!hasAdminIdentity()) throw new Error("尚未登入管理者，請先完成後台管理者驗證。");
         const files = Array.from(form.elements.files.files || []);
         const attachments = [];
         for (const file of files) {

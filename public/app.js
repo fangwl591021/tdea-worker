@@ -651,7 +651,7 @@
 
   async function pullGoogleResponses(showMessage = false) {
     if (!hasAdminIdentity()) {
-      if (showMessage) toast("缺少管理者 Email，無法向 GAS 拉取表單回覆");
+      if (showMessage) toast("缺少管理者身份，無法向 GAS 拉取表單回覆");
       return;
     }
     const activities = (state.data.activities || []).map(activity => ({
@@ -824,7 +824,7 @@
 
   async function importLineActivityDrafts(showMessage = true) {
     if (!hasAdminIdentity()) {
-      if (showMessage) toast("請先設定管理者 Email，才能匯入 LINE 活動草稿");
+      if (showMessage) toast("請先登入管理者，才能匯入 LINE 活動草稿");
       return;
     }
     const response = await fetch(api + "/api/line-activity-drafts", {
@@ -1543,8 +1543,7 @@
 
   async function createRedeem(event) {
     event.preventDefault();
-    const email = adminIdentity().email || (hasAdminIdentity() ? "dynamic-admin" : "");
-    if (!email) return toast("請先設定管理者 Email");
+    if (!hasAdminIdentity()) return toast("請先登入管理者");
     const form = event.currentTarget;
     const data = Object.fromEntries(new FormData(form));
     const response = await fetch(api + "/api/redeem/create", {
@@ -1562,9 +1561,8 @@
   }
 
   async function loadRedeemRecords(showMessage = false) {
-    const email = adminIdentity().email || (hasAdminIdentity() ? "dynamic-admin" : "");
-    if (!email) {
-      if (showMessage) toast("請先設定管理者 Email");
+    if (!hasAdminIdentity()) {
+      if (showMessage) toast("請先登入管理者");
       return;
     }
     const response = await fetch(api + "/api/redeem/list", { headers: adminHeaders(), cache: "no-store" });
@@ -1580,8 +1578,7 @@
 
   async function syncLegacyPoints(event) {
     event.preventDefault();
-    const email = adminIdentity().email || (hasAdminIdentity() ? "dynamic-admin" : "");
-    if (!email) return toast("請先設定管理者 Email");
+    if (!hasAdminIdentity()) return toast("請先登入管理者");
     const data = Object.fromEntries(new FormData(event.currentTarget));
     const lineUserId = String(data.lineUserId || "").trim();
     if (!lineUserId) return toast("請輸入會員 LINE UID");
@@ -1602,9 +1599,8 @@
   }
 
   async function loadPointLedger(showMessage = false) {
-    const email = adminIdentity().email || (hasAdminIdentity() ? "dynamic-admin" : "");
-    if (!email) {
-      if (showMessage) toast("請先設定管理者 Email");
+    if (!hasAdminIdentity()) {
+      if (showMessage) toast("請先登入管理者");
       return;
     }
     const response = await fetch(api + "/api/points/ledger?limit=200", {

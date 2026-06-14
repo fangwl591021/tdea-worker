@@ -8,7 +8,31 @@
 
   const esc = (value) => String(value ?? "").replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;").replaceAll("'", "&#039;");
   const uid = () => "cal-" + Math.random().toString(36).slice(2) + Date.now().toString(36);
-  const adminEmail = () => localStorage.getItem("tdea-admin-email") || sessionStorage.getItem("tdea-admin-email") || "";
+  const storedValue = (...keys) => {
+    for (const key of keys) {
+      const value = sessionStorage.getItem(key) || localStorage.getItem(key) || "";
+      if (String(value).trim()) return String(value).trim();
+    }
+    return "";
+  };
+  const adminIdentity = () => ({
+    email: storedValue("tdea-admin-email").toLowerCase(),
+    memberNo: storedValue("tdea-admin-member-no", "tdea-member-no").toUpperCase(),
+    lineUserId: storedValue("tdea-admin-line-user-id", "tdea-line-user-id", "lineUserId")
+  });
+  const hasAdminIdentity = () => {
+    const identity = adminIdentity();
+    return Boolean(identity.email || identity.memberNo || identity.lineUserId);
+  };
+  const adminHeaders = (extra = {}) => {
+    const identity = adminIdentity();
+    return {
+      ...extra,
+      ...(identity.email ? { "x-admin-email": identity.email } : {}),
+      ...(identity.memberNo ? { "x-admin-member-no": identity.memberNo } : {}),
+      ...(identity.lineUserId ? { "x-line-user-id": identity.lineUserId } : {})
+    };
+  };
   const loadData = () => { try { return JSON.parse(localStorage.getItem(dataKey) || "{}"); } catch (_) { return {}; } };
   const saveData = (data) => localStorage.setItem(dataKey, JSON.stringify(data));
 
@@ -129,10 +153,9 @@
 
   async function addToMonthly(event) {
     const activity = importEvent(event, true);
-    const email = adminEmail();
-    if (!email) {
+    if (!hasAdminIdentity()) {
       render();
-      return toast("已匯入活動；尚未設定管理者 Email，所以未寫入每月活動");
+      return toast("已匯入活動；尚未登入管理者，所以未寫入每月活動");
     }
     const current = await fetch(`${api}/api/monthly-activity`, { cache: "no-store" }).then((r) => r.json()).catch(() => ({}));
     const config = current.data || { enabled: true, keyword: "TDEA每月活動", month: new Date().toISOString().slice(0, 7), altText: "TDEA 每月活動", pages: [] };
@@ -142,7 +165,7 @@
     }
     const response = await fetch(`${api}/api/monthly-activity`, {
       method: "PUT",
-      headers: { "content-type": "application/json", "x-admin-email": email },
+      headers: adminHeaders({ "content-type": "application/json" }),
       body: JSON.stringify(config)
     });
     const result = await response.json().catch(() => ({}));

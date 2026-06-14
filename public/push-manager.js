@@ -26,7 +26,31 @@
     .replaceAll('"', "&quot;")
     .replaceAll("'", "&#039;");
   const n = (value) => Number(value || 0).toLocaleString("zh-TW");
-  const adminEmail = () => localStorage.getItem("tdea-admin-email") || sessionStorage.getItem("tdea-admin-email") || "";
+  const storedValue = (...keys) => {
+    for (const key of keys) {
+      const value = sessionStorage.getItem(key) || localStorage.getItem(key) || "";
+      if (String(value).trim()) return String(value).trim();
+    }
+    return "";
+  };
+  const adminIdentity = () => ({
+    email: storedValue("tdea-admin-email").toLowerCase(),
+    memberNo: storedValue("tdea-admin-member-no", "tdea-member-no").toUpperCase(),
+    lineUserId: storedValue("tdea-admin-line-user-id", "tdea-line-user-id", "lineUserId")
+  });
+  const hasAdminIdentity = () => {
+    const identity = adminIdentity();
+    return Boolean(identity.email || identity.memberNo || identity.lineUserId);
+  };
+  const adminHeaders = (extra = {}) => {
+    const identity = adminIdentity();
+    return {
+      ...extra,
+      ...(identity.email ? { "x-admin-email": identity.email } : {}),
+      ...(identity.memberNo ? { "x-admin-member-no": identity.memberNo } : {}),
+      ...(identity.lineUserId ? { "x-line-user-id": identity.lineUserId } : {})
+    };
+  };
   const loadData = () => {
     try { return JSON.parse(localStorage.getItem(storageKey) || "{}"); }
     catch (_) { return {}; }
@@ -397,13 +421,12 @@
   }
 
   async function loadSegments(options = {}) {
-    const email = adminEmail();
-    if (!email) {
-      toast("尚未取得管理者 Email，請先登入或設定管理者");
+    if (!hasAdminIdentity()) {
+      toast("尚未取得管理者身份，請先登入管理中心");
       return;
     }
     const response = await fetch(api + "/api/push/segments", {
-      headers: { "x-admin-email": email },
+      headers: adminHeaders(),
       cache: "no-store"
     });
     const result = await response.json().catch(() => ({}));
@@ -416,15 +439,14 @@
   }
 
   async function resolveTargets() {
-    const email = adminEmail();
-    if (!email) {
-      toast("尚未取得管理者 Email，請先登入或設定管理者");
+    if (!hasAdminIdentity()) {
+      toast("尚未取得管理者身份，請先登入管理中心");
       return;
     }
     const payload = formPayload(true);
     const response = await fetch(api + "/api/push/resolve", {
       method: "POST",
-      headers: { "content-type": "application/json", "x-admin-email": email },
+      headers: adminHeaders({ "content-type": "application/json" }),
       body: JSON.stringify(payload)
     });
     const result = await response.json().catch(() => ({}));
@@ -441,9 +463,8 @@
 
   async function sendPush(event) {
     event.preventDefault();
-    const email = adminEmail();
-    if (!email) {
-      toast("尚未取得管理者 Email，請先登入或設定管理者");
+    if (!hasAdminIdentity()) {
+      toast("尚未取得管理者身份，請先登入管理中心");
       return;
     }
     const payload = formPayload(false);
@@ -452,7 +473,7 @@
     if (!confirm(`確定送出推播給「${targetLabel}」？送出後不能收回。`)) return;
     const response = await fetch(api + "/api/push/send", {
       method: "POST",
-      headers: { "content-type": "application/json", "x-admin-email": email },
+      headers: adminHeaders({ "content-type": "application/json" }),
       body: JSON.stringify(payload)
     });
     const result = await response.json().catch(() => ({}));

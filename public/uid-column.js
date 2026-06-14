@@ -127,22 +127,46 @@
   }
 
   function adminEmail() {
-    return sessionStorage.getItem("tdea-admin-email") || localStorage.getItem("tdea-admin-email") || "";
+    return storedValue("tdea-admin-email").toLowerCase();
+  }
+
+  function storedValue(...keys) {
+    for (const key of keys) {
+      const value = sessionStorage.getItem(key) || localStorage.getItem(key) || "";
+      if (clean(value)) return clean(value);
+    }
+    return "";
+  }
+
+  function adminIdentity() {
+    return {
+      email: adminEmail(),
+      memberNo: storedValue("tdea-admin-member-no", "tdea-member-no").toUpperCase(),
+      lineUserId: storedValue("tdea-admin-line-user-id", "tdea-line-user-id", "lineUserId")
+    };
+  }
+
+  function hasAdminIdentity() {
+    const identity = adminIdentity();
+    return Boolean(identity.email || identity.memberNo || identity.lineUserId);
   }
 
   function adminHeaders() {
-    const email = adminEmail();
-    return email ? { "x-admin-email": email } : {};
+    const identity = adminIdentity();
+    return {
+      ...(identity.email ? { "x-admin-email": identity.email } : {}),
+      ...(identity.memberNo ? { "x-admin-member-no": identity.memberNo } : {}),
+      ...(identity.lineUserId ? { "x-line-user-id": identity.lineUserId } : {})
+    };
   }
 
   async function loadUidMap() {
     if (uidMapPromise) return uidMapPromise;
     uidMapPromise = (async () => {
       const token = getToken();
-      const email = adminEmail();
-      if (!token && !email) return new Map();
+      if (!token && !hasAdminIdentity()) return new Map();
       const response = await fetch(`${apiBase}/api/aiwe-members-public`, {
-        headers: email ? { "x-admin-email": email } : { "x-aiwe-token": token },
+        headers: hasAdminIdentity() ? adminHeaders() : { "x-aiwe-token": token },
         cache: "no-store"
       });
       if (response.status === 401) {
@@ -177,10 +201,9 @@
 
   async function loadAiweRows() {
     const token = getToken();
-    const email = adminEmail();
-    if (!token && !email) throw new Error("請先以管理者身份進入後台");
+    if (!token && !hasAdminIdentity()) throw new Error("請先以管理者身份進入後台");
     const response = await fetch(`${apiBase}/api/aiwe-members-public`, {
-      headers: email ? { "x-admin-email": email } : { "x-aiwe-token": token },
+      headers: hasAdminIdentity() ? adminHeaders() : { "x-aiwe-token": token },
       cache: "no-store"
     });
     const result = await response.json().catch(() => ({}));
@@ -661,9 +684,8 @@
 
   async function syncGoogleMembers() {
     const token = getToken();
-    const email = adminEmail();
     const response = await fetch(memberSheetCsvUrl, {
-      headers: email ? { "x-admin-email": email } : token ? { "x-aiwe-token": token } : {},
+      headers: hasAdminIdentity() ? adminHeaders() : token ? { "x-aiwe-token": token } : {},
       cache: "no-store"
     });
     if (!response.ok) throw new Error(`Google 會員表讀取失敗 HTTP ${response.status}`);

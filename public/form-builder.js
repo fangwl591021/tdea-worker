@@ -25,18 +25,39 @@
     }
   }
 
-  function getAdminEmail() {
-    let email = localStorage.getItem("tdea-admin-email") || "";
-    if (!email) {
-      email = prompt("請輸入管理者 Email，用於上傳活動圖片")?.trim() || "";
-      if (email) localStorage.setItem("tdea-admin-email", email);
+  function storedValue(...keys) {
+    for (const key of keys) {
+      const value = sessionStorage.getItem(key) || localStorage.getItem(key) || "";
+      if (String(value).trim()) return String(value).trim();
     }
-    return email;
+    return "";
+  }
+
+  function adminIdentity() {
+    return {
+      email: storedValue("tdea-admin-email").toLowerCase(),
+      memberNo: storedValue("tdea-admin-member-no", "tdea-member-no").toUpperCase(),
+      lineUserId: storedValue("tdea-admin-line-user-id", "tdea-line-user-id", "lineUserId")
+    };
+  }
+
+  function hasAdminIdentity() {
+    const identity = adminIdentity();
+    return Boolean(identity.email || identity.memberNo || identity.lineUserId);
+  }
+
+  function adminHeaders(extra = {}) {
+    const identity = adminIdentity();
+    return {
+      ...extra,
+      ...(identity.email ? { "x-admin-email": identity.email } : {}),
+      ...(identity.memberNo ? { "x-admin-member-no": identity.memberNo } : {}),
+      ...(identity.lineUserId ? { "x-line-user-id": identity.lineUserId } : {})
+    };
   }
 
   async function uploadPoster(file, activityId) {
-    const email = getAdminEmail();
-    if (!email) throw new Error("未輸入管理者 Email");
+    if (!hasAdminIdentity()) throw new Error("請先登入管理者");
 
     const body = new FormData();
     body.append("file", file);
@@ -45,7 +66,7 @@
 
     const response = await fetch(`${apiBase}/api/uploads`, {
       method: "POST",
-      headers: { "x-admin-email": email },
+      headers: adminHeaders(),
       body
     });
     const result = await response.json().catch(() => ({}));
