@@ -25,6 +25,36 @@
       });
   }
 
+  function marqueeItems(config) {
+    if (!config || config.enabled === false) return [];
+    const rawItems = Array.isArray(config.imageItems) ? config.imageItems : [];
+    if (rawItems.length) {
+      return rawItems
+        .map((item, index) => ({
+          id: trim(item.id) || `marquee-${index + 1}`,
+          imageUrl: trim(item.imageUrl),
+          linkUrl: trim(item.linkUrl),
+          title: trim(item.title),
+          enabled: item.enabled !== false
+        }))
+        .filter((item) => item.enabled && /^https?:\/\//i.test(item.imageUrl));
+    }
+    return [...new Set([...(Array.isArray(config.imageUrls) ? config.imageUrls : []), config.imageUrl].map((url) => trim(url)).filter(Boolean))]
+      .filter((url) => /^https?:\/\//i.test(url))
+      .map((url, index) => ({ id: `marquee-${index + 1}`, imageUrl: url, linkUrl: "", title: "", enabled: true }));
+  }
+
+  async function loadMarquee() {
+    try {
+      const res = await fetch(`${api}/api/marquee`, { cache: "no-store" });
+      const result = await res.json().catch(() => ({}));
+      if (!res.ok || !result.success) return null;
+      return result.data || null;
+    } catch (_) {
+      return null;
+    }
+  }
+
   function registerIdFromUrl(value) {
     try {
       const parsed = new URL(value);
@@ -83,11 +113,18 @@
       .liff-slider-track{display:flex;transition:transform .42s ease}
       .liff-slide{flex:0 0 100%;aspect-ratio:4/5;background:#eef2f7}
       .liff-slide img{width:100%;height:100%;object-fit:cover;border-radius:0;margin:0}
+      .liff-slide-link{display:block;width:100%;height:100%}
       .liff-slider-nav{position:absolute;left:0;right:0;top:50%;display:flex;justify-content:space-between;transform:translateY(-50%);pointer-events:none}
       .liff-slider-nav button{pointer-events:auto;border:0;border-radius:999px;background:rgba(17,24,39,.72);color:#fff;width:34px;height:34px;margin:0 10px;font-size:22px}
       .liff-dots{position:absolute;left:0;right:0;bottom:10px;display:flex;justify-content:center;gap:6px}
       .liff-dots button{width:7px;height:7px;border:0;border-radius:999px;background:rgba(255,255,255,.62);padding:0}
       .liff-dots button.active{background:#06c755;width:18px}
+      .liff-marquee{margin:18px 0;padding:14px;border:1px solid #dbe3ef;border-radius:14px;background:#f8fafc}
+      .liff-marquee-head{display:flex;align-items:center;justify-content:space-between;gap:10px;margin:0 0 10px}
+      .liff-marquee-head strong{font-size:16px;color:#111827}
+      .liff-marquee-head span{font-size:12px;color:#667085;font-weight:800}
+      .liff-marquee .liff-slider{margin:0;border-radius:10px}
+      .liff-marquee .liff-slide{aspect-ratio:1/1}
       .liff-card h1{font-size:24px;line-height:1.35;margin:0 0 12px}
       .liff-meta{display:inline-flex;margin:0 0 12px;padding:5px 10px;border-radius:999px;background:#eafff1;color:#027a48;font-size:13px;font-weight:800}
       .liff-text{white-space:pre-wrap;line-height:1.7;color:#344054;font-size:16px}
@@ -134,27 +171,41 @@
     return `<div class="liff-slider" data-liff-slider><div class="liff-slider-track">${images.map((url) => `<div class="liff-slide"><img src="${esc(url)}" alt=""></div>`).join("")}</div><div class="liff-slider-nav"><button type="button" data-liff-prev aria-label="上一張">‹</button><button type="button" data-liff-next aria-label="下一張">›</button></div><div class="liff-dots">${images.map((_, index) => `<button type="button" data-liff-dot="${index}" class="${index === 0 ? "active" : ""}" aria-label="第 ${index + 1} 張"></button>`).join("")}</div></div>`;
   }
 
+  function marqueeHtml(config) {
+    const items = marqueeItems(config);
+    if (!items.length) return "";
+    const slides = items.map((item) => {
+      const image = `<img src="${esc(item.imageUrl)}" alt="${esc(item.title || "")}">`;
+      return `<div class="liff-slide">${item.linkUrl ? `<a class="liff-slide-link" href="${esc(item.linkUrl)}">${image}</a>` : image}</div>`;
+    }).join("");
+    const body = items.length === 1
+      ? `<div class="liff-slider"><div class="liff-slider-track">${slides}</div></div>`
+      : `<div class="liff-slider" data-liff-slider><div class="liff-slider-track">${slides}</div><div class="liff-slider-nav"><button type="button" data-liff-prev aria-label="上一張">‹</button><button type="button" data-liff-next aria-label="下一張">›</button></div><div class="liff-dots">${items.map((_, index) => `<button type="button" data-liff-dot="${index}" class="${index === 0 ? "active" : ""}" aria-label="第 ${index + 1} 張"></button>`).join("")}</div></div>`;
+    return `<section class="liff-marquee"><div class="liff-marquee-head"><strong>${esc(config?.title || "TDEA 跑馬燈")}</strong><span>${items.length} 張</span></div>${body}</section>`;
+  }
+
   function bindSlider() {
-    const root = document.querySelector("[data-liff-slider]");
-    if (!root) return;
-    const track = root.querySelector(".liff-slider-track");
-    const dots = Array.from(root.querySelectorAll("[data-liff-dot]"));
-    const total = dots.length;
-    let index = 0;
-    let timer = null;
-    const go = (next) => {
-      index = (next + total) % total;
-      track.style.transform = `translateX(-${index * 100}%)`;
-      dots.forEach((dot, dotIndex) => dot.classList.toggle("active", dotIndex === index));
-    };
-    const restart = () => {
-      if (timer) clearInterval(timer);
-      timer = setInterval(() => go(index + 1), 3000);
-    };
-    root.querySelector("[data-liff-prev]")?.addEventListener("click", () => { go(index - 1); restart(); });
-    root.querySelector("[data-liff-next]")?.addEventListener("click", () => { go(index + 1); restart(); });
-    dots.forEach((dot) => dot.addEventListener("click", () => { go(Number(dot.dataset.liffDot || 0)); restart(); }));
-    restart();
+    document.querySelectorAll("[data-liff-slider]").forEach((root) => {
+      const track = root.querySelector(".liff-slider-track");
+      const dots = Array.from(root.querySelectorAll("[data-liff-dot]"));
+      const total = dots.length;
+      if (!track || !total) return;
+      let index = 0;
+      let timer = null;
+      const go = (next) => {
+        index = (next + total) % total;
+        track.style.transform = `translateX(-${index * 100}%)`;
+        dots.forEach((dot, dotIndex) => dot.classList.toggle("active", dotIndex === index));
+      };
+      const restart = () => {
+        if (timer) clearInterval(timer);
+        timer = setInterval(() => go(index + 1), 3000);
+      };
+      root.querySelector("[data-liff-prev]")?.addEventListener("click", () => { go(index - 1); restart(); });
+      root.querySelector("[data-liff-next]")?.addEventListener("click", () => { go(index + 1); restart(); });
+      dots.forEach((dot) => dot.addEventListener("click", () => { go(Number(dot.dataset.liffDot || 0)); restart(); }));
+      restart();
+    });
   }
 
   async function load() {
@@ -166,8 +217,10 @@
     }
     shell(`<main class="liff-detail"><section class="liff-card"><div class="liff-empty">載入詳細說明中...</div></section></main>`);
     try {
-      const res = await fetch(`${api}/api/monthly-activity`, { cache: "no-store" });
-      const result = await res.json();
+      const [result, marquee] = await Promise.all([
+        fetch(`${api}/api/monthly-activity`, { cache: "no-store" }).then((res) => res.json()),
+        loadMarquee()
+      ]);
       const pages = Array.isArray(result.data?.pages) ? result.data.pages : [];
       const page = pages.find(matchPage);
       if (!page) {
@@ -176,12 +229,12 @@
       }
       const detailText = meaningfulText(page.detailText) || await fallbackDetailFromForm(page);
       const renderGalleryDetail = () => {
-        shell(`<main class="liff-detail"><section class="liff-card">${slider(pageImages(page))}${page.activityNo ? `<div class="liff-meta">${esc(page.activityNo)}</div>` : ""}<h1>${esc(page.detailTitle || "詳細說明")}</h1><div class="liff-text">${esc(detailText || "尚未填寫詳細說明。")}</div>${page.formUrl ? `<a class="liff-btn" href="${esc(page.formUrl)}">點我報名</a>` : ""}</section></main>`);
+        shell(`<main class="liff-detail"><section class="liff-card">${slider(pageImages(page))}${marqueeHtml(marquee)}${page.activityNo ? `<div class="liff-meta">${esc(page.activityNo)}</div>` : ""}<h1>${esc(page.detailTitle || "詳細說明")}</h1><div class="liff-text">${esc(detailText || "尚未填寫詳細說明。")}</div>${page.formUrl ? `<a class="liff-btn" href="${esc(page.formUrl)}">點我報名</a>` : ""}</section></main>`);
         bindSlider();
       };
       queueMicrotask(renderGalleryDetail);
       document.title = page.detailTitle || "詳細說明";
-      shell(`<main class="liff-detail"><section class="liff-card">${page.imageUrl ? `<img src="${esc(page.imageUrl)}" alt="">` : ""}${page.activityNo ? `<div class="liff-meta">${esc(page.activityNo)}</div>` : ""}<h1>${esc(page.detailTitle || "詳細說明")}</h1><div class="liff-text">${esc(detailText || "尚未填寫詳細說明。")}</div>${page.formUrl ? `<a class="liff-btn" href="${esc(page.formUrl)}">點我報名</a>` : ""}</section></main>`);
+      shell(`<main class="liff-detail"><section class="liff-card">${page.imageUrl ? `<img src="${esc(page.imageUrl)}" alt="">` : ""}${marqueeHtml(marquee)}${page.activityNo ? `<div class="liff-meta">${esc(page.activityNo)}</div>` : ""}<h1>${esc(page.detailTitle || "詳細說明")}</h1><div class="liff-text">${esc(detailText || "尚未填寫詳細說明。")}</div>${page.formUrl ? `<a class="liff-btn" href="${esc(page.formUrl)}">點我報名</a>` : ""}</section></main>`);
     } catch (_) {
       shell(`<main class="liff-detail"><section class="liff-card"><div class="liff-empty">詳細說明載入失敗，請稍後再試。</div></section></main>`);
     }

@@ -33,7 +33,7 @@
     "calendar-manager.js?v=calendar3",
     "monthly-activity.js?v=monthly27",
     "native-form.js?v=liff-member-fix1",
-    "liff-detail.js?v=liff-detail6",
+    "liff-detail.js?v=liff-detail7",
     "personal-message.js?v=pm4",
     "keyword-extra.js?v=kw2",
     "line-monitor-link.js?v=monitor-hidden2"
