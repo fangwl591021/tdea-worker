@@ -12,6 +12,7 @@
   let autoPublishTimer = 0;
   let autoPublishBusy = false;
   let lastAutoPublishSignature = "";
+  let remoteActivities = [];
   const previewCollapseKey = "tdea-monthly-preview-collapsed";
 
   const esc = (value) => String(value ?? "").replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;").replaceAll("'", "&#039;");
@@ -31,8 +32,22 @@
   }
 
   function activities() {
-    const rows = localData().activities;
+    const rows = remoteActivities.length ? remoteActivities : localData().activities;
     return Array.isArray(rows) ? rows.filter((item) => item && (item.name || item.activityNo || item.id)) : [];
+  }
+
+  async function loadRemoteActivities() {
+    try {
+      const res = await fetch(`${api}/api/activities`, { cache: "no-store" });
+      const result = await res.json().catch(() => ({}));
+      const rows = Array.isArray(result?.data?.activities) ? result.data.activities : Array.isArray(result?.activities) ? result.activities : [];
+      if (!result.success || !Array.isArray(rows)) return remoteActivities;
+      remoteActivities = rows.filter((item) => item && (item.name || item.activityNo || item.id));
+      const data = localData();
+      data.activities = remoteActivities;
+      saveLocalData(data);
+    } catch (_) {}
+    return remoteActivities;
   }
 
   function normalizeStatus(value) {
@@ -365,6 +380,7 @@
   }
 
   async function load() {
+    await loadRemoteActivities();
     try {
       const res = await fetch(`${api}/api/monthly-activity`, { cache: "no-store" });
       const result = await res.json();

@@ -84,7 +84,13 @@
     return `<a class="link" href="${esc(url)}" target="_blank" rel="noopener noreferrer">${esc(url)}</a>`;
   }
   function save() {
+    persistLocalSnapshot();
     queueManagerDataSave();
+  }
+  function persistLocalSnapshot() {
+    try {
+      localStorage.setItem(key, JSON.stringify(state.data || emptyManagerData()));
+    } catch (_) {}
   }
   function managerDataHasContent(data) {
     const formSettings = data?.formSettings;
@@ -131,7 +137,9 @@
     return {
       email: storedValue("tdea-admin-email").toLowerCase(),
       memberNo: storedValue("tdea-admin-member-no", "tdea-member-no").toUpperCase(),
-      lineUserId: storedValue("tdea-admin-line-user-id", "tdea-line-user-id", "lineUserId")
+      lineUserId: storedValue("tdea-admin-line-user-id", "tdea-line-user-id", "lineUserId"),
+      displayName: storedValue("tdea-admin-display-name"),
+      pictureUrl: storedValue("tdea-admin-picture-url")
     };
   }
   function hasAdminIdentity() {
@@ -211,7 +219,10 @@
     const response = await fetch(api + "/api/activities", { headers: adminHeaders(), cache: "no-store" });
     const result = await response.json().catch(() => ({}));
     const activities = Array.isArray(result?.data?.activities) ? result.data.activities : Array.isArray(result?.activities) ? result.activities : [];
-    if (result.success) state.data.activities = activities;
+    if (result.success) {
+      state.data.activities = activities;
+      persistLocalSnapshot();
+    }
     return state.data.activities;
   }
   async function saveActivityRemote(activity) {
@@ -245,6 +256,7 @@
       if (result.success) {
         state.data = mergeManagerData(emptyManagerData(), result.data || {});
         await loadActivitiesRemote();
+        persistLocalSnapshot();
         await loadAdminAccessIntoRoster();
         render();
       }
@@ -903,6 +915,17 @@
     }, 0);
   }
 
+  function adminProfileHtml() {
+    const identity = adminIdentity();
+    const label = identity.displayName || identity.email || identity.memberNo || shortUid(identity.lineUserId) || "未登入";
+    const detail = identity.lineUserId ? shortUid(identity.lineUserId) : identity.memberNo || identity.email || "請重新登入";
+    const fallback = (identity.displayName || identity.email || identity.memberNo || identity.lineUserId || "?").slice(0, 2).toUpperCase();
+    const avatar = identity.pictureUrl
+      ? `<img src="${esc(identity.pictureUrl)}" alt="${esc(label)}" referrerpolicy="no-referrer">`
+      : `<span>${esc(fallback)}</span>`;
+    return `<div class="admin-profile" title="${esc(label)}"><div class="admin-avatar">${avatar}</div><div class="admin-profile-text"><strong>${esc(label)}</strong><small>${esc(detail)}</small></div></div>`;
+  }
+
   function render() {
     const [title, sub] = labels[state.view] || labels.dashboard;
     const collapsed = sidebarCollapsed();
@@ -910,6 +933,7 @@
       <div class="shell ${collapsed ? "sidebar-collapsed" : ""}">
         <aside class="sidebar">
           <div class="brand"><span>TDEA 管理中心</span><button class="sidebar-toggle" type="button" data-sidebar-toggle title="${collapsed ? "展開選單" : "收合選單"}" aria-label="${collapsed ? "展開選單" : "收合選單"}">${collapsed ? "›" : "‹"}</button></div>
+          ${adminProfileHtml()}
           <nav class="nav">${nav("dashboard", "活動總覽")}${nav("association", "協會名冊")}${nav("vendor", "廠商名冊")}${nav("creator", "創建活動")}${nav("redeem", "點數折抵")}</nav>
         </aside>
         <main class="main">

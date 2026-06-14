@@ -1,6 +1,8 @@
 ﻿(() => {
   const storageKey = "tdea-manager-v3";
   const adminKey = "tdea-admin-email";
+  const adminMemberKey = "tdea-admin-member-no";
+  const adminLineUserKey = "tdea-admin-line-user-id";
   const api = "https://tdeawork.fangwl591021.workers.dev";
   let lastAppliedAt = 0;
   let accessMap = null;
@@ -19,6 +21,29 @@
 
   function adminEmail() {
     return sessionStorage.getItem(adminKey) || localStorage.getItem(adminKey) || "";
+  }
+
+  function adminIdentity() {
+    return {
+      email: sessionStorage.getItem(adminKey) || localStorage.getItem(adminKey) || "",
+      memberNo: sessionStorage.getItem(adminMemberKey) || localStorage.getItem(adminMemberKey) || "",
+      lineUserId: sessionStorage.getItem(adminLineUserKey) || localStorage.getItem(adminLineUserKey) || ""
+    };
+  }
+
+  function adminHeaders(extra = {}) {
+    const identity = adminIdentity();
+    return {
+      ...extra,
+      ...(identity.email ? { "x-admin-email": identity.email } : {}),
+      ...(identity.memberNo ? { "x-admin-member-no": identity.memberNo } : {}),
+      ...(identity.lineUserId ? { "x-line-user-id": identity.lineUserId } : {})
+    };
+  }
+
+  function hasAdminIdentity() {
+    const identity = adminIdentity();
+    return Boolean(identity.email || identity.memberNo || identity.lineUserId);
   }
 
   function toast(message) {
@@ -43,11 +68,10 @@
     if (!force && accessMap && now - accessLoadedAt < 30000) return accessMap;
     accessMap = new Map();
     accessLoadedAt = now;
-    const email = adminEmail();
-    if (!email) return accessMap;
+    if (!hasAdminIdentity()) return accessMap;
 
     const response = await fetch(`${api}/api/admin-access`, {
-      headers: { "x-admin-email": email },
+      headers: adminHeaders(),
       cache: "no-store"
     });
     const result = await response.json().catch(() => ({}));
@@ -62,14 +86,13 @@
   }
 
   async function updateAccess(member, memberNo, loginAccess) {
-    const email = adminEmail();
-    if (!email) throw new Error("Missing current admin email");
+    if (!hasAdminIdentity()) throw new Error("缺少目前管理者身份，請重新登入後再操作。");
     const targetEmail = clean(member?.email || member?.Email || member?.mail || member?.user_email);
     const targetLineUserId = clean(member?.lineUserId || member?.lineUid || member?.uid || member?.LINE_user_id || member?.line_user_id);
 
     const response = await fetch(`${api}/api/admin-access`, {
       method: "POST",
-      headers: { "content-type": "application/json", "x-admin-email": email },
+      headers: adminHeaders({ "content-type": "application/json" }),
       body: JSON.stringify({
         memberNo,
         email: targetEmail,

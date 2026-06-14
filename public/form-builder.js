@@ -10,6 +10,21 @@
     localStorage.setItem(key, JSON.stringify(data));
   }
 
+  async function loadRemoteActivitiesIntoLocal() {
+    try {
+      const response = await fetch(`${apiBase}/api/activities`, { cache: "no-store" });
+      const result = await response.json().catch(() => ({}));
+      const activities = Array.isArray(result?.data?.activities) ? result.data.activities : Array.isArray(result?.activities) ? result.activities : [];
+      if (!result.success || !Array.isArray(activities)) return load();
+      const data = load();
+      data.activities = activities.filter((item) => item && (item.name || item.activityNo || item.id));
+      save(data);
+      return data;
+    } catch (_) {
+      return load();
+    }
+  }
+
   function getAdminEmail() {
     let email = localStorage.getItem("tdea-admin-email") || "";
     if (!email) {
@@ -362,7 +377,7 @@
     settings.fields.push(...customFields);
 
     setTimeout(async () => {
-      const data = load();
+      const data = await loadRemoteActivitiesIntoLocal();
       data.formSettings ||= {};
       const latest = data.activities?.[0];
       if (!latest) return;

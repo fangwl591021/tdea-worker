@@ -17,7 +17,7 @@
     "marquee"
   ];
   const scriptVersions = [
-    "app.js?v=server-activity-records1",
+    "app.js?v=admin-avatar1",
     "line-zone.js?v=line-whitelist1",
     "lottery.js?v=lottery4",
     "activity-types.js?v=types3",
@@ -25,7 +25,7 @@
     "google-form-engine.js?v=gform14",
     "activity-detail.js?v=activity-detail6",
     "uid-column.js?v=uid15",
-    "login-access.js?v=login5",
+    "login-access.js?v=login6",
     "flex-manager.js?v=flex4",
     "vendor-card-manager.js?v=vendor-card6",
     "marquee-manager.js?v=marquee4",
@@ -73,13 +73,16 @@
     const memberNo = clean(identity.memberNo).toUpperCase();
     const lineUserId = clean(identity.lineUserId);
     const displayName = clean(identity.displayName);
+    const pictureUrl = clean(identity.pictureUrl);
     const expiresAt = Number(identity.expiresAt) || Date.now() + 12 * 60 * 60 * 1000;
-    const session = { email, memberNo, lineUserId, displayName, expiresAt };
+    const session = { email, memberNo, lineUserId, displayName, pictureUrl, expiresAt };
     localStorage.setItem(sessionKey, JSON.stringify(session));
     sessionStorage.setItem(sessionKey, JSON.stringify(session));
     setStored("tdea-admin-email", email);
     setStored("tdea-admin-member-no", memberNo);
     setStored("tdea-admin-line-user-id", lineUserId);
+    setStored("tdea-admin-display-name", displayName);
+    setStored("tdea-admin-picture-url", pictureUrl);
     return session;
   }
 
@@ -249,7 +252,7 @@
       });
       const result = await response.json().catch(() => ({}));
       if (!response.ok || !result.success) throw new Error(result.message || "LINE 登入失敗");
-      storeIdentity(result.data || {});
+      storeIdentity({ ...(result.data || {}), displayName: (result.data || {}).displayName || profile.displayName, pictureUrl: profile.pictureUrl });
       appRoot.innerHTML = "";
       await loadApp();
     } catch (error) {

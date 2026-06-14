@@ -30,6 +30,63 @@
   background: rgba(255, 255, 255, .16);
 }
 
+.admin-profile {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 18px 14px;
+  border-top: 1px solid rgba(255, 255, 255, .08);
+  border-bottom: 1px solid rgba(255, 255, 255, .08);
+}
+
+.admin-avatar {
+  width: 38px;
+  height: 38px;
+  flex: 0 0 38px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  border-radius: 999px;
+  border: 2px solid rgba(34, 197, 94, .72);
+  background: rgba(34, 197, 94, .14);
+  color: #bbf7d0;
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.admin-avatar img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.admin-profile-text {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+
+.admin-profile-text strong,
+.admin-profile-text small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.admin-profile-text strong {
+  color: #f8fafc;
+  font-size: 14px;
+  line-height: 1.2;
+}
+
+.admin-profile-text small {
+  color: #94a3b8;
+  font-size: 12px;
+  font-weight: 700;
+}
+
 .shell.sidebar-collapsed {
   grid-template-columns: 56px minmax(0, 1fr);
 }
@@ -45,6 +102,15 @@
 
 .shell.sidebar-collapsed .sidebar-toggle {
   right: 12px;
+}
+
+.shell.sidebar-collapsed .admin-profile {
+  justify-content: center;
+  padding: 10px 0;
+}
+
+.shell.sidebar-collapsed .admin-profile-text {
+  display: none;
 }
 
 .shell.sidebar-collapsed .nav button {
