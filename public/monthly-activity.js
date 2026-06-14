@@ -1,6 +1,8 @@
 (() => {
   const api = "https://tdeawork.fangwl591021.workers.dev";
   const adminKey = "tdea-admin-email";
+  const adminMemberKey = "tdea-admin-member-no";
+  const adminLineUserKey = "tdea-admin-line-user-id";
   const fixedKeyword = "TDEA每月活動";
   const defaultLiffBase = "https://liff.line.me/2005868456-2jmxqyFU?monthlyDetail={id}";
   const publicLiffUrl = "https://liff.line.me/2005868456-2jmxqyFU";
@@ -23,7 +25,34 @@
     return text.replace(/[,\s/\\|._\-，、。；;:：]+/g, "").length ? text : "";
   };
 
-  function adminEmail() { return sessionStorage.getItem(adminKey) || localStorage.getItem(adminKey) || ""; }
+  function storedValue(...keys) {
+    for (const key of keys) {
+      const value = sessionStorage.getItem(key) || localStorage.getItem(key) || "";
+      if (trim(value)) return trim(value);
+    }
+    return "";
+  }
+  function adminEmail() { return storedValue(adminKey).toLowerCase(); }
+  function adminIdentity() {
+    return {
+      email: adminEmail(),
+      memberNo: storedValue(adminMemberKey, "tdea-member-no").toUpperCase(),
+      lineUserId: storedValue(adminLineUserKey, "tdea-line-user-id", "lineUserId")
+    };
+  }
+  function hasAdminIdentity() {
+    const identity = adminIdentity();
+    return Boolean(identity.email || identity.memberNo || identity.lineUserId);
+  }
+  function adminHeaders(extra = {}) {
+    const identity = adminIdentity();
+    return {
+      ...extra,
+      ...(identity.email ? { "x-admin-email": identity.email } : {}),
+      ...(identity.memberNo ? { "x-admin-member-no": identity.memberNo } : {}),
+      ...(identity.lineUserId ? { "x-line-user-id": identity.lineUserId } : {})
+    };
+  }
   function previewCollapsed() { return localStorage.getItem(previewCollapseKey) === "Y"; }
   function setPreviewCollapsed(value) { localStorage.setItem(previewCollapseKey, value ? "Y" : "N"); }
 
@@ -573,10 +602,10 @@
     localStorage.setItem(dataKey, JSON.stringify(data));
   }
 
-  async function generateFormForActivity(activity, email) {
+  async function generateFormForActivity(activity) {
     const response = await fetch(`${api}/api/google-forms/create`, {
       method: "POST",
-      headers: { "content-type": "application/json", "x-admin-email": email },
+      headers: adminHeaders({ "content-type": "application/json" }),
       body: JSON.stringify(formPayloadForActivity(activity))
     });
     const result = await response.json().catch(() => ({}));
@@ -588,11 +617,11 @@
     return { formUrl, formId: result.formId || result.data?.formId || "", editUrl: result.editUrl || result.data?.editUrl || "", sheetUrl: result.sheetUrl || result.data?.sheetUrl || "" };
   }
 
-  async function generateManagedFormForActivity(activity, email) {
+  async function generateManagedFormForActivity(activity) {
     const payload = formPayloadForActivity(activity);
     const native = await fetch(`${api}/api/native-forms/create`, {
       method: "POST",
-      headers: { "content-type": "application/json", "x-admin-email": email },
+      headers: adminHeaders({ "content-type": "application/json" }),
       body: JSON.stringify(payload)
     });
     const nativeResult = await native.json().catch(() => ({}));
@@ -609,7 +638,7 @@
 
     const opnform = await fetch(`${api}/api/opnform/create`, {
       method: "POST",
-      headers: { "content-type": "application/json", "x-admin-email": email },
+      headers: adminHeaders({ "content-type": "application/json" }),
       body: JSON.stringify(payload)
     });
     const opnformResult = await opnform.json().catch(() => ({}));
@@ -628,7 +657,7 @@
 
     const response = await fetch(`${api}/api/google-forms/create`, {
       method: "POST",
-      headers: { "content-type": "application/json", "x-admin-email": email },
+      headers: adminHeaders({ "content-type": "application/json" }),
       body: JSON.stringify(payload)
     });
     const result = await response.json().catch(() => ({}));
@@ -638,11 +667,11 @@
     return { provider: "google_form", formUrl, formId: result.formId || result.data?.formId || "", editUrl: result.editUrl || result.data?.editUrl || "", sheetUrl: result.sheetUrl || result.data?.sheetUrl || "" };
   }
 
-  async function generateFormForActivity(activity, email) {
-    return generateManagedFormForActivity(activity, email);
+  async function generateFormForActivity(activity) {
+    return generateManagedFormForActivity(activity);
   }
 
-  async function ensureFormUrls(email) {
+  async function ensureFormUrls() {
     for (let index = 0; index < config.pages.length; index += 1) {
       const page = hydratePage(config.pages[index]);
       const currentImageUrl = trim(page.imageUrl);
@@ -650,7 +679,7 @@
       if (!activity) return `第 ${index + 1} 頁尚未選擇活動`;
       toast(`第 ${index + 1} 頁正在自動產生報名表...`);
       try {
-        const generated = await generateFormForActivity(activityPayloadForPage(page, activity), email);
+        const generated = await generateFormForActivity(activityPayloadForPage(page, activity));
         const saved = persistGeneratedFormUrl(activity, generated.formUrl, generated);
         applyActivityToPage(config.pages[index], saved);
         config.pages[index].formImageUrl = currentImageUrl;
@@ -697,21 +726,19 @@
   }
 
   function scheduleAutoPublish() {
-    const email = adminEmail();
-    if (!email || !canAutoPublish()) return;
+    if (!hasAdminIdentity() || !canAutoPublish()) return;
     clearTimeout(autoPublishTimer);
     autoPublishTimer = setTimeout(autoPublish, 800);
   }
 
   async function autoPublish() {
-    const email = adminEmail();
-    if (!email || autoPublishBusy || !canAutoPublish()) return;
+    if (!hasAdminIdentity() || autoPublishBusy || !canAutoPublish()) return;
     const signature = pagesSignature();
     if (signature === lastAutoPublishSignature) return;
     autoPublishBusy = true;
     try {
       const payload = prepareMonthlyPayload();
-      const res = await fetch(`${api}/api/monthly-activity`, { method: "PUT", headers: { "content-type": "application/json", "x-admin-email": email }, body: JSON.stringify(payload) });
+      const res = await fetch(`${api}/api/monthly-activity`, { method: "PUT", headers: adminHeaders({ "content-type": "application/json" }), body: JSON.stringify(payload) });
       const result = await res.json().catch(() => ({}));
       if (res.ok && result.success) {
         config = result.data;
@@ -750,21 +777,20 @@
     document.querySelectorAll("[data-monthly-gallery]").forEach((input) => input.addEventListener("input", () => { const page = config.pages[selected]; page.galleryUrls = uniqueUrls([input.value]); updatePreview(); }));
     document.querySelector("[data-monthly-file]")?.addEventListener("change", uploadImage);
     document.querySelector("[data-monthly-gallery-file]")?.addEventListener("change", uploadGalleryImages);
-    document.querySelector("[data-monthly-json]")?.addEventListener("click", async () => { const email = adminEmail(); if (!email) return toast("尚未登入，暫不能產生 FLEX JSON。"); const autoCount = syncPagesFromPublishedActivities({ allowEmpty: true, autoPublish: false }); if (!autoCount) return toast("目前沒有狀態為上架的活動。"); const formError = await ensureFormUrls(email); if (formError) return toast(formError); const validation = validateForPublish(); if (validation) return toast(validation); await navigator.clipboard.writeText(JSON.stringify(buildFlex(), null, 2)); toast("FLEX JSON 已複製"); });
+    document.querySelector("[data-monthly-json]")?.addEventListener("click", async () => { if (!hasAdminIdentity()) return toast("尚未登入，暫不能產生 FLEX JSON。"); const autoCount = syncPagesFromPublishedActivities({ allowEmpty: true, autoPublish: false }); if (!autoCount) return toast("目前沒有狀態為上架的活動。"); const formError = await ensureFormUrls(); if (formError) return toast(formError); const validation = validateForPublish(); if (validation) return toast(validation); await navigator.clipboard.writeText(JSON.stringify(buildFlex(), null, 2)); toast("FLEX JSON 已複製"); });
     document.querySelector("[data-monthly-publish]")?.addEventListener("click", publish);
   }
 
   async function uploadImage(event) {
     const file = event.target.files?.[0];
     if (!file) return;
-    const email = adminEmail();
-    if (!email) return toast("尚未登入，暫不能上傳。後續接 LINE Login 後會自動授權。");
+    if (!hasAdminIdentity()) return toast("尚未登入，暫不能上傳。請重新登入管理中心。");
     const page = hydratePage(config.pages[selected]);
     const form = new FormData();
     form.append("file", file);
     form.append("purpose", "monthly");
     form.append("activityId", page.activityNo || page.activityId || config.month || "draft");
-    const res = await fetch(`${api}/api/uploads`, { method: "POST", headers: { "x-admin-email": email }, body: form });
+    const res = await fetch(`${api}/api/uploads`, { method: "POST", headers: adminHeaders(), body: form });
     const result = await res.json().catch(() => ({}));
     if (!res.ok || !result.url) return toast(result.message || "上傳失敗");
     config.pages[selected].imageUrl = result.url.startsWith("http") ? result.url : api + result.url;
@@ -775,8 +801,7 @@
   async function uploadGalleryImages(event) {
     const files = Array.from(event.target.files || []);
     if (!files.length) return;
-    const email = adminEmail();
-    if (!email) return toast("請先登入管理者，才能上傳活動圖集");
+    if (!hasAdminIdentity()) return toast("請先登入管理者，才能上傳活動圖集");
     const page = hydratePage(config.pages[selected]);
     const uploadedUrls = [];
     for (const file of files) {
@@ -784,7 +809,7 @@
       form.append("file", file);
       form.append("purpose", "monthly-gallery");
       form.append("activityId", page.activityNo || page.activityId || config.month || "draft");
-      const res = await fetch(`${api}/api/uploads`, { method: "POST", headers: { "x-admin-email": email }, body: form });
+      const res = await fetch(`${api}/api/uploads`, { method: "POST", headers: adminHeaders(), body: form });
       const result = await res.json().catch(() => ({}));
       if (res.ok && result.url) uploadedUrls.push(result.url.startsWith("http") ? result.url : api + result.url);
     }
@@ -797,15 +822,14 @@
   }
 
   async function publish() {
-    const email = adminEmail();
-    if (!email) return toast("尚未登入，暫不能發布。後續接 LINE Login 後會自動授權。");
+    if (!hasAdminIdentity()) return toast("尚未登入，暫不能發布。請重新登入管理中心。");
     const autoCount = syncPagesFromPublishedActivities({ allowEmpty: true, autoPublish: false });
     if (!autoCount) return toast("目前沒有狀態為上架的活動，無法發布每月活動。");
-    const formError = await ensureFormUrls(email);
+    const formError = await ensureFormUrls();
     if (formError) return toast(formError);
     const validation = validateForPublish();
     if (validation) return toast(validation);
-    const res = await fetch(`${api}/api/monthly-activity`, { method: "PUT", headers: { "content-type": "application/json", "x-admin-email": email }, body: JSON.stringify(prepareMonthlyPayload()) });
+    const res = await fetch(`${api}/api/monthly-activity`, { method: "PUT", headers: adminHeaders({ "content-type": "application/json" }), body: JSON.stringify(prepareMonthlyPayload()) });
     const result = await res.json().catch(() => ({}));
     if (!res.ok || !result.success) return toast(result.message || "發布失敗");
     config = result.data;
