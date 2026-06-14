@@ -17,7 +17,7 @@
     redeem: ["點數折抵", "建立限時店家掃碼工作台，店家掃會員 QR 後執行扣點。"]
   };
   purgeLegacyManagerCache();
-  const state = { view: "dashboard", drawer: "", data: load(), registrationLists: {}, memberRegistrationLists: {}, memberApplications: null, adminWhitelist: null, adminWhitelistMeta: null, rosterSearch: { association: "", vendor: "" } };
+  const state = { view: "dashboard", drawer: "", data: load(), archivedActivities: [], registrationLists: {}, memberRegistrationLists: {}, memberApplications: null, adminWhitelist: null, adminWhitelistMeta: null, rosterSearch: { association: "", vendor: "" } };
   let managerDataSaveTimer = null;
   let managerDataLoading = false;
   let lineDraftAutoImporting = false;
@@ -225,6 +225,13 @@
     }
     return state.data.activities;
   }
+  async function loadArchivedActivitiesRemote() {
+    const response = await fetch(api + "/api/activities/archived", { headers: adminHeaders(), cache: "no-store" });
+    const result = await response.json().catch(() => ({}));
+    const activities = Array.isArray(result?.data?.activities) ? result.data.activities : Array.isArray(result?.activities) ? result.activities : [];
+    if (result.success) state.archivedActivities = activities;
+    return state.archivedActivities;
+  }
   async function saveActivityRemote(activity) {
     if (!hasAdminIdentity()) return activity;
     const id = String(activity?.id || "").trim();
@@ -247,6 +254,16 @@
     if (!response.ok || !result.success) throw new Error(result.message || "活動封存失敗");
     return true;
   }
+  async function restoreActivityRemote(id) {
+    if (!hasAdminIdentity()) return null;
+    const response = await fetch(api + "/api/activities/" + encodeURIComponent(id) + "/restore", {
+      method: "POST",
+      headers: adminHeaders()
+    });
+    const result = await response.json().catch(() => ({}));
+    if (!response.ok || !result.success) throw new Error(result.message || "活動恢復失敗");
+    return result.data || null;
+  }
   async function loadManagerDataRemote() {
     if (managerDataLoading) return;
     managerDataLoading = true;
@@ -256,6 +273,7 @@
       if (result.success) {
         state.data = mergeManagerData(emptyManagerData(), result.data || {});
         await loadActivitiesRemote();
+        await loadArchivedActivitiesRemote();
         persistLocalSnapshot();
         await loadAdminAccessIntoRoster();
         render();
@@ -985,11 +1003,21 @@
     const live = a.filter(x => x.status === "上架").length;
     const reg = a.reduce((s, x) => s + Number(x.reg || 0), 0);
     const chk = a.reduce((s, x) => s + Number(x.check || 0), 0);
-    return `<div class="grid stats">${stat("活動數", a.length)}${stat("上架中", live)}${stat("報名人數", reg)}${stat("簽到人數", chk)}</div><section class="panel"><div class="panel-head"><h2 class="panel-title">活動清單</h2><button class="btn" data-load-roster>載入名冊</button></div>${a.length ? activityTable(a) : empty("目前沒有活動")}</section>`;
+    return `<div class="grid stats">${stat("活動數", a.length)}${stat("上架中", live)}${stat("報名人數", reg)}${stat("簽到人數", chk)}</div><section class="panel"><div class="panel-head"><h2 class="panel-title">活動清單</h2><button class="btn" data-load-roster>載入名冊</button></div>${a.length ? activityTable(a) : empty("目前沒有活動")}</section>${archivedActivityPanel()}`;
   }
   function stat(label, value) { return `<div class="stat"><span>${label}</span><strong>${n(value)}</strong></div>`; }
   function activityTable(rows) {
     return `<div class="table-wrap"><table><thead><tr><th>活動名稱</th><th>類型</th><th>課程時間</th><th>報名</th><th>簽到</th><th>狀態</th><th>操作</th></tr></thead><tbody>${rows.map(x => `<tr><td><strong>${esc(x.name)}</strong></td><td>${esc(activityTypeLabel(x))}</td><td>${esc(x.courseTime || "-")}</td><td>${n(x.reg)}</td><td>${n(x.check)}</td><td><span class="badge ${x.status === "上架" ? "live" : "off"}">${esc(x.status)}</span></td><td><button class="link" data-drawer="activity:${x.id}">編輯</button><span class="muted"> / </span><button class="link" data-registration-list="${x.id}">名單</button><span class="muted"> / </span><button class="link" data-toggle="${x.id}">${x.status === "上架" ? "下架" : "上架"}</button><span class="muted"> / </span><button class="link danger-link" data-delete-activity="${x.id}">封存</button></td></tr>`).join("")}</tbody></table></div>`;
+  }
+
+  function archivedActivityPanel() {
+    const rows = Array.isArray(state.archivedActivities) ? state.archivedActivities : [];
+    const body = rows.length ? archivedActivityTable(rows) : empty("封存活動資料夾目前沒有活動");
+    return `<section class="panel" style="margin-top:18px"><div class="panel-head"><div><h2 class="panel-title">封存活動資料夾</h2><div class="muted">活動封存後會從活動清單隱藏，但報名、簽到、抽獎與表單設定仍保留。</div></div><div class="actions"><span class="badge off">${rows.length} 筆</span><button class="btn" data-load-archived-activities>重新整理</button></div></div>${body}</section>`;
+  }
+
+  function archivedActivityTable(rows) {
+    return `<div class="table-wrap"><table><thead><tr><th>活動名稱</th><th>類型</th><th>課程時間</th><th>封存時間</th><th>封存者</th><th>狀態</th><th>操作</th></tr></thead><tbody>${rows.map(x => `<tr><td><strong>${esc(x.name || x.activityNo || x.id)}</strong></td><td>${esc(activityTypeLabel(x))}</td><td>${esc(x.courseTime || "-")}</td><td>${esc(formatTime(x.deletedAt || x.updatedAt || ""))}</td><td>${esc(x.deletedBy || "-")}</td><td><span class="badge off">${esc(x.status || "已封存")}</span></td><td><button class="link" data-restore-activity="${esc(x.id)}">恢復</button></td></tr>`).join("")}</tbody></table></div>`;
   }
 
   function members(type) {
@@ -1230,6 +1258,22 @@
     toast("活動已封存，可保留既有報名資料");
   }
 
+  async function restoreActivity(rowId) {
+    const row = state.archivedActivities.find(x => x.id === rowId);
+    if (!row || !confirm(`確定恢復活動「${row.name || rowId}」？\n\n恢復後會回到活動清單，狀態先設為「下架」，不會自動公開。`)) return;
+    try {
+      await restoreActivityRemote(rowId);
+      await loadActivitiesRemote();
+      await loadArchivedActivitiesRemote();
+    } catch (err) {
+      toast(err?.message || "活動恢復失敗");
+      return;
+    }
+    save();
+    render();
+    toast("活動已恢復，狀態為下架");
+  }
+
   function ensureActivityEditorFields() {
     const form = document.querySelector("#drawer-activity");
     if (!form || form.dataset.mediaFieldsReady) return;
@@ -1431,6 +1475,8 @@
       }
     });
     document.querySelectorAll("[data-delete-activity]").forEach(b => b.onclick = () => deleteActivity(b.dataset.deleteActivity));
+    document.querySelectorAll("[data-restore-activity]").forEach(b => b.onclick = () => restoreActivity(b.dataset.restoreActivity));
+    document.querySelectorAll("[data-load-archived-activities]").forEach(b => b.onclick = async () => { await loadArchivedActivitiesRemote(); render(); toast("封存活動資料夾已更新"); });
     document.querySelectorAll("[data-delete-member]").forEach(b => b.onclick = () => deleteMember(b.dataset.deleteMember));
     document.querySelectorAll("[data-member-login-toggle]").forEach(input => input.onchange = () => {
       const [type, rowId] = String(input.dataset.memberLoginToggle || "").split(":");

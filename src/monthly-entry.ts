@@ -551,9 +551,38 @@ async function deleteActivityRecord(env: Env, id: string, actor: string) {
   return false;
 }
 
+async function restoreActivityRecord(env: Env, id: string, actor: string) {
+  if (!env.ASSETS_BUCKET) return null;
+  const cleanId = cleanActivityId(id);
+  if (!cleanId) return null;
+  const record = await readActivityRecord(env, cleanId);
+  if (!record) return null;
+  const restored = {
+    ...record,
+    archived: false,
+    deleted: false,
+    deletedAt: "",
+    deletedBy: "",
+    restoredAt: new Date().toISOString(),
+    restoredBy: actor,
+    status: "下架"
+  };
+  await env.ASSETS_BUCKET.put(activityRecordKey(cleanId), JSON.stringify(restored, null, 2), {
+    httpMetadata: { contentType: "application/json; charset=utf-8", cacheControl: "no-store" }
+  });
+  const index = await readActivityIndex(env);
+  if (!index.includes(cleanId)) await writeActivityIndex(env, [cleanId, ...index]);
+  return restored;
+}
+
 async function activityRecordsApi(request: Request, env: Env, url: URL) {
   if (!env.ASSETS_BUCKET) return json({ success: false, message: "R2 bucket is not configured" }, 503);
   const itemMatch = url.pathname.match(/^\/api\/activities\/([^/]+)$/);
+  const restoreMatch = url.pathname.match(/^\/api\/activities\/([^/]+)\/restore$/);
+  if (request.method === "GET" && url.pathname === "/api/activities/archived") {
+    const rows = await listActivityRecords(env, null, { includeArchived: true });
+    return json({ success: true, data: { activities: rows.filter(isArchivedActivityRecord) } });
+  }
   if (request.method === "GET" && url.pathname === "/api/activities") {
     const includeArchived = ["1", "true", "Y", "yes"].includes(clean(url.searchParams.get("includeArchived")).toLowerCase());
     return json({ success: true, data: { activities: await listActivityRecords(env, null, { includeArchived }) } });
@@ -580,6 +609,12 @@ async function activityRecordsApi(request: Request, env: Env, url: URL) {
     if (guard) return guard;
     const ok = await deleteActivityRecord(env, decodeURIComponent(itemMatch[1]), activityActorFromRequest(request));
     return json({ success: ok, activities: await listActivityRecords(env) }, ok ? 200 : 404);
+  }
+  if (restoreMatch && request.method === "POST") {
+    const guard = await requireAdmin(request, env);
+    if (guard) return guard;
+    const record = await restoreActivityRecord(env, decodeURIComponent(restoreMatch[1]), activityActorFromRequest(request));
+    return json({ success: Boolean(record), data: record, activities: await listActivityRecords(env) }, record ? 200 : 404);
   }
   return json({ success: false, message: "Not found" }, 404);
 }
@@ -4936,7 +4971,7 @@ export default {
 	    if (request.method === "GET" && url.pathname === "/api/monthly-activity") return json({ success: true, data: await readEffectiveMonthly(env) });
 	    if ((request.method === "PUT" || request.method === "POST") && url.pathname === "/api/monthly-activity") { const guard = await requireAdmin(request, env); if (guard) return guard; if (!env.ASSETS_BUCKET) return json({ success: false, message: "R2 bucket is not configured" }, 503); const config = await request.json().catch(() => ({})) as MonthlyConfig; await writeMonthly(env, config); const effective = await readEffectiveMonthly(env); return json({ success: true, data: effective, flex: buildMonthlyFlex(effective) }); }
 	    if (request.method === "GET" && url.pathname === "/api/monthly-activity/flex") { const config = await readEffectiveMonthly(env); return json({ success: true, flex: buildMonthlyFlex(config), data: config }); }
-	    if (url.pathname === "/api/activities" || /^\/api\/activities\/[^/]+$/.test(url.pathname)) return activityRecordsApi(request, env, url);
+	    if (url.pathname === "/api/activities" || url.pathname === "/api/activities/archived" || /^\/api\/activities\/[^/]+(?:\/restore)?$/.test(url.pathname)) return activityRecordsApi(request, env, url);
 	    if (request.method === "GET" && url.pathname === "/api/manager-data") return json({ success: true, data: await readManagerData(env) });
 	    if ((request.method === "PUT" || request.method === "POST") && url.pathname === "/api/manager-data") {
 	      const guard = await requireAdmin(request, env);
