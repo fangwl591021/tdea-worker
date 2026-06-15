@@ -350,18 +350,22 @@
     const cacheKey = ids.join("|");
     if (!force && pointMapPromise?.cacheKey === cacheKey) return pointMapPromise;
     const promise = (async () => {
-      const response = await fetch(`${apiBase}/api/member-points/batch`, {
-        method: "POST",
-        headers: { "content-type": "application/json", ...adminHeaders() },
-        body: JSON.stringify({ lineUserIds: ids, force: Boolean(force) }),
-        cache: "no-store"
-      });
-      const result = await response.json().catch(() => ({}));
-      if (!response.ok || !result.success) throw new Error(result.message || `點數查詢失敗 HTTP ${response.status}`);
       const map = new Map();
-      for (const item of result.data || []) {
-        const uid = validLineUid(item.lineUserId);
-        if (uid) map.set(uid, item);
+      const chunkSize = force ? 60 : 120;
+      for (let index = 0; index < ids.length; index += chunkSize) {
+        const chunk = ids.slice(index, index + chunkSize);
+        const response = await fetch(`${apiBase}/api/member-points/batch`, {
+          method: "POST",
+          headers: { "content-type": "application/json", ...adminHeaders() },
+          body: JSON.stringify({ lineUserIds: chunk, force: Boolean(force) }),
+          cache: "no-store"
+        });
+        const result = await response.json().catch(() => ({}));
+        if (!response.ok || !result.success) throw new Error(result.message || `Point query failed HTTP ${response.status}`);
+        for (const item of result.data || []) {
+          const uid = validLineUid(item.lineUserId);
+          if (uid) map.set(uid, item);
+        }
       }
       return map;
     })().catch((error) => {

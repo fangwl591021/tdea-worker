@@ -1615,6 +1615,7 @@ async function resolveAndBindNativeRegistrationMember(env: Env, lineUserId: stri
 
   for (const row of matched) setAiweRowLineUid(row, uid);
   await writeAiweMembers(env, rows);
+  await syncBoundMemberPoints(env, uid);
   return resolveLineLoginMember(env, uid);
 }
 
@@ -1723,51 +1724,77 @@ async function syncMotherPointToLocal(env: Env, lineUserId: string) {
   return { ...result, cached: false, syncedAt: account.syncedAt };
 }
 
+async function syncBoundMemberPoints(env: Env, lineUserId: string) {
+  try {
+    return await syncMotherPointToLocal(env, lineUserId);
+  } catch (error) {
+    return { success: false, message: String((error as Error).message || error || "點數同步失敗") };
+  }
+}
+
+function pointCacheIsFresh(account: PointAccount, maxAgeMs = 6 * 60 * 60 * 1000) {
+  const stamp = clean(account.syncedAt || account.updatedAt);
+  if (!stamp) return false;
+  const time = Date.parse(stamp);
+  return Number.isFinite(time) && Date.now() - time < maxAgeMs;
+}
+
+async function mapWithConcurrency<T, R>(items: T[], concurrency: number, worker: (item: T) => Promise<R>) {
+  const results: R[] = new Array(items.length);
+  let nextIndex = 0;
+  const workers = Array.from({ length: Math.max(1, Math.min(concurrency, items.length || 1)) }, async () => {
+    while (nextIndex < items.length) {
+      const index = nextIndex++;
+      results[index] = await worker(items[index]);
+    }
+  });
+  await Promise.all(workers);
+  return results;
+}
+
 async function queryMemberPointBatchApi(request: Request, env: Env) {
   const guard = await requireAdmin(request, env);
   if (guard) return guard;
   const input = await request.json().catch(() => ({})) as Record<string, unknown>;
   const rawIds = Array.isArray(input.lineUserIds) ? input.lineUserIds : [];
   const force = Boolean(input.force);
-  const lineUserIds = Array.from(new Set(rawIds.map((item) => clean(item)).filter(Boolean))).slice(0, 200);
-  const data = [];
-  for (const lineUserId of lineUserIds) {
+  const lineUserIds = Array.from(new Set(rawIds.map((item) => clean(item)).filter(Boolean))).slice(0, 1000);
+  const data = await mapWithConcurrency(lineUserIds, 8, async (lineUserId) => {
     try {
       const cached = await readPointAccount(env, lineUserId);
-      if (!force && clean(cached.updatedAt)) {
-        data.push({
+      if (!force && clean(cached.updatedAt) && pointCacheIsFresh(cached)) {
+        return {
           lineUserId,
           success: true,
           balance: numberValue(cached.balance),
           cached: true,
           syncedAt: cached.syncedAt || cached.updatedAt,
           message: ""
-        });
-        continue;
+        };
       }
       const result = await syncMotherPointToLocal(env, lineUserId) as Record<string, unknown>;
       const fallback = clean(cached.updatedAt);
-      data.push({
+      return {
         lineUserId,
         success: result.success === true || Boolean(fallback),
         balance: result.success === true ? numberValue(result.balance) : fallback ? numberValue(cached.balance) : null,
         cached: result.success === true ? false : Boolean(fallback),
         syncedAt: clean(result.syncedAt) || cached.syncedAt || cached.updatedAt || "",
         message: result.success === true ? "" : clean(result.message) || clean(result.code) || "點數查詢失敗"
-      });
+      };
     } catch (error) {
       const cached = await readPointAccount(env, lineUserId);
       const fallback = clean(cached.updatedAt);
-      data.push({
+      return {
         lineUserId,
         success: Boolean(fallback),
         balance: fallback ? numberValue(cached.balance) : null,
         cached: Boolean(fallback),
         syncedAt: cached.syncedAt || cached.updatedAt || "",
         message: String((error as Error).message || error || "點數查詢失敗")
-      });
+      };
     }
-  }
+  });
   return json({ success: true, data });
 }
 
@@ -4174,6 +4201,7 @@ async function resolveAndBindClaimedMember(env: Env, lineUserId: string, answers
   if (currentUid && currentUid.toLowerCase() !== uid.toLowerCase()) throw new Error("此會員編號已綁定其他 LINE UID，請由後台確認後再變更。");
   for (const row of matched) setAiweRowLineUid(row, uid);
   await writeAiweMembers(env, rows);
+  await syncBoundMemberPoints(env, uid);
   return resolveLineLoginMember(env, uid);
 }
 
@@ -4339,9 +4367,11 @@ async function bindLineUidEvents(events: LineEvent[], env: Env) {
       continue;
     }
     for (const row of matched) setAiweRowLineUid(row, lineUserId);
-    const message = { type: "text", text: `UID 已綁定。\n會員編號：${inferred.memberNo}\nLINE UID：${lineUserId}\n更新筆數：${matched.length}` };
+    const pointSync = await syncBoundMemberPoints(env, lineUserId) as Record<string, unknown>;
+    const pointText = pointSync.success === true ? `\n目前點數：${numberValue(pointSync.balance)} 點` : "\n點數同步：稍後可在後台重新同步";
+    const message = { type: "text", text: `UID 已綁定。\n會員編號：${inferred.memberNo}\nLINE UID：${lineUserId}\n更新筆數：${matched.length}${pointText}` };
     replies.push(event.replyToken ? await replyToLine(event.replyToken, [message], env) : { ok: false, status: 400, message: "Missing replyToken" });
-    results.push({ success: true, lineUserId, memberNo: inferred.memberNo, updated: matched.length, reason: inferred.reason });
+    results.push({ success: true, lineUserId, memberNo: inferred.memberNo, updated: matched.length, reason: inferred.reason, pointSync });
   }
   await writeAiweMembers(env, rows);
   return json({ success: true, mode: "uid-bind", results, lineReplies: replies });
