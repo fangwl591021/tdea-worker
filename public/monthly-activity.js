@@ -410,7 +410,10 @@
     button.dataset.monthlyZone = "1";
     button.textContent = "每月活動";
     button.addEventListener("click", show);
-    nav.appendChild(button);
+    const anchor = nav.querySelector('[data-nav="creator"]');
+    if (anchor && anchor.nextSibling) nav.insertBefore(button, anchor.nextSibling);
+    else if (anchor) nav.appendChild(button);
+    else nav.appendChild(button);
   }
 
   function setActiveNav() {
