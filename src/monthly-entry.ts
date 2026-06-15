@@ -4860,7 +4860,7 @@ async function handleMonthlyWebhook(request: Request, env: Env, rawBody: string,
   const allEvents = extractLineEvents(payload);
   const watchedTexts = allEvents.map((event) => clean(extractTriggerText(event))).filter((text) => /TDEA|每月活動/i.test(text));
   if (watchedTexts.length) {
-    ctx?.waitUntil(appendLineWebhookLog(env, {
+    await appendLineWebhookLog(env, {
       at: new Date().toISOString(),
       mode: "incoming-text",
       result: "received",
@@ -4870,7 +4870,7 @@ async function handleMonthlyWebhook(request: Request, env: Env, rawBody: string,
       monthlyMatches: watchedTexts.map((text) => isMonthlyActivityKeyword(text)).slice(0, 5),
       codePoints: watchedTexts.map((text) => Array.from(text).map((char) => char.codePointAt(0)?.toString(16) || "").join(" ")).slice(0, 3),
       eventCount: allEvents.length
-    }));
+    });
   }
   const lineActivityMaker = await handleLineActivityMaker(request, env, rawBody, allEvents, ctx);
   if (lineActivityMaker) return lineActivityMaker;
