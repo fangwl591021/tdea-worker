@@ -1003,9 +1003,9 @@
     const live = a.filter(x => x.status === "上架").length;
     const reg = a.reduce((s, x) => s + Number(x.reg || 0), 0);
     const chk = a.reduce((s, x) => s + Number(x.check || 0), 0);
-    return `<div class="grid stats">${stat("活動數", a.length)}${stat("上架中", live)}${stat("報名人數", reg)}${stat("簽到人數", chk)}</div><section class="panel"><div class="panel-head"><h2 class="panel-title">活動清單</h2><button class="btn" data-load-roster>載入名冊</button></div>${a.length ? activityTable(a) : empty("目前沒有活動")}</section>${archivedActivityPanel()}`;
+    return `<div class="grid stats">${stat("活動數", a.length, "total")}${stat("上架中", live, "live")}${stat("報名人數", reg, "registration")}${stat("簽到人數", chk, "checkin")}</div><section class="panel"><div class="panel-head"><h2 class="panel-title">活動清單</h2><button class="btn" data-load-roster>載入名冊</button></div>${a.length ? activityTable(a) : empty("目前沒有活動")}</section>${archivedActivityPanel()}`;
   }
-  function stat(label, value) { return `<div class="stat"><span>${label}</span><strong>${n(value)}</strong></div>`; }
+  function stat(label, value, tone = "") { return `<div class="stat ${tone ? `stat-${tone}` : ""}"><span>${label}</span><strong>${n(value)}</strong></div>`; }
   function activityTable(rows) {
     return `<div class="table-wrap"><table><thead><tr><th>活動名稱</th><th>類型</th><th>課程時間</th><th>報名</th><th>簽到</th><th>狀態</th><th>操作</th></tr></thead><tbody>${rows.map(x => `<tr><td><strong>${esc(x.name)}</strong></td><td>${esc(activityTypeLabel(x))}</td><td>${esc(x.courseTime || "-")}</td><td>${n(x.reg)}</td><td>${n(x.check)}</td><td><span class="badge ${x.status === "上架" ? "live" : "off"}">${esc(x.status)}</span></td><td><button class="link" data-drawer="activity:${x.id}">編輯</button><span class="muted"> / </span><button class="link" data-registration-list="${x.id}">名單</button><span class="muted"> / </span><button class="link" data-toggle="${x.id}">${x.status === "上架" ? "下架" : "上架"}</button><span class="muted"> / </span><button class="link danger-link" data-delete-activity="${x.id}">封存</button></td></tr>`).join("")}</tbody></table></div>`;
   }
