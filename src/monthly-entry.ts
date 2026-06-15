@@ -4854,6 +4854,48 @@ async function lineWebhookLogsApi(request: Request, env: Env) {
   return json({ success: true, data: await readLineWebhookLogs(env) });
 }
 
+async function replyMonthlyActivityEvents(events: LineEvent[], allEvents: LineEvent[], env: Env) {
+  const config = await readEffectiveMonthly(env);
+  const pages = config.pages || [];
+  const message = config.enabled && pages.length ? buildMonthlyFlex(config) as Record<string, unknown> : { type: "text", text: "TDEA 每月活動尚未啟用，請稍後再試。" };
+  await appendLineWebhookLog(env, {
+    at: new Date().toISOString(),
+    mode: "monthly-activity",
+    result: "matched",
+    hasSignature: true,
+    pageCount: pages.length,
+    enabled: config.enabled !== false,
+    messageType: clean(message.type),
+    texts: allEvents.map((event) => clean(extractTriggerText(event))).filter(Boolean).slice(0, 5)
+  });
+  const lineReplies = await Promise.all(events.map(async (event) => {
+    if (!event.replyToken) return { ok: false, status: 400, message: "Missing replyToken" };
+    let prompt: Record<string, unknown> | null = null;
+    try {
+      prompt = await monthlyMemberStatusPrompt(event, env);
+    } catch (error) {
+      console.log("monthly member prompt failed", error);
+    }
+    const messages = prompt ? [message, prompt] : [message];
+    try {
+      return await replyToLine(event.replyToken, messages, env);
+    } catch (error) {
+      return { ok: false, status: 599, message: error instanceof Error ? error.message : String(error) };
+    }
+  }));
+  await appendLineWebhookLog(env, {
+    at: new Date().toISOString(),
+    mode: "monthly-activity",
+    result: "replied",
+    hasSignature: true,
+    pageCount: pages.length,
+    enabled: config.enabled !== false,
+    texts: allEvents.map((event) => clean(extractTriggerText(event))).filter(Boolean).slice(0, 5),
+    lineReplies: lineReplies.map((item) => ({ ok: item.ok, status: item.status, message: "message" in item ? item.message : undefined }))
+  });
+  return json({ success: true, mode: "monthly-activity", matched: [fixedKeyword], forwarded: false, lineReplies });
+}
+
 async function handleMonthlyWebhook(request: Request, env: Env, rawBody: string, ctx?: ExecutionContext) {
   let payload: unknown;
   try { payload = JSON.parse(rawBody); } catch (_) { return null; }
@@ -4872,6 +4914,23 @@ async function handleMonthlyWebhook(request: Request, env: Env, rawBody: string,
       eventCount: allEvents.length
     });
   }
+  const events = allEvents.filter((event) => isMonthlyActivityKeyword(extractTriggerText(event)));
+  if (events.length) {
+    const signature = request.headers.get("x-line-signature");
+    const signatureOk = await verifyLineSignature(rawBody, signature, env.LINE_CHANNEL_SECRET);
+    if (!signatureOk) {
+      await appendLineWebhookLog(env, {
+        at: new Date().toISOString(),
+        mode: "monthly-activity",
+        result: "invalid-signature",
+        hasSignature: Boolean(clean(signature)),
+        texts: allEvents.map((event) => clean(extractTriggerText(event))).filter(Boolean).slice(0, 5),
+        eventCount: allEvents.length
+      });
+      return new Response("Invalid Signature", { status: 403, headers });
+    }
+    return replyMonthlyActivityEvents(events, allEvents, env);
+  }
   const lineActivityMaker = await handleLineActivityMaker(request, env, rawBody, allEvents, ctx);
   if (lineActivityMaker) return lineActivityMaker;
   const queryEvents = allEvents.filter((event) => normalizeKeyword(extractTriggerText(event)) === normalizeKeyword(queryKeyword));
@@ -4884,7 +4943,6 @@ async function handleMonthlyWebhook(request: Request, env: Env, rawBody: string,
   const pointEvents = allEvents
     .map((event) => ({ event, query: parseMotherPointKeyword(extractTriggerText(event)) }))
     .filter((match): match is { event: LineEvent; query: { uid: string } } => Boolean(match.query));
-  const events = allEvents.filter((event) => isMonthlyActivityKeyword(extractTriggerText(event)));
   const onboardingActive = await hasMemberOnboardingSession(allEvents, env);
   if (!queryEvents.length && !memberQrEvents.length && !calendarEvents.length && !personalMessageEvents.length && !uidBindEvents.length && !vendorCardEvents.length && !marqueeEvents.length && !pointEvents.length && !events.length && !onboardingActive) return null;
   const signature = request.headers.get("x-line-signature");
