@@ -138,11 +138,19 @@
 
   async function loadApp() {
     document.body.classList.remove("admin-login-body");
-    for (const file of scriptVersions) {
+    const files = isPublicMode() ? publicScriptVersions() : scriptVersions;
+    for (const file of files) {
       await loadScript(file).catch((error) => {
         if (!file.startsWith("line-monitor-link")) throw error;
       });
     }
+  }
+
+  function publicScriptVersions() {
+    const params = searchParams();
+    if (params.has("monthlyDetail") || params.has("close")) return ["liff-detail.js?v=liff-detail9"];
+    if (params.has("personalMessages")) return ["personal-message.js?v=pm4"];
+    return ["native-form.js?v=liff-member-fix2"];
   }
 
   function loadScript(src) {
