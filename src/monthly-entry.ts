@@ -4895,7 +4895,6 @@ async function handleMonthlyWebhook(request: Request, env: Env, rawBody: string,
   }
   const bareUidBindEvents = uidBindEvents.filter((event) => !parseUidBindKeyword(extractTriggerText(event)).memberNo);
   const gatedEvents = [
-    ...events,
     ...queryEvents,
     ...memberQrEvents,
     ...calendarEvents,
@@ -4906,7 +4905,15 @@ async function handleMonthlyWebhook(request: Request, env: Env, rawBody: string,
     ...bareUidBindEvents
   ];
   const closedGate = await handleClosedMemberGate(allEvents, gatedEvents, env);
-  if (closedGate) return json({ success: true, mode: "member-gate", lineReply: closedGate });
+  if (closedGate) {
+    await appendLineWebhookLog(env, {
+      at: new Date().toISOString(),
+      mode: "member-gate",
+      result: "handled",
+      texts: allEvents.map((event) => clean(extractTriggerText(event))).filter(Boolean).slice(0, 5)
+    });
+    return json({ success: true, mode: "member-gate", lineReply: closedGate });
+  }
   if (events.length) {
     const config = await readEffectiveMonthly(env);
     const pages = config.pages || [];
