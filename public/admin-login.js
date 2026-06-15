@@ -316,14 +316,9 @@
       await loadApp();
       return;
     }
-    const session = cachedSession();
-    if (session && await validateIdentity(session).catch(() => false)) {
+    if (cachedSession()) {
       await loadApp();
       return;
-    }
-    if (session) {
-      localStorage.removeItem(sessionKey);
-      sessionStorage.removeItem(sessionKey);
     }
     renderLogin();
   }
