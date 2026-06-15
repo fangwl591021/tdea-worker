@@ -616,6 +616,7 @@
 
   async function showCheckin(token) {
     renderLoading("讀取核銷資料...");
+    const operatorReady = loadLiff({ login: false });
     const response = await fetch(`${api}/api/native-checkin/verify?token=${encodeURIComponent(token)}`, { cache: "no-store" });
     const result = await response.json().catch(() => ({}));
     if (!response.ok || !result.success) return renderError(result.message || "核銷資料無效");
@@ -639,10 +640,31 @@
         <tr><th>人名</th><td>${esc(attendeeName)}</td></tr>
         <tr><th>活動名稱</th><td>${esc(activityName)}</td></tr>
       </tbody></table>
-      <div class="nf-actions"><button class="nf-btn primary" data-confirm-checkin ${alreadyCheckedIn ? "disabled" : ""}>${alreadyCheckedIn ? "已完成報到" : "確認報到"}</button></div>
+      <div class="nf-actions"><button class="nf-btn primary" data-confirm-checkin ${alreadyCheckedIn ? "disabled" : "disabled"}>${alreadyCheckedIn ? "已完成報到" : "準備核銷..."}</button></div>
     </div></section>`);
     if (alreadyCheckedIn) return;
-    app.querySelector("[data-confirm-checkin]")?.addEventListener("click", async (event) => {
+    const button = app.querySelector("[data-confirm-checkin]");
+    let preparedOperatorLineUserId = "";
+    const prepareOperator = async ({ login = false } = {}) => {
+      if (preparedOperatorLineUserId) return preparedOperatorLineUserId;
+      if (button) {
+        button.disabled = true;
+        button.textContent = login ? "LINE 登入中..." : "準備核銷...";
+      }
+      preparedOperatorLineUserId = await (login ? loadLiff({ login: true }) : operatorReady);
+      if (!preparedOperatorLineUserId && login) preparedOperatorLineUserId = await loadLiff({ login: true });
+      if (button) {
+        button.disabled = false;
+        button.textContent = preparedOperatorLineUserId ? "確認報到" : "用 LINE 登入後核銷";
+      }
+      return preparedOperatorLineUserId;
+    };
+    prepareOperator().then((uid) => {
+      if (uid || !button) return;
+      button.disabled = false;
+      button.textContent = "用 LINE 登入後核銷";
+    });
+    button?.addEventListener("click", async (event) => {
       const button = event.currentTarget;
       if (button?.dataset.busy === "1") return;
       const originalText = button?.textContent || "確認報到";
@@ -652,7 +674,7 @@
         button.textContent = "核銷中，請稍候...";
       }
       try {
-        const operatorLineUserId = await loadLiff({ login: true });
+        const operatorLineUserId = preparedOperatorLineUserId || await prepareOperator({ login: true });
         if (!operatorLineUserId) throw new Error("無法取得工作人員 LINE UID，請用 LINE 開啟此核銷 QR。");
         const confirmResponse = await fetch(`${api}/api/native-checkin/confirm`, {
           method: "POST",

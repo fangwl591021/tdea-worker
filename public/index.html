@@ -30,7 +30,7 @@
         if (!app.querySelector("[data-public-fallback]")) return;
         if (document.querySelector('script[src*="native-form.js"]')) return;
         const script = document.createElement("script");
-        script.src = "/native-form.js?v=liff-checkin2";
+        script.src = "/native-form.js?v=liff-checkin3";
         script.onerror = () => {
           app.innerHTML = '<main style="max-width:840px;margin:0 auto;padding:24px 16px;font-family:system-ui,-apple-system,BlinkMacSystemFont,&quot;Segoe UI&quot;,sans-serif"><section style="background:#fff3f0;border:1px solid #fecdca;border-radius:10px;padding:18px;color:#b42318;font-weight:800">核銷頁載入失敗，請重新掃描 QR。</section></main>';
         };
@@ -38,6 +38,6 @@
       }, 1600);
     })();
   </script>
-  <script src="/admin-login.js?v=admin-entry13"></script>
+  <script src="/admin-login.js?v=admin-entry14"></script>
 </body>
 </html>
