@@ -2,7 +2,7 @@
 
 type Env = { ADMIN_EMAILS?: string; ADMIN_LOGIN_USER?: string; ADMIN_LOGIN_PASSWORD?: string; ASSETS_BUCKET?: R2Bucket; LINE_CHANNEL_SECRET?: string; LINE_CHANNEL_ACCESS_TOKEN?: string; FORWARD_WEBHOOK_URL?: string; GOOGLE_FORMS_SCRIPT_URL?: string; GOOGLE_FORMS_SHARED_SECRET?: string; OPNFORM_API_BASE?: string; OPNFORM_PUBLIC_BASE?: string; OPNFORM_API_TOKEN?: string; OPNFORM_WORKSPACE_ID?: string; OPNFORM_WEBHOOK_SECRET?: string; WETW_POINT_API_KEY?: string; WETW_SHOP_ID?: string; WETW_POINT_TYPE?: string; TDEA_POINT_EXTERNAL_SYNC?: string; TDEA_ADMIN_LINE_USER_IDS?: string; OPENAI_API_KEY?: string; OPENAI_MODEL?: string };
 type LineEvent = { type?: string; replyToken?: string; message?: { type?: string; id?: string; text?: string }; postback?: { data?: string }; source?: { type?: string; userId?: string; groupId?: string; roomId?: string } };
-type MonthlyPage = { id?: string; activityNo?: string; activityId?: string; activityName?: string; imageUrl?: string; galleryUrls?: string[]; formImageUrl?: string; detailTitle?: string; detailText?: string; detailUrl?: string; formUrl?: string; shareUrl?: string; order?: number };
+type MonthlyPage = { id?: string; manual?: boolean; activityNo?: string; activityId?: string; activityName?: string; imageUrl?: string; galleryUrls?: string[]; formImageUrl?: string; detailTitle?: string; detailText?: string; detailUrl?: string; formUrl?: string; shareUrl?: string; order?: number };
 type MonthlyConfig = { enabled?: boolean; keyword?: string; month?: string; altText?: string; detailBaseUrl?: string; pages?: MonthlyPage[]; updatedAt?: string };
 type VendorCardItem = { id?: string; enabled?: boolean; name?: string; label?: string; actionText?: string; imageUrl?: string; order?: number };
 type VendorCardConfig = { enabled?: boolean; keyword?: string; altText?: string; title?: string; items?: VendorCardItem[]; updatedAt?: string };
@@ -2773,6 +2773,7 @@ function normalizeConfig(config: MonthlyConfig): MonthlyConfig {
   };
   const normalizedPages = pages.slice(0, 12).map((page, index) => ({
     id: String(page.id || crypto.randomUUID()),
+    manual: page.manual === true,
     activityNo: String(page.activityNo || "").trim(),
     activityId: String(page.activityId || "").trim(),
     activityName: String(page.activityName || "").trim(),
@@ -2810,6 +2811,10 @@ function activityIdentity(activity: Record<string, unknown>) {
 
 function pageIdentity(page: MonthlyPage) {
   return firstClean(page.activityNo, page.activityId, page.id);
+}
+
+function isManualMonthlyPage(page: MonthlyPage) {
+  return page.manual === true && !clean(page.activityNo) && !clean(page.activityId);
 }
 
 function monthlyUrlList(value: unknown) {
@@ -2850,15 +2855,20 @@ async function readEffectiveMonthly(env: Env): Promise<MonthlyConfig> {
   const monthly = await readMonthly(env);
   const managerData = await readManagerData(env);
   const activities = Array.isArray(managerData?.activities) ? managerData.activities : [];
+  const manualPages = (monthly.pages || []).filter(isManualMonthlyPage);
   const activityPages = activities
     .filter((item): item is Record<string, unknown> => Boolean(item) && typeof item === "object" && activityStatusIsOnline(item as Record<string, unknown>))
     .map((item, index) => pageFromActivity(item, index))
     .filter((page): page is MonthlyPage => Boolean(page));
-  if (!activityPages.length) return normalizeConfig({ ...monthly, enabled: false, pages: [] });
+  if (!activityPages.length) return normalizeConfig({ ...monthly, enabled: monthly.enabled !== false && manualPages.length > 0, pages: manualPages });
 
   const merged = new Map<string, MonthlyPage>();
   activityPages.forEach((page) => merged.set(pageIdentity(page), page));
   (monthly.pages || []).forEach((page, index) => {
+    if (isManualMonthlyPage(page)) {
+      merged.set(pageIdentity(page), { ...page, order: Number.isFinite(Number(page.order)) ? page.order : index });
+      return;
+    }
     const key = pageIdentity(page);
     if (!key) return;
     const base = merged.get(key);
@@ -2903,6 +2913,7 @@ function detailUrlForPage(page: MonthlyPage, config: MonthlyConfig) {
 function registerUrlForPage(page: MonthlyPage) {
   const target = String(page.activityNo || page.activityId || page.id || "").trim();
   const current = String(page.formUrl || "").trim();
+  if (page.manual === true && !current) return "";
   if (target && (!current || (/liff\.line\.me/i.test(current) && /[?&]register=/.test(current)))) {
     return `${publicLiffUrl}?register=${encodeURIComponent(target)}`;
   }
@@ -2917,7 +2928,7 @@ function buildMonthlyFlex(config: MonthlyConfig) {
 
 function buildMonthlyBubble(page: MonthlyPage, config: MonthlyConfig) {
   const detailUri = detailUrlForPage(page, config);
-  const formUri = registerUrlForPage(page);
+  const formUri = registerUrlForPage(page) || detailUri;
   const shareUri = page.shareUrl || detailUri;
   return {
     type: "bubble",

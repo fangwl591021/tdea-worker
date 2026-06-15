@@ -299,7 +299,8 @@
       const matched = keys.map((key) => existing.get(key)).find(Boolean) || {};
       return pageFromActivity(activity, matched);
     });
-    config.pages = nextPages;
+    const manualPages = (config.pages || []).filter((page) => page?.manual === true && !trim(page.activityNo) && !trim(page.activityId));
+    config.pages = [...nextPages, ...manualPages].slice(0, 12);
     selected = Math.max(0, Math.min(selected, Math.max(config.pages.length - 1, 0)));
     const changed = before !== pagesSignature();
     if (changed && options.autoPublish !== false) scheduleAutoPublish();
@@ -311,7 +312,7 @@
   }
 
   function blankPage() {
-    return { id: id(), activityNo: "", activityId: "", imageUrl: defaultImageUrl, shareUrl: "" };
+    return { id: id(), manual: true, activityNo: "", activityId: "", activityName: "", detailTitle: "", detailText: "", formUrl: "", imageUrl: defaultImageUrl, shareUrl: "" };
   }
 
   function ensureConfigShape() {
@@ -330,6 +331,7 @@
   }
 
   function applyActivityToPage(page, activity) {
+    page.manual = false;
     page.activityNo = activity.activityNo || page.activityNo || "";
     page.activityId = activity.id || page.activityId || "";
     page.activityName = activity.name || page.activityName || "";
@@ -369,6 +371,7 @@
     const hydrated = hydratePage(page);
     const target = trim(hydrated.activityNo) || trim(hydrated.activityId) || trim(hydrated.id);
     const current = trim(hydrated.formUrl);
+    if (hydrated.manual && !current) return "";
     if (target && (!current || (/liff\.line\.me/i.test(current) && /[?&]register=/.test(current)))) {
       return `${publicLiffUrl}?register=${encodeURIComponent(target)}`;
     }
@@ -492,7 +495,8 @@
     if (!config.pages.length) return `<div class="monthly-form"><div class="monthly-warning">目前沒有可連動的上架活動。請先到「創建活動」建立活動並上架，這裡才會產生活動卡。</div></div>`;
     const hydrated = hydratePage(page);
     const linked = trim(hydrated.activityNo || hydrated.activityId);
-    return `<div class="monthly-form"><div class="field"><label>連動活動</label>${activitySelect(page)}<div class="monthly-link-note">只要選活動即可。LINE Flex 使用主圖；詳細說明 LIFF 會顯示多張活動圖片輪播。</div></div>${linkedInfo(page)}<div class="field"><label>主圖 / LINE Flex 圖片</label><input type="file" accept="image/*" data-monthly-file><div class="muted">主圖會用在 LINE Flex 卡片與第一張輪播圖。</div></div><div class="field"><label>主圖網址</label><input name="imageUrl" data-monthly-page value="${esc(page.imageUrl)}" placeholder="上傳後自動填入，也可貼既有海報網址"></div><div class="field"><label>活動圖集</label><input type="file" accept="image/*" multiple data-monthly-gallery-file><div class="muted">可一次選多張；LIFF 詳細頁會每 3 秒自動左移換圖。</div></div><div class="field"><label>圖集網址</label><textarea name="galleryUrls" data-monthly-gallery placeholder="每行一張圖片網址">${esc((page.galleryUrls || []).join("\n"))}</textarea></div>${!linked ? `<div class="monthly-warning">這頁尚未選擇活動，發布前請先選擇活動。</div>` : ""}${linked && !trim(hydrated.formUrl) ? `<div class="monthly-warning">這個活動還沒有報名表；發布時系統會自動產生並寫回活動。</div>` : ""}${linked && !meaningfulText(hydrated.detailText) ? `<div class="monthly-warning">此活動沒有詳細說明，請回到活動編輯補上「詳細說明」。</div>` : ""}</div>`;
+    const manualFields = !linked ? `<div class="field"><label>手動頁標題</label><input name="activityName" data-monthly-page value="${esc(page.activityName || page.detailTitle || "")}" placeholder="例如：6 月廠商參訪"></div><div class="field"><label>詳細說明</label><textarea name="detailText" data-monthly-page placeholder="輸入會顯示在活動說明頁的內容">${esc(page.detailText || "")}</textarea></div><div class="field"><label>報名連結</label><input name="formUrl" data-monthly-page value="${esc(page.formUrl || "")}" placeholder="可留空；留空時按鈕會開詳細說明頁"></div>` : "";
+    return `<div class="monthly-form"><div class="field"><label>連動活動</label>${activitySelect(page)}<div class="monthly-link-note">可選上架活動自動帶入；沒有上架活動時，也可用手動頁輸入內容。</div></div>${linkedInfo(page)}${manualFields}<div class="field"><label>主圖 / LINE Flex 圖片</label><input type="file" accept="image/*" data-monthly-file><div class="muted">主圖會用在 LINE Flex 卡片與第一張輪播圖。</div></div><div class="field"><label>主圖網址</label><input name="imageUrl" data-monthly-page value="${esc(page.imageUrl)}" placeholder="上傳後自動填入，也可貼既有海報網址"></div><div class="field"><label>活動圖集</label><input type="file" accept="image/*" multiple data-monthly-gallery-file><div class="muted">可一次選多張；LIFF 詳細頁會每 3 秒自動左移換圖。</div></div><div class="field"><label>圖集網址</label><textarea name="galleryUrls" data-monthly-gallery placeholder="每行一張圖片網址">${esc((page.galleryUrls || []).join("\n"))}</textarea></div>${linked && !trim(hydrated.formUrl) ? `<div class="monthly-warning">這個活動還沒有報名表；發布時系統會自動產生並寫回活動。</div>` : ""}${linked && !meaningfulText(hydrated.detailText) ? `<div class="monthly-warning">此活動沒有詳細說明，請回到活動編輯補上「詳細說明」。</div>` : ""}</div>`;
   }
 
   function preview() {
@@ -685,6 +689,7 @@
       const page = hydratePage(config.pages[index]);
       const currentImageUrl = trim(page.imageUrl);
       const activity = findActivity(page.activityNo || page.activityId);
+      if (page.manual && !activity) continue;
       if (!activity) return `第 ${index + 1} 頁尚未選擇活動`;
       toast(`第 ${index + 1} 頁正在自動產生報名表...`);
       try {
@@ -703,7 +708,7 @@
     return { type: "carousel", contents: config.pages.slice(0, 12).map((rawPage) => {
       const page = hydratePage(rawPage);
       const detailUri = detailUrlForPage(page);
-      const formUri = registerUrlForPage(page);
+      const formUri = registerUrlForPage(page) || detailUri;
       const shareUri = shareUrlForPage(page);
       return { type: "bubble", size: "kilo", body: { type: "box", layout: "vertical", paddingAll: "0px", contents: [{ type: "image", url: page.imageUrl || defaultImageUrl, size: "full", aspectMode: "cover", aspectRatio: "2:3", gravity: "top", action: { type: "uri", label: "報名", uri: formUri } }, { type: "box", layout: "vertical", position: "absolute", cornerRadius: "20px", offsetTop: "18px", backgroundColor: "#ff334b", offsetStart: "18px", height: "25px", width: "53px", action: { type: "uri", label: "分享", uri: shareUri }, contents: [{ type: "text", text: "分享", color: "#ffffff", align: "center", size: "xs", offsetTop: "3px", action: { type: "uri", label: "分享", uri: shareUri } }] }] }, footer: { type: "box", layout: "horizontal", contents: [{ type: "button", action: { type: "uri", label: "詳細說明", uri: detailUri }, height: "sm", style: "primary" }, { type: "button", action: { type: "uri", label: "點我報名", uri: formUri }, height: "sm", style: "primary", margin: "md" }] } };
     }) };
@@ -712,7 +717,9 @@
   function validateForPublish() {
     for (let index = 0; index < config.pages.length; index += 1) {
       const page = hydratePage(config.pages[index]);
-      if (!trim(page.activityNo) && !trim(page.activityId)) return `第 ${index + 1} 頁尚未選擇活動`;
+      const linked = trim(page.activityNo) || trim(page.activityId);
+      if (!linked && !page.manual) return `第 ${index + 1} 頁尚未選擇活動`;
+      if (!linked && !trim(page.activityName || page.detailTitle)) return `第 ${index + 1} 頁尚未輸入標題`;
       if (!meaningfulText(page.detailText)) return `第 ${index + 1} 頁連動活動缺少詳細說明`;
     }
     return "";
@@ -728,7 +735,8 @@
     config.keyword = fixedKeyword;
     config.pages = config.pages.map((page, order) => {
       const hydrated = hydratePage(page);
-      return { ...hydrated, detailUrl: detailUrlForPage(hydrated), formUrl: registerUrlForPage(hydrated), order };
+      const detailUrl = detailUrlForPage(hydrated);
+      return { ...hydrated, detailTitle: hydrated.detailTitle || hydrated.activityName || "詳細說明", detailUrl, formUrl: registerUrlForPage(hydrated) || detailUrl, order };
     }).slice(0, 12);
     config.enabled = config.pages.length > 0;
     return config;
@@ -781,12 +789,12 @@
     bindPageButtons();
     document.querySelector("[data-monthly-add]")?.addEventListener("click", () => { if (config.pages.length >= 12) return toast("LINE carousel 最多 12 頁"); config.pages.push(blankPage()); selected = config.pages.length - 1; render(); });
     document.querySelector("[data-monthly-delete]")?.addEventListener("click", () => { if (config.pages.length <= 1) return toast("至少保留 1 頁"); config.pages.splice(selected, 1); selected = Math.max(0, selected - 1); render(); });
-    document.querySelector("[data-monthly-activity]")?.addEventListener("change", (event) => { const page = config.pages[selected]; const activity = findActivity(event.target.value); page.activityNo = activity?.activityNo || ""; page.activityId = activity?.id || event.target.value || ""; if (activity) applyActivityToPage(page, activity); updatePreview(); updatePageLabels(); render(); });
-    document.querySelectorAll("[data-monthly-page]").forEach((input) => input.addEventListener("input", () => { const page = config.pages[selected]; page[input.name] = input.value; updatePreview(); if (input.name === "imageUrl") updatePageLabels(); }));
+    document.querySelector("[data-monthly-activity]")?.addEventListener("change", (event) => { const page = config.pages[selected]; const activity = findActivity(event.target.value); page.manual = !activity; page.activityNo = activity?.activityNo || ""; page.activityId = activity?.id || ""; if (activity) applyActivityToPage(page, activity); updatePreview(); updatePageLabels(); render(); });
+    document.querySelectorAll("[data-monthly-page]").forEach((input) => input.addEventListener("input", () => { const page = config.pages[selected]; page[input.name] = input.value; if (input.name === "activityName") page.detailTitle = input.value; updatePreview(); if (input.name === "imageUrl" || input.name === "activityName") updatePageLabels(); }));
     document.querySelectorAll("[data-monthly-gallery]").forEach((input) => input.addEventListener("input", () => { const page = config.pages[selected]; page.galleryUrls = uniqueUrls([input.value]); updatePreview(); }));
     document.querySelector("[data-monthly-file]")?.addEventListener("change", uploadImage);
     document.querySelector("[data-monthly-gallery-file]")?.addEventListener("change", uploadGalleryImages);
-    document.querySelector("[data-monthly-json]")?.addEventListener("click", async () => { if (!hasAdminIdentity()) return toast("尚未登入，暫不能產生 FLEX JSON。"); const autoCount = syncPagesFromPublishedActivities({ allowEmpty: true, autoPublish: false }); if (!autoCount) return toast("目前沒有狀態為上架的活動。"); const formError = await ensureFormUrls(); if (formError) return toast(formError); const validation = validateForPublish(); if (validation) return toast(validation); await navigator.clipboard.writeText(JSON.stringify(buildFlex(), null, 2)); toast("FLEX JSON 已複製"); });
+    document.querySelector("[data-monthly-json]")?.addEventListener("click", async () => { if (!hasAdminIdentity()) return toast("尚未登入，暫不能產生 FLEX JSON。"); syncPagesFromPublishedActivities({ allowEmpty: true, autoPublish: false }); if (!config.pages.length) return toast("請先新增頁或建立上架活動。"); const formError = await ensureFormUrls(); if (formError) return toast(formError); const validation = validateForPublish(); if (validation) return toast(validation); await navigator.clipboard.writeText(JSON.stringify(buildFlex(), null, 2)); toast("FLEX JSON 已複製"); });
     document.querySelector("[data-monthly-publish]")?.addEventListener("click", publish);
   }
 
@@ -832,8 +840,8 @@
 
   async function publish() {
     if (!hasAdminIdentity()) return toast("尚未登入，暫不能發布。請重新登入管理中心。");
-    const autoCount = syncPagesFromPublishedActivities({ allowEmpty: true, autoPublish: false });
-    if (!autoCount) return toast("目前沒有狀態為上架的活動，無法發布每月活動。");
+    syncPagesFromPublishedActivities({ allowEmpty: true, autoPublish: false });
+    if (!config.pages.length) return toast("請先新增頁或建立上架活動。");
     const formError = await ensureFormUrls();
     if (formError) return toast(formError);
     const validation = validateForPublish();
