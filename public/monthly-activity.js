@@ -790,8 +790,8 @@
     document.querySelector("[data-monthly-add]")?.addEventListener("click", () => { if (config.pages.length >= 12) return toast("LINE carousel 最多 12 頁"); config.pages.push(blankPage()); selected = config.pages.length - 1; render(); });
     document.querySelector("[data-monthly-delete]")?.addEventListener("click", () => { if (config.pages.length <= 1) return toast("至少保留 1 頁"); config.pages.splice(selected, 1); selected = Math.max(0, selected - 1); render(); });
     document.querySelector("[data-monthly-activity]")?.addEventListener("change", (event) => { const page = config.pages[selected]; const activity = findActivity(event.target.value); page.manual = !activity; page.activityNo = activity?.activityNo || ""; page.activityId = activity?.id || ""; if (activity) applyActivityToPage(page, activity); updatePreview(); updatePageLabels(); render(); });
-    document.querySelectorAll("[data-monthly-page]").forEach((input) => input.addEventListener("input", () => { const page = config.pages[selected]; page[input.name] = input.value; if (input.name === "activityName") page.detailTitle = input.value; updatePreview(); if (input.name === "imageUrl" || input.name === "activityName") updatePageLabels(); }));
-    document.querySelectorAll("[data-monthly-gallery]").forEach((input) => input.addEventListener("input", () => { const page = config.pages[selected]; page.galleryUrls = uniqueUrls([input.value]); updatePreview(); }));
+    document.querySelectorAll("[data-monthly-page]").forEach((input) => input.addEventListener("input", () => { const page = config.pages[selected]; page[input.name] = input.value; if (input.name === "activityName") page.detailTitle = input.value; updatePreview(); if (input.name === "imageUrl" || input.name === "activityName") updatePageLabels(); scheduleAutoPublish(); }));
+    document.querySelectorAll("[data-monthly-gallery]").forEach((input) => input.addEventListener("input", () => { const page = config.pages[selected]; page.galleryUrls = uniqueUrls([input.value]); updatePreview(); scheduleAutoPublish(); }));
     document.querySelector("[data-monthly-file]")?.addEventListener("change", uploadImage);
     document.querySelector("[data-monthly-gallery-file]")?.addEventListener("change", uploadGalleryImages);
     document.querySelector("[data-monthly-json]")?.addEventListener("click", async () => { if (!hasAdminIdentity()) return toast("尚未登入，暫不能產生 FLEX JSON。"); syncPagesFromPublishedActivities({ allowEmpty: true, autoPublish: false }); if (!config.pages.length) return toast("請先新增頁或建立上架活動。"); const formError = await ensureFormUrls(); if (formError) return toast(formError); const validation = validateForPublish(); if (validation) return toast(validation); await navigator.clipboard.writeText(JSON.stringify(buildFlex(), null, 2)); toast("FLEX JSON 已複製"); });
@@ -835,7 +835,8 @@
     rawPage.galleryUrls = uniqueUrls([rawPage.galleryUrls, uploadedUrls]);
     if (!rawPage.imageUrl) rawPage.imageUrl = rawPage.galleryUrls[0];
     render();
-    toast(`已上傳 ${uploadedUrls.length} 張圖集圖片`);
+    toast(`已上傳 ${uploadedUrls.length} 張圖集圖片，正在更新說明頁`);
+    if (canAutoPublish()) await autoPublish();
   }
 
   async function publish() {
