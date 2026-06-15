@@ -84,6 +84,10 @@ const headers = { "access-control-allow-origin": "*", "access-control-allow-meth
 const json = (data: unknown, status = 200) => new Response(JSON.stringify(data), { status, headers: { "content-type": "application/json; charset=utf-8", "cache-control": "no-store", ...headers } });
 const esc = (value: unknown) => String(value ?? "").replace(/[&<>'"]/g, (ch) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "'": "&#039;", "\"": "&quot;" }[ch] || ch));
 const normalizeKeyword = (value: string) => value.trim().replace(/[\s\u200B-\u200D\uFEFF]+/g, "").toUpperCase();
+const isMonthlyActivityKeyword = (value: string) => {
+  const normalized = normalizeKeyword(value);
+  return normalized === normalizeKeyword(fixedKeyword) || (normalized.includes("TDEA") && normalized.includes("每月活動"));
+};
 
 function staticAdminEmails(env: Env) {
   return (env.ADMIN_EMAILS || "admin@example.com").split(",").map((item) => item.trim().toLowerCase()).filter(Boolean);
@@ -3932,7 +3936,7 @@ async function handleLineActivityMakerEvent(event: LineEvent, env: Env, ctx?: Ex
 async function handleLineActivityMaker(request: Request, env: Env, rawBody: string, allEvents: LineEvent[], ctx?: ExecutionContext) {
   const candidates = allEvents.filter((event) => {
     const text = clean(extractTriggerText(event));
-    if (normalizeKeyword(text) === normalizeKeyword(fixedKeyword)) return false;
+    if (isMonthlyActivityKeyword(text)) return false;
     return (text || isLineImageMessage(event)) && lineUserIdFromEvent(event);
   });
   if (!candidates.length) return null;
@@ -4877,7 +4881,7 @@ async function handleMonthlyWebhook(request: Request, env: Env, rawBody: string,
   const pointEvents = allEvents
     .map((event) => ({ event, query: parseMotherPointKeyword(extractTriggerText(event)) }))
     .filter((match): match is { event: LineEvent; query: { uid: string } } => Boolean(match.query));
-  const events = allEvents.filter((event) => normalizeKeyword(extractTriggerText(event)) === normalizeKeyword(fixedKeyword));
+  const events = allEvents.filter((event) => isMonthlyActivityKeyword(extractTriggerText(event)));
   const onboardingActive = await hasMemberOnboardingSession(allEvents, env);
   if (!queryEvents.length && !memberQrEvents.length && !calendarEvents.length && !personalMessageEvents.length && !uidBindEvents.length && !vendorCardEvents.length && !marqueeEvents.length && !pointEvents.length && !events.length && !onboardingActive) return null;
   const signature = request.headers.get("x-line-signature");
