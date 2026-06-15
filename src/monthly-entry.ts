@@ -4866,6 +4866,9 @@ async function handleMonthlyWebhook(request: Request, env: Env, rawBody: string,
       result: "received",
       hasSignature: Boolean(clean(request.headers.get("x-line-signature"))),
       texts: watchedTexts.slice(0, 5),
+      normalizedTexts: watchedTexts.map((text) => normalizeKeyword(text)).slice(0, 5),
+      monthlyMatches: watchedTexts.map((text) => isMonthlyActivityKeyword(text)).slice(0, 5),
+      codePoints: watchedTexts.map((text) => Array.from(text).map((char) => char.codePointAt(0)?.toString(16) || "").join(" ")).slice(0, 3),
       eventCount: allEvents.length
     }));
   }
