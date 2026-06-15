@@ -75,6 +75,7 @@ const lineActivityCreateKeyword = "TDEA建立活動";
 const lineActivityCreateAliases = ["TDEA新增活動", "TDEA活動上稿", "TDEA製作活動"];
 const defaultLiffBase = "https://liff.line.me/2005868456-2jmxqyFU?monthlyDetail={id}";
 const defaultLiffCloseUrl = "https://liff.line.me/2005868456-2jmxqyFU?close=1";
+const monthlyDefaultImageUrl = "https://fangwl591021.github.io/tdea-worker/public/assets/kooler-free-course.png";
 const publicAppUrl = "https://fangwl591021.github.io/tdea-worker/";
 const publicLiffUrl = "https://liff.line.me/2005868456-2jmxqyFU";
 const nativeLiffUrl = "https://liff.line.me/2005868456-cfANNVou";
@@ -2830,6 +2831,23 @@ function normalizeConfig(config: MonthlyConfig): MonthlyConfig {
   };
 }
 
+function validateMonthlyConfigForPublish(config: MonthlyConfig) {
+  const normalized = normalizeConfig(config);
+  if (normalized.enabled === false || !normalized.pages?.length) return "";
+  for (let index = 0; index < normalized.pages.length; index += 1) {
+    const page = normalized.pages[index];
+    const label = `第 ${index + 1} 頁`;
+    if (!clean(page.activityNo) && !clean(page.activityId) && !page.manual) return `${label}：請先選擇連動活動。`;
+    if (!clean(page.activityName || page.detailTitle)) return `${label}：請輸入活動標題。`;
+    if (!clean(page.detailText)) return `${label}：請先補齊活動詳細說明。`;
+    if (!clean(page.formUrl)) return `${label}：報名表尚未連動，不能發布。`;
+    const imageUrl = clean(page.imageUrl);
+    if (!/^https?:\/\//i.test(imageUrl) || imageUrl === monthlyDefaultImageUrl) return `${label}：主圖尚未上傳或仍使用預設圖，不能發布。`;
+    if (!Array.isArray(page.galleryUrls) || !page.galleryUrls.some((url) => /^https?:\/\//i.test(clean(url)))) return `${label}：活動圖集尚未上傳，不能發布。`;
+  }
+  return "";
+}
+
 function activityStatusIsOnline(activity: Record<string, unknown>) {
   const status = clean(activity.status || activity["狀態"]);
   if (activity.archived === true || activity.deleted === true || clean(activity.deletedAt)) return false;
@@ -5183,7 +5201,7 @@ export default {
 	    if (request.method === "POST" && url.pathname === "/api/personal-messages") return createPersonalMessageApi(request, env);
 	    if (request.method === "POST" && url.pathname === "/api/personal-messages/upload") return uploadPersonalMessageFileApi(request, env);
 	    if (request.method === "GET" && url.pathname === "/api/monthly-activity") return json({ success: true, data: await readEffectiveMonthly(env) });
-	    if ((request.method === "PUT" || request.method === "POST") && url.pathname === "/api/monthly-activity") { const guard = await requireAdmin(request, env); if (guard) return guard; if (!env.ASSETS_BUCKET) return json({ success: false, message: "R2 bucket is not configured" }, 503); const config = await request.json().catch(() => ({})) as MonthlyConfig; await writeMonthly(env, config); const effective = await readEffectiveMonthly(env); return json({ success: true, data: effective, flex: buildMonthlyFlex(effective) }); }
+	    if ((request.method === "PUT" || request.method === "POST") && url.pathname === "/api/monthly-activity") { const guard = await requireAdmin(request, env); if (guard) return guard; if (!env.ASSETS_BUCKET) return json({ success: false, message: "R2 bucket is not configured" }, 503); const config = await request.json().catch(() => ({})) as MonthlyConfig; const validation = validateMonthlyConfigForPublish(config); if (validation) return json({ success: false, message: validation }, 400); await writeMonthly(env, config); const effective = await readEffectiveMonthly(env); return json({ success: true, data: effective, flex: buildMonthlyFlex(effective) }); }
 	    if (request.method === "GET" && url.pathname === "/api/monthly-activity/flex") { const config = await readEffectiveMonthly(env); return json({ success: true, flex: buildMonthlyFlex(config), data: config }); }
 	    if (request.method === "GET" && url.pathname === "/api/line-webhook/status") return lineWebhookStatusApi(request, env);
 	    if (request.method === "GET" && url.pathname === "/api/line-webhook/logs") return lineWebhookLogsApi(request, env);

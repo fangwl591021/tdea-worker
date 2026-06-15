@@ -177,6 +177,16 @@
     return uniqueUrls([page.imageUrl, page.galleryUrls, galleryUrlsFor(activity)]);
   }
 
+  function pageUploadedGallery(page) {
+    const activity = findActivity(page.activityNo || page.activityId);
+    return uniqueUrls([page.galleryUrls, galleryUrlsFor(activity)]);
+  }
+
+  function hasCustomMainImage(page) {
+    const imageUrl = firstUrl(page.imageUrl);
+    return Boolean(imageUrl && imageUrl !== defaultImageUrl);
+  }
+
   function formUrlFor(activity) {
     if (!activity) return "";
     const settings = formSettingsFor(activity);
@@ -482,8 +492,9 @@
 
   function linkedInfo(page) {
     const hydrated = hydratePage(page);
-    if (!hydrated.activityName && !hydrated.activityNo) return `<div class="monthly-linked-box monthly-empty-link"><strong>請先選擇活動</strong><span>選擇後會自動帶入詳細說明與報名表，不需要填 LIFF 網址。</span></div>`;
-    return `<div class="monthly-linked-box"><strong>${esc(hydrated.activityName || hydrated.activityNo)}</strong><div class="monthly-status-row"><span class="monthly-status ${meaningfulText(hydrated.detailText) ? "ok" : "bad"}">詳細說明：${meaningfulText(hydrated.detailText) ? "已帶入" : "未填"}</span><span class="monthly-status ${trim(hydrated.formUrl) ? "ok" : "bad"}">報名表：${trim(hydrated.formUrl) ? "已連動" : "未連動"}</span></div></div>`;
+    if (!hydrated.activityName && !hydrated.activityNo) return `<div class="monthly-linked-box monthly-empty-link"><strong>請選擇活動</strong><span>發布前必須先選擇活動，或建立完整手動頁。</span></div>`;
+    const galleryCount = pageUploadedGallery(hydrated).length;
+    return `<div class="monthly-linked-box"><strong>${esc(hydrated.activityName || hydrated.activityNo)}</strong><div class="monthly-status-row"><span class="monthly-status ${meaningfulText(hydrated.detailText) ? "ok" : "bad"}">詳細說明：${meaningfulText(hydrated.detailText) ? "已帶入" : "未完成"}</span><span class="monthly-status ${trim(hydrated.formUrl) ? "ok" : "bad"}">報名表：${trim(hydrated.formUrl) ? "已連動" : "未連動"}</span><span class="monthly-status ${hasCustomMainImage(hydrated) ? "ok" : "bad"}">主圖：${hasCustomMainImage(hydrated) ? "已上傳" : "未上傳"}</span><span class="monthly-status ${galleryCount ? "ok" : "bad"}">圖集：${galleryCount ? `${galleryCount} 張` : "未上傳"}</span></div></div>`;
   }
   function pageForm(page) {
     if (!config.pages.length) return `<div class="monthly-form"><div class="monthly-warning">目前沒有可連動的上架活動。請先到「創建活動」建立活動並上架，這裡才會產生活動卡。</div></div>`;
@@ -718,13 +729,16 @@
     for (let index = 0; index < config.pages.length; index += 1) {
       const page = hydratePage(config.pages[index]);
       const linked = trim(page.activityNo) || trim(page.activityId);
-      if (!linked && !page.manual) return `第 ${index + 1} 頁尚未選擇活動`;
-      if (!linked && !trim(page.activityName || page.detailTitle)) return `第 ${index + 1} 頁尚未輸入標題`;
-      if (!meaningfulText(page.detailText)) return `第 ${index + 1} 頁連動活動缺少詳細說明`;
+      const label = `第 ${index + 1} 頁`;
+      if (!linked && !page.manual) return `${label}：請先選擇連動活動。`;
+      if (!linked && !trim(page.activityName || page.detailTitle)) return `${label}：請輸入手動頁標題。`;
+      if (!meaningfulText(page.detailText)) return `${label}：請先補齊活動詳細說明。`;
+      if (!trim(page.formUrl)) return `${label}：報名表尚未連動，不能發布。`;
+      if (!hasCustomMainImage(page)) return `${label}：主圖尚未上傳或仍使用預設圖，不能發布。`;
+      if (!pageUploadedGallery(page).length) return `${label}：活動圖集尚未上傳，不能發布。`;
     }
     return "";
   }
-
   function canAutoPublish() {
     if (!config || !Array.isArray(config.pages) || !config.pages.length) return false;
     if (validateForPublish()) return false;
