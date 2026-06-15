@@ -378,6 +378,8 @@
   }
 
   async function applyPointColumn(table, force = false) {
+    const runId = String(Date.now()) + Math.random().toString(16).slice(2);
+    table.dataset.pointColumnRun = runId;
     const uids = [];
     for (const row of table.querySelectorAll("tbody tr")) {
       const uid = validLineUid(row.dataset.lineUid);
@@ -393,6 +395,10 @@
       cell.title = "正在查詢母站點數";
     }
     const pointMap = await loadPointMap(uids, force);
+    if (!table.isConnected || table.dataset.pointColumnRun !== runId) {
+      setTimeout(scheduleApply, 80);
+      return;
+    }
     for (const row of table.querySelectorAll("tbody tr")) {
       const uid = validLineUid(row.dataset.lineUid);
       const cell = row.querySelector(".aiwe-point-cell");
@@ -462,8 +468,11 @@
     }
 
     if (changed) saveData(data);
-    applyPointColumn(table).catch((error) => console.warn(error));
-    table.dataset.uidColumnApplying = "";
+    try {
+      await applyPointColumn(table);
+    } finally {
+      table.dataset.uidColumnApplying = "";
+    }
   }
 
   function loadDataWithMerged(type, table) {
