@@ -4854,6 +4854,17 @@ async function handleMonthlyWebhook(request: Request, env: Env, rawBody: string,
   let payload: unknown;
   try { payload = JSON.parse(rawBody); } catch (_) { return null; }
   const allEvents = extractLineEvents(payload);
+  const watchedTexts = allEvents.map((event) => clean(extractTriggerText(event))).filter((text) => /TDEA|每月活動/i.test(text));
+  if (watchedTexts.length) {
+    ctx?.waitUntil(appendLineWebhookLog(env, {
+      at: new Date().toISOString(),
+      mode: "incoming-text",
+      result: "received",
+      hasSignature: Boolean(clean(request.headers.get("x-line-signature"))),
+      texts: watchedTexts.slice(0, 5),
+      eventCount: allEvents.length
+    }));
+  }
   const lineActivityMaker = await handleLineActivityMaker(request, env, rawBody, allEvents, ctx);
   if (lineActivityMaker) return lineActivityMaker;
   const queryEvents = allEvents.filter((event) => normalizeKeyword(extractTriggerText(event)) === normalizeKeyword(queryKeyword));
