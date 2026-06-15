@@ -2970,7 +2970,7 @@ function monthlySliderHtml(page: MonthlyPage) {
   const images = monthlyPageImages(page);
   if (!images.length) return "";
   if (images.length === 1) return `<img src="${esc(images[0])}" alt="">`;
-  return `<div class="slider" data-slider><div class="track">${images.map((url) => `<div class="slide"><img src="${esc(url)}" alt=""></div>`).join("")}</div><div class="slider-nav"><button type="button" data-prev>??/button><button type="button" data-next>??/button></div><div class="dots">${images.map((_, index) => `<button type="button" data-dot="${index}" class="${index === 0 ? "active" : ""}"></button>`).join("")}</div></div><script>(()=>{const root=document.querySelector("[data-slider]");if(!root)return;const track=root.querySelector(".track");const dots=[...root.querySelectorAll("[data-dot]")];let i=0,t=null;const go=n=>{i=(n+dots.length)%dots.length;track.style.transform="translateX(-"+(i*100)+"%)";dots.forEach((d,di)=>d.classList.toggle("active",di===i));};const restart=()=>{if(t)clearInterval(t);t=setInterval(()=>go(i+1),3000);};root.querySelector("[data-prev]").onclick=()=>{go(i-1);restart();};root.querySelector("[data-next]").onclick=()=>{go(i+1);restart();};dots.forEach(d=>d.onclick=()=>{go(Number(d.dataset.dot||0));restart();});restart();})();</script>`;
+  return `<div class="slider" data-slider><div class="track">${images.map((url) => `<div class="slide"><img src="${esc(url)}" alt=""></div>`).join("")}</div><div class="slider-nav"><button type="button" data-prev>&lt;</button><button type="button" data-next>&gt;</button></div><div class="dots">${images.map((_, index) => `<button type="button" data-dot="${index}" class="${index === 0 ? "active" : ""}"></button>`).join("")}</div></div><script>(()=>{const root=document.querySelector("[data-slider]");if(!root)return;const track=root.querySelector(".track");const dots=[...root.querySelectorAll("[data-dot]")];let i=0,t=null;const go=n=>{i=(n+dots.length)%dots.length;track.style.transform="translateX(-"+(i*100)+"%)";dots.forEach((d,di)=>d.classList.toggle("active",di===i));};const restart=()=>{if(t)clearInterval(t);t=setInterval(()=>go(i+1),3000);};root.querySelector("[data-prev]").onclick=()=>{go(i-1);restart();};root.querySelector("[data-next]").onclick=()=>{go(i+1);restart();};dots.forEach(d=>d.onclick=()=>{go(Number(d.dataset.dot||0));restart();});restart();})();</script>`;
 }
 
 function buildVendorCardFlex(config: VendorCardConfig) {
@@ -3271,6 +3271,24 @@ async function getUploadedFile(env: Env, key: string) {
   responseHeaders.set("cache-control", "public, max-age=31536000");
   responseHeaders.set("access-control-allow-origin", "*");
   return new Response(object.body, { headers: responseHeaders });
+}
+
+async function uploadGenericImageApi(request: Request, env: Env) {
+  const guard = await requireAdmin(request, env);
+  if (guard) return guard;
+  if (!env.ASSETS_BUCKET) return json({ success: false, message: "R2 bucket is not configured" }, 503);
+  const form = await request.formData().catch(() => null);
+  const file = form?.get("file");
+  if (!(file instanceof File)) return json({ success: false, message: "Missing image file" }, 400);
+  if (!file.type.startsWith("image/")) return json({ success: false, message: "Only image files are supported" }, 400);
+  const rawPurpose = clean(form?.get("purpose") || "uploads").toLowerCase();
+  const purpose = ["monthly", "monthly-gallery", "marquee"].includes(rawPurpose) ? rawPurpose : "uploads";
+  const activityId = safeUploadFileName(clean(form?.get("activityId") || "draft"));
+  const key = `${purpose}/${activityId}/${Date.now()}-${crypto.randomUUID()}-${safeUploadFileName(file.name)}`;
+  await env.ASSETS_BUCKET.put(key, await file.arrayBuffer(), {
+    httpMetadata: { contentType: file.type || "application/octet-stream", cacheControl: "public, max-age=31536000" }
+  });
+  return json({ success: true, key, url: `${workerBaseUrl}/api/uploads/${key.split("/").map(encodeURIComponent).join("/")}` });
 }
 
 async function uploadMarqueeImageApi(request: Request, env: Env) {
@@ -5104,10 +5122,8 @@ async function monthlyDetail(env: Env, id: string) {
   const page = (config.pages || []).find((item) => String(item.id) === id || String(item.activityNo) === id || String(item.activityId) === id);
   if (!page) return new Response("Not found", { status: 404, headers: { "content-type": "text/plain; charset=utf-8" } });
   const formUrl = registerUrlForPage(page);
-  const marquee = await readMarqueeConfig(env);
-  const marqueeItems = marquee.enabled === false ? [] : normalizeMarqueeImageItems(marquee).filter((item) => item.enabled !== false && item.imageUrl);
-  const marqueeHtml = marqueeItems.length ? `<section class="marquee"><div class="marquee-head"><strong>${esc(marquee.title || "TDEA 跑馬燈")}</strong><span>${marqueeItems.length} 張</span></div><div class="marquee-strip">${marqueeItems.map((item) => item.linkUrl ? `<a href="${esc(item.linkUrl)}"><img src="${esc(item.imageUrl)}" alt="${esc(item.title || "")}"></a>` : `<img src="${esc(item.imageUrl)}" alt="${esc(item.title || "")}">`).join("")}</div></section>` : "";
-  const html = `<!doctype html><html lang="zh-Hant"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${esc(page.detailTitle || "活動詳細說明")}</title><style>body{margin:0;background:#f4f6f8;color:#111827;font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI","Noto Sans TC",sans-serif}.wrap{max-width:720px;margin:0 auto;padding:22px}.card{background:#fff;border-radius:14px;padding:22px;box-shadow:0 14px 36px rgba(15,23,42,.08)}img{width:100%;border-radius:10px;margin-bottom:16px}.meta{display:inline-flex;margin:0 0 12px;padding:5px 10px;border-radius:999px;background:#eafff1;color:#027a48;font-size:13px;font-weight:800}h1{font-size:24px;margin:0 0 12px}.text{white-space:pre-wrap;line-height:1.7;color:#344054}.btn{display:block;margin-top:18px;padding:13px 16px;border-radius:10px;background:#06c755;color:#fff;text-align:center;text-decoration:none;font-weight:800}.marquee{margin:18px 0;padding:14px;border:1px solid #dbe3ef;border-radius:14px;background:#f8fafc}.marquee-head{display:flex;align-items:center;justify-content:space-between;gap:10px;margin:0 0 10px}.marquee-head strong{font-size:16px}.marquee-head span{font-size:12px;color:#667085;font-weight:800}.marquee-strip{display:flex;gap:10px;overflow-x:auto;scroll-snap-type:x mandatory;padding-bottom:4px}.marquee-strip img{width:220px;max-width:72vw;aspect-ratio:1/1;object-fit:cover;margin:0;border-radius:10px;scroll-snap-align:start}.marquee-strip a{display:block;flex:0 0 auto}</style></head><body><main class="wrap"><section class="card">${page.imageUrl ? `<img src="${esc(page.imageUrl)}" alt="">` : ""}${marqueeHtml}${page.activityNo ? `<div class="meta">${esc(page.activityNo)}</div>` : ""}<h1>${esc(page.detailTitle || "活動詳細說明")}</h1><div class="text">${esc(page.detailText || "目前沒有詳細說明。")}</div>${formUrl ? `<a class="btn" href="${esc(formUrl)}">前往報名</a>` : ""}</section></main></body></html>`;
+  const galleryHtml = monthlySliderHtml(page);
+  const html = `<!doctype html><html lang="zh-Hant"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${esc(page.detailTitle || "活動詳細說明")}</title><style>body{margin:0;background:#f4f6f8;color:#111827;font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI","Noto Sans TC",sans-serif}.wrap{max-width:720px;margin:0 auto;padding:22px}.card{background:#fff;border-radius:14px;padding:22px;box-shadow:0 14px 36px rgba(15,23,42,.08)}img{width:100%;border-radius:10px;margin-bottom:16px}.meta{display:inline-flex;margin:0 0 12px;padding:5px 10px;border-radius:999px;background:#eafff1;color:#027a48;font-size:13px;font-weight:800}h1{font-size:24px;margin:0 0 12px}.text{white-space:pre-wrap;line-height:1.7;color:#344054}.btn{display:block;margin-top:18px;padding:13px 16px;border-radius:10px;background:#06c755;color:#fff;text-align:center;text-decoration:none;font-weight:800}.gallery{margin:0 0 18px}.gallery-head{display:flex;align-items:center;justify-content:space-between;margin:0 0 10px}.gallery-head strong{font-size:16px}.gallery-head span{font-size:12px;color:#667085;font-weight:800}.slider{position:relative;overflow:hidden;border-radius:12px;background:#eef2f6;margin-bottom:16px}.track{display:flex;transition:transform .35s ease}.slide{min-width:100%}.slide img{display:block;width:100%;margin:0;border-radius:0}.slider-nav{position:absolute;inset:0;display:flex;align-items:center;justify-content:space-between;pointer-events:none}.slider-nav button{pointer-events:auto;width:36px;height:36px;border:0;border-radius:999px;background:rgba(15,23,42,.62);color:#fff;font-size:18px;font-weight:900;margin:10px}.dots{position:absolute;left:0;right:0;bottom:8px;display:flex;justify-content:center;gap:6px}.dots button{width:8px;height:8px;border:0;border-radius:999px;background:rgba(255,255,255,.55);padding:0}.dots button.active{background:#06c755}</style></head><body><main class="wrap"><section class="card">${galleryHtml ? `<section class="gallery"><div class="gallery-head"><strong>活動圖集</strong><span>${monthlyPageImages(page).length} 張</span></div>${galleryHtml}</section>` : ""}${page.activityNo ? `<div class="meta">${esc(page.activityNo)}</div>` : ""}<h1>${esc(page.detailTitle || "活動詳細說明")}</h1><div class="text">${esc(page.detailText || "目前沒有詳細說明。")}</div>${formUrl ? `<a class="btn" href="${esc(formUrl)}">前往報名</a>` : ""}</section></main></body></html>`;
   return new Response(html, { headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" } });
 }
 
@@ -5117,6 +5133,7 @@ export default {
     if (request.method === "OPTIONS") return new Response(null, { status: 204, headers });
 	    const uploadMatch = url.pathname.match(/^\/api\/uploads\/(.+)$/);
 	    if ((request.method === "GET" || request.method === "HEAD") && uploadMatch) return getUploadedFile(env, decodeURIComponent(uploadMatch[1]));
+	    if (request.method === "POST" && url.pathname === "/api/uploads") return uploadGenericImageApi(request, env);
 	    if (request.method === "GET" && url.pathname === "/api/line-activity-drafts") return listLineActivityDrafts(request, env);
 	    if ((request.method === "DELETE" || request.method === "POST") && url.pathname === "/api/line-activity-drafts/delete") return deleteLineActivityDraft(request, env);
 	    if (request.method === "GET" && url.pathname === "/api/line-activity-debug") return getLineActivityDebug(request, env);
