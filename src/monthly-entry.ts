@@ -4854,20 +4854,10 @@ async function lineWebhookLogsApi(request: Request, env: Env) {
   return json({ success: true, data: await readLineWebhookLogs(env) });
 }
 
-async function replyMonthlyActivityEvents(events: LineEvent[], allEvents: LineEvent[], env: Env) {
+async function replyMonthlyActivityEvents(events: LineEvent[], allEvents: LineEvent[], env: Env, ctx?: ExecutionContext) {
   const config = await readEffectiveMonthly(env);
   const pages = config.pages || [];
   const message = config.enabled && pages.length ? buildMonthlyFlex(config) as Record<string, unknown> : { type: "text", text: "TDEA 每月活動尚未啟用，請稍後再試。" };
-  await appendLineWebhookLog(env, {
-    at: new Date().toISOString(),
-    mode: "monthly-activity",
-    result: "matched",
-    hasSignature: true,
-    pageCount: pages.length,
-    enabled: config.enabled !== false,
-    messageType: clean(message.type),
-    texts: allEvents.map((event) => clean(extractTriggerText(event))).filter(Boolean).slice(0, 5)
-  });
   const lineReplies = await Promise.all(events.map(async (event) => {
     if (!event.replyToken) return { ok: false, status: 400, message: "Missing replyToken" };
     let prompt: Record<string, unknown> | null = null;
@@ -4883,7 +4873,7 @@ async function replyMonthlyActivityEvents(events: LineEvent[], allEvents: LineEv
       return { ok: false, status: 599, message: error instanceof Error ? error.message : String(error) };
     }
   }));
-  await appendLineWebhookLog(env, {
+  const logTask = appendLineWebhookLog(env, {
     at: new Date().toISOString(),
     mode: "monthly-activity",
     result: "replied",
@@ -4893,6 +4883,8 @@ async function replyMonthlyActivityEvents(events: LineEvent[], allEvents: LineEv
     texts: allEvents.map((event) => clean(extractTriggerText(event))).filter(Boolean).slice(0, 5),
     lineReplies: lineReplies.map((item) => ({ ok: item.ok, status: item.status, message: "message" in item ? item.message : undefined }))
   });
+  if (ctx) ctx.waitUntil(logTask);
+  else await logTask;
   return json({ success: true, mode: "monthly-activity", matched: [fixedKeyword], forwarded: false, lineReplies });
 }
 
@@ -4902,7 +4894,7 @@ async function handleMonthlyWebhook(request: Request, env: Env, rawBody: string,
   const allEvents = extractLineEvents(payload);
   const watchedTexts = allEvents.map((event) => clean(extractTriggerText(event))).filter((text) => /TDEA|每月活動/i.test(text));
   if (watchedTexts.length) {
-    await appendLineWebhookLog(env, {
+    ctx?.waitUntil(appendLineWebhookLog(env, {
       at: new Date().toISOString(),
       mode: "incoming-text",
       result: "received",
@@ -4912,7 +4904,7 @@ async function handleMonthlyWebhook(request: Request, env: Env, rawBody: string,
       monthlyMatches: watchedTexts.map((text) => isMonthlyActivityKeyword(text)).slice(0, 5),
       codePoints: watchedTexts.map((text) => Array.from(text).map((char) => char.codePointAt(0)?.toString(16) || "").join(" ")).slice(0, 3),
       eventCount: allEvents.length
-    });
+    }));
   }
   const events = allEvents.filter((event) => isMonthlyActivityKeyword(extractTriggerText(event)));
   if (events.length) {
@@ -4929,7 +4921,7 @@ async function handleMonthlyWebhook(request: Request, env: Env, rawBody: string,
       });
       return new Response("Invalid Signature", { status: 403, headers });
     }
-    return replyMonthlyActivityEvents(events, allEvents, env);
+    return replyMonthlyActivityEvents(events, allEvents, env, ctx);
   }
   const lineActivityMaker = await handleLineActivityMaker(request, env, rawBody, allEvents, ctx);
   if (lineActivityMaker) return lineActivityMaker;
