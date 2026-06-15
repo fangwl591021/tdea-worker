@@ -32,8 +32,8 @@
     "push-manager.js?v=push6",
     "calendar-manager.js?v=calendar3",
     "monthly-activity.js?v=monthly31",
-    "native-form.js?v=liff-member-fix1",
-    "liff-detail.js?v=liff-detail8",
+    "native-form.js?v=liff-member-fix2",
+    "liff-detail.js?v=liff-detail9",
     "personal-message.js?v=pm4",
     "keyword-extra.js?v=kw2",
     "line-monitor-link.js?v=monitor-hidden2"
