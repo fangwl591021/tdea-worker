@@ -784,7 +784,7 @@
     document.querySelector("[data-monthly-preview-head]")?.addEventListener("click", () => {
       if (previewCollapsed()) togglePreview();
     });
-    document.querySelectorAll("[data-monthly-basic]").forEach((input) => input.addEventListener("input", () => { config[input.name] = input.value; if (input.name === "month") render(); else updatePreview(); }));
+    document.querySelectorAll("[data-monthly-basic]").forEach((input) => input.addEventListener("input", () => { config[input.name] = input.value; updatePreview(); }));
     document.querySelector("[data-monthly-enabled]")?.addEventListener("change", (event) => { config.enabled = event.target.checked; });
     bindPageButtons();
     document.querySelector("[data-monthly-add]")?.addEventListener("click", () => { if (config.pages.length >= 12) return toast("LINE carousel 最多 12 頁"); config.pages.push(blankPage()); selected = config.pages.length - 1; render(); });

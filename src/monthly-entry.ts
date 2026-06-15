@@ -57,6 +57,7 @@ const aiweMembersKey = "aiwe/members.json";
 const lineActivityDraftListKey = "line-activity/drafts.json";
 const lineActivityLatestDraftKey = "line-activity/latest-active.json";
 const lineActivityDebugKey = "line-activity/debug.json";
+const lineWebhookLogKey = "line/webhook-log.json";
 const memberApplicationListKey = "member-applications/list.json";
 const defaultCalendarId = "7d66f2a96f192dda6cca2b04e60a6e549c7adf74f57721845d5b7e03f8b7ca89@group.calendar.google.com";
 const googleMemberSheetCsvUrl = "https://docs.google.com/spreadsheets/d/1KzXzRsAesrF0vlKh2TLUKW-ltpWrxASWt7acWV7ic8w/export?format=csv&gid=858404675";
@@ -4804,6 +4805,51 @@ async function fetchGoogleMemberSheet(request: Request, env: Env) {
   });
 }
 
+async function lineWebhookStatusApi(request: Request, env: Env) {
+  const guard = await requireAdmin(request, env);
+  if (guard) return guard;
+  const config = await readEffectiveMonthly(env);
+  const pages = config.pages || [];
+  return json({
+    success: true,
+    webhookPath: "/line-webhook",
+    forwardWebhookConfigured: Boolean(clean(env.FORWARD_WEBHOOK_URL)),
+    lineChannelSecretConfigured: Boolean(clean(env.LINE_CHANNEL_SECRET)),
+    lineChannelAccessTokenConfigured: Boolean(clean(env.LINE_CHANNEL_ACCESS_TOKEN)),
+    monthlyActivity: {
+      enabled: config.enabled !== false,
+      keyword: fixedKeyword,
+      configuredKeyword: config.keyword || fixedKeyword,
+      normalizedKeyword: normalizeKeyword(fixedKeyword),
+      pageCount: pages.length,
+      month: config.month || "",
+      hasFlex: pages.length > 0
+    }
+  });
+}
+
+async function readLineWebhookLogs(env: Env) {
+  if (!env.ASSETS_BUCKET) return [];
+  const object = await env.ASSETS_BUCKET.get(lineWebhookLogKey);
+  const data = object ? await object.json().catch(() => []) : [];
+  return Array.isArray(data) ? data.slice(0, 50) : [];
+}
+
+async function appendLineWebhookLog(env: Env, record: Record<string, unknown>) {
+  if (!env.ASSETS_BUCKET) return;
+  const rows = await readLineWebhookLogs(env);
+  rows.unshift(record);
+  await env.ASSETS_BUCKET.put(lineWebhookLogKey, JSON.stringify(rows.slice(0, 50), null, 2), {
+    httpMetadata: { contentType: "application/json; charset=utf-8", cacheControl: "no-store" }
+  });
+}
+
+async function lineWebhookLogsApi(request: Request, env: Env) {
+  const guard = await requireAdmin(request, env);
+  if (guard) return guard;
+  return json({ success: true, data: await readLineWebhookLogs(env) });
+}
+
 async function handleMonthlyWebhook(request: Request, env: Env, rawBody: string, ctx?: ExecutionContext) {
   let payload: unknown;
   try { payload = JSON.parse(rawBody); } catch (_) { return null; }
@@ -4824,7 +4870,18 @@ async function handleMonthlyWebhook(request: Request, env: Env, rawBody: string,
   const onboardingActive = await hasMemberOnboardingSession(allEvents, env);
   if (!queryEvents.length && !memberQrEvents.length && !calendarEvents.length && !personalMessageEvents.length && !uidBindEvents.length && !vendorCardEvents.length && !marqueeEvents.length && !pointEvents.length && !events.length && !onboardingActive) return null;
   const signature = request.headers.get("x-line-signature");
-  if (!await verifyLineSignature(rawBody, signature, env.LINE_CHANNEL_SECRET)) return new Response("Invalid Signature", { status: 403, headers });
+  const signatureOk = await verifyLineSignature(rawBody, signature, env.LINE_CHANNEL_SECRET);
+  if (!signatureOk) {
+    if (events.length) await appendLineWebhookLog(env, {
+      at: new Date().toISOString(),
+      mode: "monthly-activity",
+      result: "invalid-signature",
+      hasSignature: Boolean(clean(signature)),
+      texts: allEvents.map((event) => clean(extractTriggerText(event))).filter(Boolean).slice(0, 5),
+      eventCount: allEvents.length
+    });
+    return new Response("Invalid Signature", { status: 403, headers });
+  }
   const bareUidBindEvents = uidBindEvents.filter((event) => !parseUidBindKeyword(extractTriggerText(event)).memberNo);
   const gatedEvents = [
     ...events,
@@ -4854,6 +4911,16 @@ async function handleMonthlyWebhook(request: Request, env: Env, rawBody: string,
       const messages = prompt ? [message, prompt] : [message];
       return replyToLine(event.replyToken, messages, env);
     }));
+    await appendLineWebhookLog(env, {
+      at: new Date().toISOString(),
+      mode: "monthly-activity",
+      result: "replied",
+      hasSignature: true,
+      pageCount: pages.length,
+      enabled: config.enabled !== false,
+      texts: allEvents.map((event) => clean(extractTriggerText(event))).filter(Boolean).slice(0, 5),
+      lineReplies: lineReplies.map((item) => ({ ok: item.ok, status: item.status, message: "message" in item ? item.message : undefined }))
+    });
     return json({ success: true, mode: "monthly-activity", matched: [fixedKeyword], forwarded: false, lineReplies });
   }
   if (uidBindEvents.length) return bindLineUidEvents(uidBindEvents, env);
@@ -4982,6 +5049,8 @@ export default {
 	    if (request.method === "GET" && url.pathname === "/api/monthly-activity") return json({ success: true, data: await readEffectiveMonthly(env) });
 	    if ((request.method === "PUT" || request.method === "POST") && url.pathname === "/api/monthly-activity") { const guard = await requireAdmin(request, env); if (guard) return guard; if (!env.ASSETS_BUCKET) return json({ success: false, message: "R2 bucket is not configured" }, 503); const config = await request.json().catch(() => ({})) as MonthlyConfig; await writeMonthly(env, config); const effective = await readEffectiveMonthly(env); return json({ success: true, data: effective, flex: buildMonthlyFlex(effective) }); }
 	    if (request.method === "GET" && url.pathname === "/api/monthly-activity/flex") { const config = await readEffectiveMonthly(env); return json({ success: true, flex: buildMonthlyFlex(config), data: config }); }
+	    if (request.method === "GET" && url.pathname === "/api/line-webhook/status") return lineWebhookStatusApi(request, env);
+	    if (request.method === "GET" && url.pathname === "/api/line-webhook/logs") return lineWebhookLogsApi(request, env);
 	    if (url.pathname === "/api/activities" || url.pathname === "/api/activities/archived" || /^\/api\/activities\/[^/]+(?:\/restore)?$/.test(url.pathname)) return activityRecordsApi(request, env, url);
 	    if (request.method === "GET" && url.pathname === "/api/manager-data") return json({ success: true, data: await readManagerData(env) });
 	    if ((request.method === "PUT" || request.method === "POST") && url.pathname === "/api/manager-data") {
