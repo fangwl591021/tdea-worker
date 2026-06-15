@@ -83,7 +83,7 @@ const headers = { "access-control-allow-origin": "*", "access-control-allow-meth
 
 const json = (data: unknown, status = 200) => new Response(JSON.stringify(data), { status, headers: { "content-type": "application/json; charset=utf-8", "cache-control": "no-store", ...headers } });
 const esc = (value: unknown) => String(value ?? "").replace(/[&<>'"]/g, (ch) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "'": "&#039;", "\"": "&quot;" }[ch] || ch));
-const normalizeKeyword = (value: string) => value.trim().replace(/\s+/g, "").toUpperCase();
+const normalizeKeyword = (value: string) => value.trim().replace(/[\s\u200B-\u200D\uFEFF]+/g, "").toUpperCase();
 
 function staticAdminEmails(env: Env) {
   return (env.ADMIN_EMAILS || "admin@example.com").split(",").map((item) => item.trim().toLowerCase()).filter(Boolean);
