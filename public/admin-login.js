@@ -233,28 +233,40 @@
     }
   }
 
+  async function completeLineLogin({ button = null, redirectIfNeeded = true } = {}) {
+    if (button) {
+      button.disabled = true;
+      button.textContent = "LINE 登入中...";
+    }
+    await ensureLiffSdk();
+    await liff.init({ liffId: adminLiffId });
+    if (!liff.isLoggedIn()) {
+      if (redirectIfNeeded) liff.login({ redirectUri: adminLiffUrl });
+      return false;
+    }
+    const profile = await liff.getProfile();
+    const response = await fetch(`${api}/api/admin-login/line`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ lineUserId: profile.userId, displayName: profile.displayName })
+    });
+    const result = await response.json().catch(() => ({}));
+    if (!response.ok || !result.success) throw new Error(result.message || "LINE 登入失敗");
+    storeIdentity({ ...(result.data || {}), displayName: (result.data || {}).displayName || profile.displayName, pictureUrl: profile.pictureUrl });
+    appRoot.innerHTML = "";
+    await loadApp();
+    return true;
+  }
+
   async function handleLineLogin(event) {
     const button = event.currentTarget;
-    button.disabled = true;
-    button.textContent = "LINE 登入中...";
     try {
-      await ensureLiffSdk();
-      await liff.init({ liffId: adminLiffId });
-      if (!liff.isLoggedIn()) {
-        liff.login({ redirectUri: location.href });
+      const params = searchParams();
+      if (!params.has("adminLogin") && !params.has("liff.state") && !/Line/i.test(navigator.userAgent)) {
+        location.href = adminLiffUrl;
         return;
       }
-      const profile = await liff.getProfile();
-      const response = await fetch(`${api}/api/admin-login/line`, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ lineUserId: profile.userId, displayName: profile.displayName })
-      });
-      const result = await response.json().catch(() => ({}));
-      if (!response.ok || !result.success) throw new Error(result.message || "LINE 登入失敗");
-      storeIdentity({ ...(result.data || {}), displayName: (result.data || {}).displayName || profile.displayName, pictureUrl: profile.pictureUrl });
-      appRoot.innerHTML = "";
-      await loadApp();
+      await completeLineLogin({ button, redirectIfNeeded: true });
     } catch (error) {
       if (!window.liff && !/Line/i.test(navigator.userAgent)) {
         location.href = adminLiffUrl;
@@ -279,6 +291,16 @@
     if (isPublicMode()) {
       await loadApp();
       return;
+    }
+    if (searchParams().has("adminLogin")) {
+      renderLogin("LINE 登入確認中...");
+      try {
+        const completed = await completeLineLogin({ redirectIfNeeded: true });
+        if (completed) return;
+      } catch (error) {
+        renderLogin(error.message || "LINE 登入失敗");
+        return;
+      }
     }
     const urlIdentity = identityFromUrl();
     if (await validateIdentity(urlIdentity).catch(() => false)) {
