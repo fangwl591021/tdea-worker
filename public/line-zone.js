@@ -50,8 +50,7 @@
       <div class="line-nav-children" data-line-children></div>
     `;
     const anchor = nav.querySelector('[data-nav="redeem"]');
-    if (anchor && anchor.nextSibling) nav.insertBefore(group, anchor.nextSibling);
-    else if (anchor) nav.appendChild(group);
+    if (anchor) nav.insertBefore(group, anchor);
     else nav.appendChild(group);
     group.querySelector("[data-line-parent]")?.addEventListener("click", () => {
       open = !open;
