@@ -136,6 +136,22 @@
     return autoMemberKeys.has(key) || ["lineid", "lineuid", "lineuserid"].includes(label);
   }
 
+  const loginAutoMemberKeys = new Set([
+    "lineuserid", "lineid", "lineuid", "uid",
+    "name", "membername", "phone", "mobile", "email",
+    "company", "memberno", "membernumber", "gender", "ismember", "membertype",
+    "participantunit", "qualification"
+  ]);
+
+  function isLoginAutoMemberField(field) {
+    const key = trim(field?.key).toLowerCase().replace(/[\s_-]+/g, "");
+    const label = trim(field?.label).toLowerCase().replace(/[\s_/-]+/g, "");
+    return loginAutoMemberKeys.has(key) || [
+      "lineid", "lineuid", "lineuserid", "姓名", "會員姓名", "手機", "電話",
+      "email", "公司單位", "會員編號", "性別", "是否為會員", "身分", "資格"
+    ].includes(label);
+  }
+
   function fieldHtml(field) {
     if (isAutoMemberField(field)) return "";
     const type = fieldTypes.has(field.type) ? field.type : "text";
@@ -251,12 +267,14 @@
     </div>`;
   }
 
-  function loginRegisterPanel(mode, sessions) {
+  function loginRegisterPanel(mode, sessions, fields) {
     if (mode !== "member_login" && mode !== "mixed") return "";
+    const extraFields = fields.filter((field) => !isLoginAutoMemberField(field));
     return `<form class="nf-form nf-login-box" data-login-register-box novalidate>
       <div class="nf-ok">會員或廠商會員可使用 LINE 快速報名。系統會取得 LINE UID 並比對名冊，不需要手動填 LINE ID。</div>
       <div data-login-member-area></div>
       ${sessionFieldHtml(sessions)}
+      ${extraFields.length ? `<div class="nf-ok">會員資料會自動帶入，只需補活動必要欄位。</div>${extraFields.map(fieldHtml).join("")}` : ""}
       <div class="nf-actions"><button class="nf-btn primary" type="button" data-login-register>會員/廠商快速報名</button></div>
     </form>`;
   }
@@ -356,7 +374,7 @@
     const fields = Array.isArray(form.fields) ? form.fields : [];
     const image = activity.posterUrl || activity.imageUrl || "";
     const mode = registrationMode(form);
-    const showFullForm = mode === "form" || mode === "mixed";
+    const showFullForm = mode === "form";
     let autoLoginNotice = "";
 
     if (formId) {
@@ -391,12 +409,19 @@
         <div class="nf-meta">${activity.courseTime ? `<span class="nf-pill">${esc(activity.courseTime)}</span>` : ""}${activity.deadline ? `<span class="nf-pill">截止 ${esc(activity.deadline)}</span>` : ""}</div>
         ${activity.detailText ? `<div class="nf-detail">${esc(activity.detailText)}</div>` : ""}
         ${autoLoginNotice ? `<div class="nf-alert">${esc(autoLoginNotice)}</div>` : ""}
-        ${loginRegisterPanel(mode, sessions)}
+        ${loginRegisterPanel(mode, sessions, fields)}
         ${showFullForm ? `<form class="nf-form" data-native-register novalidate>
           ${sessionFieldHtml(sessions)}
           ${fields.map(fieldHtml).join("")}
           <div class="nf-actions"><button class="nf-btn primary" type="submit">送出報名</button><a class="nf-btn" href="?query=1">報名查詢/取消</a></div>
-        </form>` : `<div class="nf-actions"><a class="nf-btn" href="?query=1">報名查詢/取消</a></div>`}
+        </form>` : mode === "mixed" ? `<details class="nf-form">
+          <summary class="nf-btn">非會員或無法快速報名，改填完整表單</summary>
+          <form class="nf-form" data-native-register novalidate>
+            ${sessionFieldHtml(sessions)}
+            ${fields.map(fieldHtml).join("")}
+            <div class="nf-actions"><button class="nf-btn primary" type="submit">送出報名</button><a class="nf-btn" href="?query=1">報名查詢/取消</a></div>
+          </form>
+        </details>` : `<div class="nf-actions"><a class="nf-btn" href="?query=1">報名查詢/取消</a></div>`}
       </div>
     </section>`);
 
@@ -430,8 +455,10 @@
         return;
       }
       const sessionId = loginBox?.querySelector("[name='sessionId']")?.value || sessions[0]?.id || "default";
+      const loginFields = fields.filter((field) => !isLoginAutoMemberField(field));
+      const answers = loginBox ? collectAnswers(loginBox, loginFields) : {};
       loginButton.textContent = "送出中...";
-      const { response: submitResponse, result: submitResult } = await submitLoginRegistration(id, { lineUserId: uid, sessionId, answers: {} });
+      const { response: submitResponse, result: submitResult } = await submitLoginRegistration(id, { lineUserId: uid, sessionId, answers });
       if (!submitResponse.ok || !submitResult.success) {
         loginButton.disabled = false;
         loginButton.textContent = "會員/廠商快速報名";
