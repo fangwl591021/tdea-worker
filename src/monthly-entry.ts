@@ -176,7 +176,6 @@ function adminWhitelistMatches(records: AdminWhitelistRecord[], identity: { emai
   if (!email && !memberNo && !lineUserId) return false;
   return records.some((record) => {
     if (record.enabled === false) return false;
-    if ((record as Record<string, unknown>).archived === true) return false;
     if (memberNo && clean(record.memberNo).toUpperCase() === memberNo) return true;
     if (lineUserId && clean(record.lineUserId) === lineUserId) return true;
     if (email && clean(record.email).toLowerCase() === email) return true;
@@ -184,19 +183,11 @@ function adminWhitelistMatches(records: AdminWhitelistRecord[], identity: { emai
   });
 }
 
-function memberQualificationActive(row: Record<string, unknown>) {
-  const status = clean(row.status).toLowerCase();
-  if (row.deleted === true || row.archived === true || clean(row.deletedAt) || ["deleted", "archived", "removed", "已封存", "已刪除"].includes(status)) return false;
-  const qualification = clean(row.qualification || row.memberQualification || row["資格"]).toUpperCase();
-  return !qualification || qualification === "Y" || qualification === "YES" || qualification === "TRUE" || qualification === "有效";
-}
-
 async function adminWhitelistFromAssociationRoster(env: Env): Promise<AdminWhitelistRecord[]> {
-  const data = await readManagerData(env) as Record<string, unknown> | null;
+  const data = await readManagerData(env);
   const rows = Array.isArray(data?.association) ? data.association : [];
   const fromRoster = rows
     .filter((row): row is Record<string, unknown> => Boolean(row) && typeof row === "object")
-    .filter((row) => memberQualificationActive(row))
     .filter((row) => memberRowLoginAccess(row))
     .map((row) => {
       const memberNo = clean(row.memberNo || row.rosterMemberNo).toUpperCase();
@@ -216,19 +207,6 @@ async function adminWhitelistFromAssociationRoster(env: Env): Promise<AdminWhite
     .filter((row) => row.label || row.memberNo || row.email || row.lineUserId);
   const accessRecords = Object.values(await readAdminAccess(env))
     .filter((record) => record.loginAccess === true)
-    .filter((record) => {
-      const memberNo = clean(record.memberNo).toUpperCase();
-      const lineUserId = clean(record.lineUserId);
-      const email = clean(record.email).toLowerCase();
-      const matched = rows
-        .filter((row): row is Record<string, unknown> => Boolean(row) && typeof row === "object")
-        .find((row) =>
-          (memberNo && clean(row.memberNo || row.rosterMemberNo).toUpperCase() === memberNo) ||
-          (lineUserId && memberLineUid(row) === lineUserId) ||
-          (email && clean(row.email).toLowerCase() === email)
-        );
-      return !matched || memberQualificationActive(matched);
-    })
     .map((record) => ({
       id: clean(record.memberNo || record.lineUserId || record.email || crypto.randomUUID()),
       enabled: true,
@@ -257,7 +235,14 @@ async function isDynamicAdmin(identity: { email?: string; memberNo?: string; lin
   const rosterWhitelist = await adminWhitelistFromAssociationRoster(env);
   const combinedWhitelist = [...whitelist, ...rosterWhitelist];
   if (adminWhitelistConfigured(combinedWhitelist)) return adminWhitelistMatches(combinedWhitelist, { email, memberNo, lineUserId });
-  return false;
+  const records = await readAdminAccess(env);
+  return Object.values(records).some((record) => {
+    if (record.loginAccess !== true) return false;
+    if (memberNo && clean(record.memberNo).toUpperCase() === memberNo) return true;
+    if (lineUserId && clean(record.lineUserId) === lineUserId) return true;
+    if (email && clean(record.email).toLowerCase() === email) return true;
+    return false;
+  });
 }
 
 function loginAccessEnabled(value: unknown) {
@@ -267,7 +252,6 @@ function loginAccessEnabled(value: unknown) {
 }
 
 function memberRowLoginAccess(row: Record<string, unknown>) {
-  if (!memberQualificationActive(row)) return false;
   return [
     row.loginAccess,
     row.loginAllowed,
@@ -288,7 +272,6 @@ async function isCheckinOperator(lineUserId: string, env: Env) {
   const adminRecords = Object.values(await readAdminAccess(env)).filter((record) => record.loginAccess === true);
   const rows = await readAiweMembers(env);
   return rows.some((row) => {
-    if (!memberQualificationActive(row)) return false;
     if (memberLineUid(row).toLowerCase() !== lowerUid) return false;
     if (memberRowLoginAccess(row)) return true;
     return adminRecords.some((record) => rowMatchesMemberNo(row, record.memberNo));
@@ -374,9 +357,6 @@ async function updateAdminWhitelistApi(request: Request, env: Env) {
       lineUserId: firstClean(row.lineUserId, row.lineUid, row.uid, row.LINE_user_id, row.line_user_id),
       role: clean(row.role) || "admin",
       note: clean(row.note),
-      archived: row.archived === true,
-      archivedAt: clean(row.archivedAt),
-      archivedBy: clean(row.archivedBy),
       createdAt: clean(row.createdAt),
       updatedBy
     }))

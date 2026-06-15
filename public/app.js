@@ -171,7 +171,7 @@
       .filter(([key]) => key));
     return remoteRows.map((remoteRow) => {
       const localRow = localByNo.get(rosterMatchKey(remoteRow));
-      const loginAccess = memberQualificationActive(remoteRow) && (memberLoginAllowed(remoteRow) || memberLoginAllowed(localRow));
+      const loginAccess = memberLoginAllowed(remoteRow) || memberLoginAllowed(localRow);
       return {
         ...(localRow || {}),
         ...remoteRow,
@@ -458,10 +458,7 @@
       lineUserId: row.querySelector("[name='lineUserId']")?.value.trim() || "",
       email: row.querySelector("[name='email']")?.value.trim() || "",
       role: row.querySelector("[name='role']")?.value.trim() || "admin",
-      note: row.querySelector("[name='note']")?.value.trim() || "",
-      archived: row.dataset.archived === "true",
-      archivedAt: row.dataset.archivedAt || "",
-      archivedBy: row.dataset.archivedBy || ""
+      note: row.querySelector("[name='note']")?.value.trim() || ""
     })).filter(row => row.label || row.memberNo || row.lineUserId || row.email);
   }
 
@@ -1056,27 +1053,19 @@
 
   function adminWhitelistClean() {
     const rows = state.adminWhitelist || [];
-    const activeRows = rows.filter((row) => row.archived !== true);
-    const archivedRows = rows.filter((row) => row.archived === true);
     const meta = state.adminWhitelistMeta || {};
     const rosterRows = Array.isArray(meta.rosterWhitelist) ? meta.rosterWhitelist : [];
-    const status = meta.whitelistActive ? '<span class="badge live">\u767d\u540d\u55ae\u5df2\u555f\u7528</span>' : '<span class="badge off">\u5c1a\u672a\u5efa\u7acb\u767d\u540d\u55ae</span>';
-    const staticAdmins = Array.isArray(meta.staticAdmins) && meta.staticAdmins.length ? '<div class="muted">\u56fa\u5b9a\u7ba1\u7406\u8005 Email\uff1a' + meta.staticAdmins.map(esc).join('\u3001') + '</div>' : '';
-    const error = meta.error ? '<div class="alert danger">' + esc(meta.error) + '</div>' : '';
-    const bodyRows = activeRows.length ? activeRows.map(whitelistRowClean).join('') : '<tr><td colspan="8">' + empty('\u76ee\u524d\u6c92\u6709\u555f\u7528\u7684\u624b\u52d5\u767d\u540d\u55ae\u3002') + '</td></tr>';
-    const archivedBody = archivedRows.length ? archivedRows.map(archivedWhitelistRow).join('') : '<tr><td colspan="8">' + empty('\u5df2\u79fb\u9664\u767d\u540d\u55ae\u76ee\u524d\u6c92\u6709\u8cc7\u6599\u3002') + '</td></tr>';
-    const rosterBody = rosterRows.length ? rosterRows.map(row => '<tr><td>' + esc(row.label || '') + '</td><td>' + esc(row.memberNo || '') + '</td><td>' + esc(shortUid(row.lineUserId || '')) + '</td><td>' + esc(row.email || '') + '</td><td>' + esc(row.note || 'from association roster') + '</td></tr>').join('') : '<tr><td colspan="5">' + empty('\u5354\u6703\u540d\u518a\u76ee\u524d\u6c92\u6709\u7b26\u5408\u8cc7\u683c\u4e14\u52fe\u9078\u5141\u8a31\u7684\u6388\u6b0a\u8005\u3002') + '</td></tr>';
-    return '<section class="panel"><div class="panel-head"><div><h2 class="panel-title">\u7cfb\u7d71\u767d\u540d\u55ae</h2><div class="muted">\u53ea\u6709\u555f\u7528\u4e2d\u7684\u767d\u540d\u55ae\u8207\u6709\u6548\u5354\u6703\u6703\u54e1\u6703\u6388\u6b0a\u767b\u5165\uff1b\u5df2\u79fb\u9664\u767d\u540d\u55ae\u6703\u4fdd\u7559\u5728\u4e0b\u65b9\uff0c\u53ef\u6062\u5fa9\u3002</div></div><div class="actions">' + status + '<button class="btn" data-load-whitelist>\u91cd\u65b0\u8f09\u5165</button></div></div>' + error + staticAdmins + '<div class="table-wrap"><table><thead><tr><th>\u555f\u7528</th><th>\u540d\u7a31</th><th>\u6703\u54e1\u7de8\u865f</th><th>LINE UID</th><th>Email</th><th>\u89d2\u8272</th><th>\u5099\u8a3b</th><th>\u64cd\u4f5c</th></tr></thead><tbody id="whitelist-body">' + bodyRows + '</tbody></table></div><div class="panel-actions"><button class="btn" data-import-association-whitelist>\u5f9e\u5354\u6703\u540d\u518a\u540c\u6b65</button><button class="btn" data-add-whitelist-row>\u65b0\u589e\u767d\u540d\u55ae</button><button class="btn" data-import-legacy-access>\u5f9e\u820a\u5141\u8a31\u540d\u55ae\u5e36\u5165</button><button class="btn" data-check-whitelist>\u6aa2\u67e5\u76ee\u524d\u8eab\u4efd</button><button class="btn primary" data-save-whitelist>\u5132\u5b58\u767d\u540d\u55ae</button></div></section><section class="panel"><div class="panel-head"><div><h2 class="panel-title">\u5df2\u79fb\u9664\u767d\u540d\u55ae</h2><div class="muted">\u522a\u9664\u767d\u540d\u55ae\u4e0d\u6703\u771f\u7684\u522a\u8cc7\u6599\uff1b\u79fb\u5230\u9019\u88e1\u5f8c\u4e0d\u518d\u6388\u6b0a\u767b\u5165\uff0c\u53ef\u6309\u6062\u5fa9\u91cd\u65b0\u555f\u7528\u3002</div></div><span class="badge off">' + archivedRows.length + ' \u7b46</span></div><div class="table-wrap"><table><thead><tr><th>\u540d\u7a31</th><th>\u6703\u54e1\u7de8\u865f</th><th>LINE UID</th><th>Email</th><th>\u89d2\u8272</th><th>\u79fb\u9664\u6642\u9593</th><th>\u5099\u8a3b</th><th>\u64cd\u4f5c</th></tr></thead><tbody>' + archivedBody + '</tbody></table></div></section><section class="panel"><div class="panel-head"><div><h2 class="panel-title">\u5354\u6703\u540d\u518a\u81ea\u52d5\u6388\u6b0a</h2><div class="muted">\u53ea\u5217\u51fa\u6709\u6548\u8cc7\u683c\u4e14\u767b\u5165\u6b0a\u9650\u70ba\u5141\u8a31\u7684\u5354\u6703\u6703\u54e1\uff1b\u8cc7\u683c\u53d6\u6d88\u5f8c\u4e0d\u6703\u518d\u6388\u6b0a\u3002</div></div><span class="badge live">' + rosterRows.length + ' \u7b46</span></div><div class="table-wrap"><table><thead><tr><th>\u540d\u7a31</th><th>\u6703\u54e1\u7de8\u865f</th><th>LINE UID</th><th>Email</th><th>\u4f86\u6e90</th></tr></thead><tbody>' + rosterBody + '</tbody></table></div></section>';
+    const status = meta.whitelistActive ? `<span class="badge live">白名單已啟用</span>` : `<span class="badge off">尚未建立白名單，暫用舊允許名單</span>`;
+    const staticAdmins = Array.isArray(meta.staticAdmins) && meta.staticAdmins.length ? `<div class="muted">環境變數 ADMIN_EMAILS 仍可進入：${meta.staticAdmins.map(esc).join("、")}</div>` : "";
+    const error = meta.error ? `<div class="alert danger">${esc(meta.error)}</div>` : "";
+    const bodyRows = rows.length ? rows.map(whitelistRowClean).join("") : `<tr><td colspan="8">${empty("目前沒有手動白名單。可新增一筆，或從協會名冊同步。")}</td></tr>`;
+    const rosterBody = rosterRows.length ? rosterRows.map(row => `<tr><td>${esc(row.label || "")}</td><td>${esc(row.memberNo || "")}</td><td>${esc(shortUid(row.lineUserId || ""))}</td><td>${esc(row.email || "")}</td><td>${esc(row.note || "from association roster")}</td></tr>`).join("") : `<tr><td colspan="5">${empty("協會名冊目前沒有勾選允許的授權者。")}</td></tr>`;
+    return `<section class="panel"><div class="panel-head"><div><h2 class="panel-title">系統白名單</h2><div class="muted">正式授權來源包含：下方手動白名單，以及協會名冊中已勾選「允許」的會員。</div></div><div class="actions">${status}<button class="btn" data-load-whitelist>重新載入</button></div></div>${error}${staticAdmins}<div class="table-wrap"><table><thead><tr><th>啟用</th><th>名稱</th><th>會員編號</th><th>LINE UID</th><th>Email</th><th>角色</th><th>備註</th><th>操作</th></tr></thead><tbody id="whitelist-body">${bodyRows}</tbody></table></div><div class="panel-actions"><button class="btn" data-import-association-whitelist>從協會名冊同步</button><button class="btn" data-add-whitelist-row>新增白名單</button><button class="btn" data-import-legacy-access>從舊允許名單帶入</button><button class="btn" data-check-whitelist>檢查目前身份</button><button class="btn primary" data-save-whitelist>儲存白名單</button></div></section><section class="panel"><div class="panel-head"><div><h2 class="panel-title">協會名冊自動授權</h2><div class="muted">這裡直接從協會名冊讀取，名冊勾選「允許」後即納入後台與核銷授權判斷。</div></div><span class="badge live">${rosterRows.length} 筆</span></div><div class="table-wrap"><table><thead><tr><th>名稱</th><th>會員編號</th><th>LINE UID</th><th>Email</th><th>來源</th></tr></thead><tbody>${rosterBody}</tbody></table></div></section>`;
   }
 
   function whitelistRowClean(row = {}) {
     const id = row.id || uid();
-    return '<tr data-whitelist-row data-id="' + esc(id) + '" data-archived="false"><td><input type="checkbox" name="enabled" ' + (row.enabled === false ? '' : 'checked') + '></td><td><input name="label" value="' + esc(row.label || '') + '" placeholder="\u540d\u7a31"></td><td><input name="memberNo" value="' + esc(row.memberNo || '') + '" placeholder="Z1160215"></td><td><input name="lineUserId" value="' + esc(row.lineUserId || '') + '" placeholder="U..."></td><td><input name="email" value="' + esc(row.email || '') + '" placeholder="name@example.com"></td><td><select name="role"><option value="admin" ' + ((row.role || 'admin') === 'admin' ? 'selected' : '') + '>\u7ba1\u7406\u54e1</option><option value="checkin" ' + (row.role === 'checkin' ? 'selected' : '') + '>\u6838\u92b7</option><option value="editor" ' + (row.role === 'editor' ? 'selected' : '') + '>\u7de8\u8f2f</option></select></td><td><input name="note" value="' + esc(row.note || '') + '"></td><td><button class="link danger-link" data-remove-whitelist-row>\u79fb\u9664</button></td></tr>';
-  }
-
-  function archivedWhitelistRow(row = {}) {
-    const id = row.id || uid();
-    return '<tr data-whitelist-row data-id="' + esc(id) + '" data-archived="true" data-archived-at="' + esc(row.archivedAt || '') + '" data-archived-by="' + esc(row.archivedBy || '') + '"><td><input name="label" value="' + esc(row.label || '') + '" readonly></td><td><input name="memberNo" value="' + esc(row.memberNo || '') + '" readonly></td><td><input name="lineUserId" value="' + esc(row.lineUserId || '') + '" readonly></td><td><input name="email" value="' + esc(row.email || '') + '" readonly></td><td><input name="role" value="' + esc(row.role || 'admin') + '" readonly></td><td>' + esc(formatTime(row.archivedAt || '')) + '</td><td><input name="note" value="' + esc(row.note || '') + '" readonly></td><td><input type="checkbox" name="enabled" hidden><button class="link" data-restore-whitelist-row>\u6062\u5fa9</button></td></tr>';
+    return `<tr data-whitelist-row data-id="${esc(id)}"><td><input type="checkbox" name="enabled" ${row.enabled === false ? "" : "checked"}></td><td><input name="label" value="${esc(row.label || "")}" placeholder="名稱"></td><td><input name="memberNo" value="${esc(row.memberNo || "")}" placeholder="Z1160215"></td><td><input name="lineUserId" value="${esc(row.lineUserId || "")}" placeholder="U..."></td><td><input name="email" value="${esc(row.email || "")}" placeholder="name@example.com"></td><td><select name="role"><option value="admin" ${(row.role || "admin") === "admin" ? "selected" : ""}>管理員</option><option value="checkin" ${row.role === "checkin" ? "selected" : ""}>核銷</option><option value="editor" ${row.role === "editor" ? "selected" : ""}>編輯</option></select></td><td><input name="note" value="${esc(row.note || "")}"></td><td><button class="link danger-link" data-remove-whitelist-row>刪除</button></td></tr>`;
   }
 
   function creator() {
@@ -1424,34 +1413,7 @@
     });
     document.querySelectorAll("[data-load-whitelist]").forEach(b => b.onclick = async () => { b.disabled = true; await loadAdminWhitelist(true); b.disabled = false; render(); });
     document.querySelectorAll("[data-add-whitelist-row]").forEach(b => b.onclick = () => { state.adminWhitelist = [...(state.adminWhitelist || []), { id: uid(), enabled: true, role: "admin" }]; render(); });
-    document.querySelectorAll("[data-remove-whitelist-row]").forEach(b => b.onclick = () => {
-      const row = b.closest("[data-whitelist-row]");
-      if (!row) return;
-      const rows = whitelistRowsFromForm();
-      const target = rows.find(item => item.id === row.dataset.id);
-      if (target) {
-        target.archived = true;
-        target.enabled = false;
-        target.archivedAt = new Date().toISOString();
-        target.archivedBy = adminIdentity().email || adminIdentity().memberNo || adminIdentity().lineUserId || "admin";
-      }
-      state.adminWhitelist = rows;
-      render();
-    });
-    document.querySelectorAll("[data-restore-whitelist-row]").forEach(b => b.onclick = () => {
-      const row = b.closest("[data-whitelist-row]");
-      if (!row) return;
-      const rows = whitelistRowsFromForm();
-      const target = rows.find(item => item.id === row.dataset.id);
-      if (target) {
-        target.archived = false;
-        target.enabled = true;
-        target.archivedAt = "";
-        target.archivedBy = "";
-      }
-      state.adminWhitelist = rows;
-      render();
-    });
+    document.querySelectorAll("[data-remove-whitelist-row]").forEach(b => b.onclick = () => { const row = b.closest("[data-whitelist-row]"); if (row) row.remove(); });
     document.querySelectorAll("[data-import-association-whitelist]").forEach(b => b.onclick = async () => {
       await loadAdminWhitelist(true);
       const imported = associationRosterToWhitelistRows();
