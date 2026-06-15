@@ -294,26 +294,52 @@
     return td;
   }
 
+  function headerText(node) {
+    return String(node?.textContent || "").replace(/\s+/g, " ").trim().toLowerCase();
+  }
+
+  function findHeaderIndex(headerRow, tests) {
+    const cells = Array.from(headerRow.children || []);
+    return cells.findIndex((cell) => tests.some((test) => headerText(cell).includes(test)));
+  }
+
+  function markExistingColumn(table, headerRow, index, headClass, cellClass) {
+    if (index < 0) return false;
+    headerRow.children[index]?.classList.add(headClass);
+    for (const row of table.querySelectorAll("tbody tr")) {
+      row.children[index]?.classList.add(cellClass);
+    }
+    return true;
+  }
+
+  function insertProfileColumn(table, headerRow, label, headClass, cellFactory, index) {
+    const th = document.createElement("th");
+    th.textContent = label;
+    th.className = headClass;
+    headerRow.insertBefore(th, headerRow.children[index] || null);
+    for (const row of table.querySelectorAll("tbody tr")) {
+      row.insertBefore(cellFactory(), row.children[index] || null);
+    }
+  }
+
   function ensureProfileHeaders(table) {
     const headerRow = table.querySelector("thead tr");
     if (!headerRow || headerRow.dataset.aiweProfileHeaders === "1") return;
-    const headers = [
-      ["LINE UID", "aiwe-uid-head"],
-      ["點數", "aiwe-point-head"],
-      ["手機", "aiwe-phone-head"]
-    ];
-    headers.slice().reverse().forEach(([label, className]) => {
-      const th = document.createElement("th");
-      th.textContent = label;
-      th.className = className;
-      headerRow.insertBefore(th, headerRow.children[2] || null);
-    });
-    for (const row of table.querySelectorAll("tbody tr")) {
-      [
-        makeProfileCell("aiwe-phone-cell"),
-        makePointCell(),
-        makeProfileCell("aiwe-uid-cell")
-      ].forEach((td) => row.insertBefore(td, row.children[2] || null));
+    let uidIndex = findHeaderIndex(headerRow, ["line uid", "uid"]);
+    let pointIndex = findHeaderIndex(headerRow, ["\u9ede\u6578"]);
+    let phoneIndex = findHeaderIndex(headerRow, ["\u624b\u6a5f", "\u96fb\u8a71"]);
+    if (!markExistingColumn(table, headerRow, uidIndex, "aiwe-uid-head", "aiwe-uid-cell")) {
+      insertProfileColumn(table, headerRow, "LINE UID", "aiwe-uid-head", () => makeProfileCell("aiwe-uid-cell"), 2);
+      uidIndex = 2;
+    }
+    if (!markExistingColumn(table, headerRow, pointIndex, "aiwe-point-head", "aiwe-point-cell")) {
+      const insertAt = uidIndex >= 0 ? uidIndex + 1 : 3;
+      insertProfileColumn(table, headerRow, "\u9ede\u6578", "aiwe-point-head", () => makePointCell(), insertAt);
+      pointIndex = insertAt;
+    }
+    if (!markExistingColumn(table, headerRow, phoneIndex, "aiwe-phone-head", "aiwe-phone-cell")) {
+      const insertAt = pointIndex >= 0 ? pointIndex + 1 : 4;
+      insertProfileColumn(table, headerRow, "\u624b\u6a5f", "aiwe-phone-head", () => makeProfileCell("aiwe-phone-cell"), insertAt);
     }
     headerRow.dataset.aiweProfileHeaders = "1";
   }
