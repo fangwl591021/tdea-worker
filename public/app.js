@@ -1079,6 +1079,8 @@
       ${field("人數限制", "capacity", 0, "", false, "number")}
       ${field("簽到贈點", "checkinPoints", 0, "0 表示不贈點", false, "number")}
       ${field("報名扣點/費用扣抵", "feePoints", 0, "0 表示不扣點", false, "number")}
+      ${field("報名費 NT$", "paymentAmount", 0, "0 表示免付款", false, "number")}
+      <div class="field"><label>匯款資訊</label><textarea name="remittanceInfo" placeholder="例：銀行、分行、帳號、戶名。會顯示在報名查詢頁，供報名者匯款後回報末五碼。"></textarea></div>
       <div class="field"><label>活動說明</label><textarea name="detailText" placeholder="可貼上 Google 表單上方的完整活動文案，系統會帶入詳細說明頁與模式 1 報名頁。"></textarea></div>
       ${select("狀態", "status", ["下架", "上架"])}
       <button class="btn primary" type="submit">建立活動</button>
@@ -1152,9 +1154,30 @@
       ["簽到狀態", row => row.checkinStatusText || (row.checkedInAt ? "已完成簽到" : "尚未簽到")],
       ["簽到時間", row => row.checkedInAt ? formatTime(row.checkedInAt) : ""]
     ];
+    const paymentLabel = (payment = {}) => {
+      const amount = Number(payment.amount || 0);
+      if (amount <= 0 || payment.status === "free") return "免付款";
+      if (payment.status === "paid") return "已收款";
+      if (payment.status === "reported") return "已回報待核對";
+      if (payment.status === "cancelled") return "付款取消";
+      if (payment.status === "refunded") return "已退款";
+      return "待付款";
+    };
+    const paymentActionCell = (row) => {
+      const payment = row.payment || {};
+      const amount = Number(payment.amount || 0);
+      if (!amount) return "-";
+      const paid = payment.status === "paid";
+      return `<button class="link" data-payment-registration="${esc(row.id)}" data-payment-status="${paid ? "reported" : "paid"}">${paid ? "改回待核對" : "確認收款"}</button>`;
+    };
+    const paymentCells = row => {
+      const payment = row.payment || {};
+      const amount = Number(payment.amount || 0);
+      return `<td>${esc(paymentLabel(payment))}</td><td>${esc(amount ? amount.toLocaleString() : "")}</td><td>${esc(payment.remittanceLast5 || "")}</td><td>${paymentActionCell(row)}</td>`;
+    };
     const customHeaders = [...new Set(rows.flatMap(row => Object.keys(row.answers || {})))]
       .filter(key => !systemFields.has(key) && !baseFields.some(([label]) => label === key) && !["name", "姓名", "memberNo", "會員編號", "phone", "mobile", "手機", "電話", "email", "Email", "電子郵件", "memberType", "isMember", "是否為會員"].includes(key));
-    return `<section class="panel"><div class="panel-head"><h2 class="panel-title">${esc(activity.name || "活動")} 報名名單</h2><button class="btn" data-refresh-registration-list="${esc(rowId)}">重新載入</button></div><div class="table-wrap"><table><thead><tr>${baseFields.map(([label]) => `<th>${esc(label)}</th>`).join("")}${customHeaders.map(h => `<th>${esc(h)}</th>`).join("")}</tr></thead><tbody>${rows.map(row => `<tr>${baseFields.map(([, getter]) => `<td>${esc(getter(row))}</td>`).join("")}${customHeaders.map(h => `<td>${esc(valueText(row.answers?.[h]))}</td>`).join("")}</tr>`).join("")}</tbody></table></div></section>`;
+    return `<section class="panel"><div class="panel-head"><h2 class="panel-title">${esc(activity.name || "活動")} 報名名單</h2><button class="btn" data-refresh-registration-list="${esc(rowId)}">重新載入</button></div><div class="table-wrap"><table><thead><tr>${baseFields.map(([label]) => `<th>${esc(label)}</th>`).join("")}<th>付款狀態</th><th>金額</th><th>末五碼</th><th>帳務操作</th>${customHeaders.map(h => `<th>${esc(h)}</th>`).join("")}</tr></thead><tbody>${rows.map(row => `<tr>${baseFields.map(([, getter]) => `<td>${esc(getter(row))}</td>`).join("")}${paymentCells(row)}${customHeaders.map(h => `<td>${esc(valueText(row.answers?.[h]))}</td>`).join("")}</tr>`).join("")}</tbody></table></div></section>`;
   }
   function answerPick(answers, keys) {
     const source = answers || {};
@@ -1199,7 +1222,7 @@
   }
   function activityForm(rowId) {
     const x = state.data.activities.find(r => r.id === rowId) || {};
-    return `<form class="form-grid" id="drawer-activity">${hidden("id", x.id)}${select("活動建立模式", "templateMode", [["custom","一般活動"],["mode1_vendor_visit","模式 1：廠商參訪 / 聯合參訪"]], x.templateMode || (x.type === "企業參訪" ? "mode1_vendor_visit" : "custom"))}${field("活動名稱", "name", x.name)}${select("類型", "type", ["企業參訪", "講座類", "教學類", "聯誼類", "年度會議"], x.type)}${field("課程時間", "courseTime", x.courseTime)}${field("報名截止", "deadline", x.deadline)}${field("人數限制", "capacity", x.capacity, "", false, "number")}${field("簽到贈點", "checkinPoints", x.checkinPoints || 0, "0 表示不贈點", false, "number")}${field("報名扣點/費用扣抵", "feePoints", x.feePoints || 0, "0 表示不扣點", false, "number")}${select("報名方式", "registrationMode", [["member_login","會員/廠商登入報名"],["form","開放填表報名"],["mixed","會員優先，非會員填表"]], x.registrationMode || "member_login")}${field("報名人數", "reg", x.reg, "", false, "number")}${field("簽到人數", "check", x.check, "", false, "number")}${select("狀態", "status", ["上架", "下架"], x.status)}${field("表單連結", "formUrl", x.formUrl)}<button class="btn primary" type="submit">儲存</button></form>`;
+    return `<form class="form-grid" id="drawer-activity">${hidden("id", x.id)}${select("活動建立模式", "templateMode", [["custom","一般活動"],["mode1_vendor_visit","模式 1：廠商參訪 / 聯合參訪"]], x.templateMode || (x.type === "企業參訪" ? "mode1_vendor_visit" : "custom"))}${field("活動名稱", "name", x.name)}${select("類型", "type", ["企業參訪", "講座類", "教學類", "聯誼類", "年度會議"], x.type)}${field("課程時間", "courseTime", x.courseTime)}${field("報名截止", "deadline", x.deadline)}${field("人數限制", "capacity", x.capacity, "", false, "number")}${field("簽到贈點", "checkinPoints", x.checkinPoints || 0, "0 表示不贈點", false, "number")}${field("報名扣點/費用扣抵", "feePoints", x.feePoints || 0, "0 表示不扣點", false, "number")}${field("報名費 NT$", "paymentAmount", x.paymentAmount || 0, "0 表示免付款", false, "number")}<div class="field"><label>匯款資訊</label><textarea name="remittanceInfo" placeholder="例：銀行、分行、帳號、戶名。會顯示在報名查詢頁，供報名者匯款後回報末五碼。">${esc(x.remittanceInfo || "")}</textarea></div>${select("報名方式", "registrationMode", [["member_login","會員/廠商登入報名"],["form","開放填表報名"],["mixed","會員優先，非會員填表"]], x.registrationMode || "member_login")}${field("報名人數", "reg", x.reg, "", false, "number")}${field("簽到人數", "check", x.check, "", false, "number")}${select("狀態", "status", ["上架", "下架"], x.status)}${field("表單連結", "formUrl", x.formUrl)}<button class="btn primary" type="submit">儲存</button></form>`;
   }
   function memberForm(type, rowId) {
     const x = state.data[type].find(r => r.id === rowId) || {}, vendor = type === "vendor";
@@ -1491,6 +1514,7 @@
     });
     document.querySelectorAll("[data-registration-list]").forEach(b => b.onclick = () => openRegistrationList(b.dataset.registrationList));
     document.querySelectorAll("[data-refresh-registration-list]").forEach(b => b.onclick = () => loadRegistrationList(b.dataset.refreshRegistrationList, true));
+    document.querySelectorAll("[data-payment-registration]").forEach(b => b.onclick = () => updateRegistrationPayment(b.dataset.paymentRegistration, b.dataset.paymentStatus));
     document.querySelectorAll("[data-load-member-applications]").forEach(b => b.onclick = () => loadMemberApplications(true));
     const autoSync = document.querySelector("[data-auto-sync]"); if (autoSync) autoSync.onchange = () => { setAutoSyncEnabled(autoSync.checked); toast(autoSync.checked ? "已開啟自動同步" : "已關閉自動同步"); };
     const refreshKeywords = document.querySelector("[data-refresh-keywords]"); if (refreshKeywords) refreshKeywords.onclick = () => { render(); toast("關鍵字列表已刷新"); };
@@ -1509,8 +1533,8 @@
       if (url) location.href = url;
       else toast("這個活動尚未建立報名表，請到編輯活動產生。");
     });
-    const af = document.querySelector("#activity-form"); if (af) af.onsubmit = async e => { e.preventDefault(); const d = Object.fromEntries(new FormData(af)); const templateMode = d.templateMode || "custom"; const registrationMode = d.registrationMode || (templateMode === "mode1_vendor_visit" ? "member_login" : "form"); const item = { id: uid(), name: d.name.trim(), templateMode, type: d.type, typeLabel: formTypeLabel(d), courseTime: d.courseTime, deadline: d.deadline, capacity: Number(d.capacity || 0), checkinPoints: Number(d.checkinPoints || 0), feePoints: Number(d.feePoints || 0), registrationMode, detailText: d.detailText || "", reg: 0, check: 0, status: d.status, formUrl: "" }; try { const saved = await saveActivityRemote(item); state.data.activities.unshift(saved || item); state.view = "dashboard"; render(); toast("活動已建立"); } catch (err) { toast(err?.message || "活動建立失敗"); } };
-    const ea = document.querySelector("#drawer-activity"); if (ea) ea.onsubmit = async e => { e.preventDefault(); const d = Object.fromEntries(new FormData(ea)); const x = state.data.activities.find(r => r.id === d.id); if (x) { Object.assign(x, { name: d.name, templateMode: d.templateMode || x.templateMode || "custom", type: d.type, typeLabel: formTypeLabel(d), courseTime: d.courseTime, deadline: d.deadline, capacity: Number(d.capacity || 0), checkinPoints: Number(d.checkinPoints || 0), feePoints: Number(d.feePoints || 0), registrationMode: d.registrationMode || "form", reg: Number(d.reg || 0), check: Number(d.check || 0), status: d.status, formUrl: d.formUrl }); try { const saved = await saveActivityRemote(x); Object.assign(x, saved || {}); } catch (err) { toast(err?.message || "活動儲存失敗"); return; } } state.drawer = ""; save(); render(); toast("活動已儲存"); };
+    const af = document.querySelector("#activity-form"); if (af) af.onsubmit = async e => { e.preventDefault(); const d = Object.fromEntries(new FormData(af)); const templateMode = d.templateMode || "custom"; const registrationMode = d.registrationMode || (templateMode === "mode1_vendor_visit" ? "member_login" : "form"); const item = { id: uid(), name: d.name.trim(), templateMode, type: d.type, typeLabel: formTypeLabel(d), courseTime: d.courseTime, deadline: d.deadline, capacity: Number(d.capacity || 0), checkinPoints: Number(d.checkinPoints || 0), feePoints: Number(d.feePoints || 0), paymentAmount: Number(d.paymentAmount || 0), remittanceInfo: d.remittanceInfo || "", registrationMode, detailText: d.detailText || "", reg: 0, check: 0, status: d.status, formUrl: "" }; try { const saved = await saveActivityRemote(item); state.data.activities.unshift(saved || item); state.view = "dashboard"; render(); toast("活動已建立"); } catch (err) { toast(err?.message || "活動建立失敗"); } };
+    const ea = document.querySelector("#drawer-activity"); if (ea) ea.onsubmit = async e => { e.preventDefault(); const d = Object.fromEntries(new FormData(ea)); const x = state.data.activities.find(r => r.id === d.id); if (x) { Object.assign(x, { name: d.name, templateMode: d.templateMode || x.templateMode || "custom", type: d.type, typeLabel: formTypeLabel(d), courseTime: d.courseTime, deadline: d.deadline, capacity: Number(d.capacity || 0), checkinPoints: Number(d.checkinPoints || 0), feePoints: Number(d.feePoints || 0), paymentAmount: Number(d.paymentAmount || 0), remittanceInfo: d.remittanceInfo || "", registrationMode: d.registrationMode || "form", reg: Number(d.reg || 0), check: Number(d.check || 0), status: d.status, formUrl: d.formUrl }); try { const saved = await saveActivityRemote(x); Object.assign(x, saved || {}); } catch (err) { toast(err?.message || "活動儲存失敗"); return; } } state.drawer = ""; save(); render(); toast("活動已儲存"); };
     const mf = document.querySelector("#drawer-member"); if (mf) mf.onsubmit = e => { e.preventDefault(); const type = mf.dataset.type; const d = Object.fromEntries(new FormData(mf)); const rows = state.data[type]; const old = rows.find(r => r.id === d.id); const loginAccess = d.loginAccess === "Y"; const item = { ...d, id: d.id || uid(), loginAccess, allowLogin: loginAccess, canLogin: loginAccess }; old ? Object.assign(old, item) : rows.unshift(item); state.drawer = ""; save(); syncRosterMemberToWorker(type, item); syncAdminAccessForMember(type, item); render(); toast("名冊已儲存"); };
     const im = document.querySelector("#import-form"); if (im) im.onsubmit = e => { e.preventDefault(); const d = Object.fromEntries(new FormData(im)); const count = importRows(im.dataset.type, d.csv || ""); state.drawer = ""; render(); toast(`已導入 ${count} 筆資料`); };
     const loadRoster = document.querySelector("[data-load-roster]"); if (loadRoster) loadRoster.onclick = () => loadRosterSeed(true);
@@ -1677,6 +1701,25 @@
     }
     render();
   }
+  async function updateRegistrationPayment(registrationId, status) {
+    if (!hasAdminIdentity()) return toast("請先登入管理中心");
+    try {
+      const response = await fetch(api + "/api/native-registrations/payment", {
+        method: "POST",
+        headers: adminHeaders({ "content-type": "application/json" }),
+        body: JSON.stringify({ registrationId, status })
+      });
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok || !result.success) throw new Error(result.message || "付款狀態更新失敗");
+      const activityId = state.drawer?.startsWith("registrations:") ? state.drawer.split(":")[1] : "";
+      if (activityId) await loadRegistrationList(activityId);
+      else render();
+      toast(status === "paid" ? "已確認收款" : "已改回待核對");
+    } catch (err) {
+      toast(err?.message || "付款狀態更新失敗");
+    }
+  }
+
   async function loadRosterSeed(force = false) {
     if (!force && (state.data.association.length || state.data.vendor.length)) return;
     try {

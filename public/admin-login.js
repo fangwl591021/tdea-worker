@@ -17,7 +17,7 @@
     "marquee"
   ];
   const scriptVersions = [
-    "app.js?v=activity-archive2",
+    "app.js?v=payment1",
     "line-zone.js?v=line-whitelist1",
     "lottery.js?v=lottery4",
     "activity-types.js?v=types3",
@@ -32,7 +32,7 @@
     "push-manager.js?v=push6",
     "calendar-manager.js?v=calendar3",
     "monthly-activity.js?v=monthly32",
-    "native-form.js?v=liff-checkin3",
+    "native-form.js?v=liff-payment1",
     "liff-detail.js?v=liff-detail9",
     "personal-message.js?v=pm4",
     "keyword-extra.js?v=kw2",
@@ -150,7 +150,7 @@
     const params = searchParams();
     if (params.has("monthlyDetail") || params.has("close")) return ["liff-detail.js?v=liff-detail9"];
     if (params.has("personalMessages")) return ["personal-message.js?v=pm4"];
-    return ["native-form.js?v=liff-checkin3"];
+    return ["native-form.js?v=liff-payment1"];
   }
 
   function loadScript(src) {

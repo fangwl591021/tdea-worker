@@ -1,4 +1,4 @@
-﻿(() => {
+(() => {
   const api = location.hostname.endsWith("github.io") ? "https://tdeawork.fangwl591021.workers.dev" : "";
   const params = mergedParams();
   const formId = params.get("register");
@@ -337,9 +337,12 @@
     const data = result.data || {};
     const checkinUrl = data.checkinUrl || "";
     const qrUrl = checkinUrl ? `https://api.qrserver.com/v1/create-qr-code/?size=220x220&data=${encodeURIComponent(checkinUrl)}` : "";
+    const payment = data.payment || {};
+    const paymentDue = Number(payment.amount || 0) > 0 && payment.status !== "paid";
     renderShell(`<section class="nf-card"><div class="nf-body">
       <h1 class="nf-title">報名成功</h1>
       <div class="nf-ok">已完成報名。查詢碼：${esc(data.queryCode || "")}</div>
+      ${paymentDue ? `<div class="nf-alert">此活動需匯款 NT$ ${esc(Number(payment.amount || 0).toLocaleString())}，請完成匯款後到查詢頁回報末五碼。</div>` : ""}
       ${qrUrl ? `<img class="nf-qr" src="${qrUrl}" alt="核銷 QR Code">` : ""}
       <div class="nf-actions">
         <a class="nf-btn" href="?query=1&code=${encodeURIComponent(data.queryCode || "")}">查詢或取消報名</a>
@@ -348,7 +351,7 @@
     </div></section>`);
     setTimeout(() => alert("報名成功"), 50);
     app.querySelector("[data-close-window]")?.addEventListener("click", closeWindow);
-    setTimeout(closeWindow, 1800);
+    if (!paymentDue) setTimeout(closeWindow, 1800);
   }
 
   function closeWindow() {
@@ -513,6 +516,38 @@
     return "已報名";
   }
 
+  function paymentStatusText(payment = {}) {
+    if (!payment || Number(payment.amount || 0) <= 0 || payment.status === "free") return "免付款";
+    if (payment.status === "paid") return "已完成付款";
+    if (payment.status === "reported") return "已回報，待協會核對";
+    if (payment.status === "cancelled") return "付款已取消";
+    if (payment.status === "refunded") return "已退款";
+    return "待付款";
+  }
+
+  function paymentBlock(row) {
+    const payment = row.payment || {};
+    const activity = row.activity || {};
+    const amount = Number(payment.amount || 0);
+    if (amount <= 0) return `<div><strong>付款狀態：</strong>免付款</div>`;
+    const remittanceInfo = activity.remittanceInfo || activity.paymentInfo || "";
+    const canReport = row.status !== "cancelled" && payment.status !== "paid";
+    return `<div class="nf-alert" style="margin-top:10px">
+      <div><strong>付款狀態：</strong>${esc(paymentStatusText(payment))}</div>
+      <div><strong>應付金額：</strong>NT$ ${esc(amount.toLocaleString())}</div>
+      ${payment.remittanceLast5 ? `<div><strong>已回報末五碼：</strong>${esc(payment.remittanceLast5)}</div>` : ""}
+      ${payment.paidAt ? `<div><strong>確認時間：</strong>${esc(new Date(payment.paidAt).toLocaleString("zh-TW", { hour12: false }))}</div>` : ""}
+      ${remittanceInfo ? `<div style="white-space:pre-wrap"><strong>匯款資訊：</strong>${esc(remittanceInfo)}</div>` : ""}
+      ${canReport ? `<form class="nf-form" data-payment-report style="margin-top:10px">
+        <input type="hidden" name="registrationId" value="${esc(row.id)}">
+        <input type="hidden" name="queryCode" value="${esc(row.queryCode || "")}">
+        <div class="nf-field"><label>匯款帳號末五碼</label><input name="remittanceLast5" inputmode="numeric" maxlength="5" placeholder="例如 12345" required></div>
+        <div class="nf-field"><label>備註</label><input name="note" placeholder="可填匯款人姓名或轉帳時間"></div>
+        <div class="nf-actions"><button class="nf-btn primary" type="submit">回報匯款</button></div>
+      </form>` : ""}
+    </div>`;
+  }
+
   function registrationCard(row) {
     const activity = row.activity || {};
     const title = activity.name || row.formId || "活動報名";
@@ -536,6 +571,7 @@
         <div class="nf-query-lines">
           ${isCheckedIn ? `<div class="nf-ok">已完成報到</div>` : ""}
           ${lines || `<div>已找到報名紀錄。</div>`}
+          ${paymentBlock(row)}
           ${row.status === "cancelled" || isCheckedIn ? "" : `<div class="nf-actions" style="margin-top:10px"><button class="nf-btn danger" data-cancel-registration="${esc(row.id)}" data-query-code="${esc(row.queryCode || "")}">取消報名</button></div>`}
         </div>
         ${!isCheckedIn && qrUrl ? `<div class="nf-query-qr"><img class="nf-qr" src="${qrUrl}" alt="核銷 QR Code"><span>活動核銷 QR</span></div>` : ""}
@@ -554,6 +590,29 @@
         });
         const cancelResult = await cancelResponse.json().catch(() => ({}));
         if (!cancelResponse.ok || !cancelResult.success) return alert(cancelResult.message || "取消失敗");
+        refresh();
+      });
+    });
+  }
+
+  async function bindPaymentReport(container, refresh) {
+    container.querySelectorAll("[data-payment-report]").forEach((form) => {
+      form.addEventListener("submit", async (event) => {
+        event.preventDefault();
+        const data = Object.fromEntries(new FormData(event.currentTarget));
+        const button = event.currentTarget.querySelector("button[type='submit']");
+        if (button) button.disabled = true;
+        const response = await fetch(`${api}/api/native-registrations/payment-report`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify(data)
+        });
+        const result = await response.json().catch(() => ({}));
+        if (!response.ok || !result.success) {
+          if (button) button.disabled = false;
+          return alert(result.message || "回報失敗");
+        }
+        alert("已回報，協會將進行帳務核對。");
         refresh();
       });
     });
@@ -584,6 +643,7 @@
       }
       box.innerHTML = registrationCard(result.data || {});
       bindCancel(box, () => runCodeQuery(code));
+      bindPaymentReport(box, () => runCodeQuery(code));
     }
 
     async function runLoginQuery() {
@@ -603,6 +663,7 @@
       const rows = Array.isArray(result.data) ? result.data : [];
       box.innerHTML = rows.length ? `<div class="nf-form">${rows.map(registrationCard).join("")}</div>` : `<div class="nf-alert">目前沒有報名紀錄。</div>`;
       bindCancel(box, runLoginQuery);
+      bindPaymentReport(box, runLoginQuery);
     }
 
     app.querySelector("[data-query-form]")?.addEventListener("submit", (event) => {

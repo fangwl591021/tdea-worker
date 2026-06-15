@@ -1,4 +1,4 @@
-﻿import baseEntry from "./roster-sync-entry4";
+import baseEntry from "./roster-sync-entry4";
 
 type Env = { ADMIN_EMAILS?: string; ADMIN_LOGIN_USER?: string; ADMIN_LOGIN_PASSWORD?: string; ASSETS_BUCKET?: R2Bucket; LINE_CHANNEL_SECRET?: string; LINE_CHANNEL_ACCESS_TOKEN?: string; FORWARD_WEBHOOK_URL?: string; GOOGLE_FORMS_SCRIPT_URL?: string; GOOGLE_FORMS_SHARED_SECRET?: string; OPNFORM_API_BASE?: string; OPNFORM_PUBLIC_BASE?: string; OPNFORM_API_TOKEN?: string; OPNFORM_WORKSPACE_ID?: string; OPNFORM_WEBHOOK_SECRET?: string; WETW_POINT_API_KEY?: string; WETW_SHOP_ID?: string; WETW_POINT_TYPE?: string; TDEA_POINT_EXTERNAL_SYNC?: string; TDEA_ADMIN_LINE_USER_IDS?: string; OPENAI_API_KEY?: string; OPENAI_MODEL?: string };
 type LineEvent = { type?: string; replyToken?: string; message?: { type?: string; id?: string; text?: string }; postback?: { data?: string }; source?: { type?: string; userId?: string; groupId?: string; roomId?: string } };
@@ -11,7 +11,9 @@ type MarqueeImageItem = { id?: string; imageUrl?: string; linkUrl?: string; titl
 type MarqueeConfig = { enabled?: boolean; keyword?: string; altText?: string; title?: string; imageUrl?: string; imageUrls?: string[]; imageItems?: MarqueeImageItem[]; left?: MarqueeButtonConfig; right?: MarqueeButtonConfig; updatedAt?: string };
 type RegistrationRecord = { activityId?: string; activityNo?: string; activityName?: string; formId?: string; count: number; lastSubmittedAt?: string };
 type RegistrationSummary = { updatedAt?: string; activities: Record<string, RegistrationRecord> };
-type RegistrationEntry = { id: string; sourceId?: string; formId?: string; submittedAt?: string; activity?: Record<string, unknown>; answers?: Record<string, unknown>; status?: string; checkedInAt?: string; sessionId?: string; queryCode?: string; checkinToken?: string; cancelledAt?: string; lineUserId?: string; pointsSyncedAt?: string; pointResults?: unknown[] };
+type PaymentStatus = "free" | "unpaid" | "reported" | "paid" | "cancelled" | "refunded";
+type RegistrationPayment = { status: PaymentStatus; method?: "free" | "bank_transfer" | "cash" | "manual"; amount: number; currency?: string; remittanceLast5?: string; reportedAt?: string; paidAt?: string; verifiedBy?: string; verifiedAt?: string; note?: string; updatedAt?: string; transactions?: Array<Record<string, unknown>> };
+type RegistrationEntry = { id: string; sourceId?: string; formId?: string; submittedAt?: string; activity?: Record<string, unknown>; answers?: Record<string, unknown>; status?: string; checkedInAt?: string; sessionId?: string; queryCode?: string; checkinToken?: string; cancelledAt?: string; lineUserId?: string; pointsSyncedAt?: string; pointResults?: unknown[]; payment?: RegistrationPayment };
 type ManagedSubmission = { formId?: string; sourceId?: string; submittedAt?: string; activity: Record<string, unknown>; answers: Record<string, unknown>; raw?: unknown };
 type NativeField = { key: string; label: string; type: string; required?: boolean; options?: string[] };
 type NativeSession = { id: string; name: string; startTime?: string; endTime?: string; capacity?: number; status?: string };
@@ -1146,12 +1148,57 @@ function publicRegistrationEntry(entry: RegistrationEntry): RegistrationEntry & 
   if (isSyntheticLineEmail(answers["電子郵件"])) answers["電子郵件"] = "";
   const checkedInAt = clean(entry.checkedInAt);
   const cancelled = clean(entry.status || "active") === "cancelled";
+  const payment = normalizeRegistrationPayment(entry);
   return {
     ...entry,
     answers,
+    payment,
     checkinStatus: cancelled ? "cancelled" : checkedInAt ? "checked_in" : "pending",
     checkinStatusText: cancelled ? "已取消" : checkedInAt ? "已完成簽到" : "尚未簽到"
   };
+}
+
+function activityPaymentAmount(activity: Record<string, unknown>) {
+  return Math.max(0, numberValue(activity.paymentAmount || activity.feeAmount || activity.registrationFee || activity.amount));
+}
+
+function initialRegistrationPayment(activity: Record<string, unknown>): RegistrationPayment {
+  const amount = activityPaymentAmount(activity);
+  const now = new Date().toISOString();
+  return {
+    status: amount > 0 ? "unpaid" : "free",
+    method: amount > 0 ? "bank_transfer" : "free",
+    amount,
+    currency: "TWD",
+    updatedAt: now,
+    transactions: [{ type: "created", status: amount > 0 ? "unpaid" : "free", amount, at: now }]
+  };
+}
+
+function normalizeRegistrationPayment(entry: RegistrationEntry): RegistrationPayment {
+  const base = entry.payment || initialRegistrationPayment(asRecord(entry.activity));
+  const amount = Math.max(0, numberValue(base.amount || activityPaymentAmount(asRecord(entry.activity))));
+  const status = clean(base.status) as PaymentStatus;
+  const safeStatus: PaymentStatus = ["free", "unpaid", "reported", "paid", "cancelled", "refunded"].includes(status) ? status : amount > 0 ? "unpaid" : "free";
+  return {
+    status: amount <= 0 && safeStatus === "unpaid" ? "free" : safeStatus,
+    method: base.method || (amount > 0 ? "bank_transfer" : "free"),
+    amount,
+    currency: clean(base.currency) || "TWD",
+    remittanceLast5: clean(base.remittanceLast5),
+    reportedAt: clean(base.reportedAt),
+    paidAt: clean(base.paidAt),
+    verifiedBy: clean(base.verifiedBy),
+    verifiedAt: clean(base.verifiedAt),
+    note: clean(base.note),
+    updatedAt: clean(base.updatedAt),
+    transactions: Array.isArray(base.transactions) ? base.transactions : []
+  };
+}
+
+function paymentIsSettled(entry: RegistrationEntry) {
+  const payment = normalizeRegistrationPayment(entry);
+  return payment.amount <= 0 || payment.status === "free" || payment.status === "paid";
 }
 
 async function listRegistrations(request: Request, env: Env) {
@@ -2275,6 +2322,8 @@ async function createNativeForm(request: Request, env: Env) {
       capacity: Number(activity.capacity || 0) || 0,
       checkinPoints: numberValue(activity.checkinPoints || activity.checkinPointAmount),
       feePoints: numberValue(activity.feePoints || activity.feePointAmount),
+      paymentAmount: activityPaymentAmount(activity),
+      remittanceInfo: firstClean(activity.remittanceInfo, activity.bankInfo, activity.paymentInfo),
       detailText: clean(activity.detailText),
       posterUrl: firstClean(activity.posterUrl, activity.imageUrl),
       imageUrl: firstClean(activity.imageUrl, activity.posterUrl),
@@ -2411,7 +2460,8 @@ async function createNativeRegistration(env: Env, form: NativeForm, answers: Rec
     sessionId,
     queryCode,
     checkinToken,
-    lineUserId
+    lineUserId,
+    payment: initialRegistrationPayment(form.activity)
   };
   const keys = registrationKeys(form.activity, form.id);
   const count = await appendRegistrationList(env, keys, entry);
@@ -2427,7 +2477,7 @@ async function createNativeRegistration(env: Env, form: NativeForm, answers: Rec
   for (const key of keys) summary.activities[key] = record;
   await writeRegistrationSummary(env, summary);
   await writeNativeRegistration(env, entry);
-  return json({ success: true, data: { registrationId, queryCode, checkinUrl: nativeCheckinUrl(checkinToken), submittedAt, activity: form.activity, session } }, 201);
+  return json({ success: true, data: { registrationId, queryCode, checkinUrl: nativeCheckinUrl(checkinToken), submittedAt, activity: form.activity, session, payment: entry.payment } }, 201);
 }
 
 async function submitNativeLoginRegistration(request: Request, env: Env, formId: string) {
@@ -2507,6 +2557,63 @@ async function cancelNativeRegistration(request: Request, env: Env) {
   return json({ success: true, data: entry });
 }
 
+async function reportNativeRegistrationPayment(request: Request, env: Env) {
+  const input = await request.json().catch(() => ({})) as Record<string, unknown>;
+  const registrationId = clean(input.registrationId);
+  const queryCode = clean(input.queryCode);
+  const entry = await readNativeRegistration(env, registrationId);
+  if (!entry || entry.queryCode !== queryCode) return json({ success: false, message: "查無可回報的報名資料" }, 404);
+  if (clean(entry.status || "active") === "cancelled") return json({ success: false, message: "此報名已取消，不能回報付款" }, 409);
+  const payment = normalizeRegistrationPayment(entry);
+  if (payment.amount <= 0) return json({ success: false, message: "此活動不需要付款" }, 400);
+  if (payment.status === "paid") return json({ success: true, data: publicRegistrationEntry(entry) });
+  const remittanceLast5 = clean(input.remittanceLast5 || input.last5).replace(/\D/g, "");
+  if (remittanceLast5.length !== 5) return json({ success: false, message: "請輸入匯款帳號末五碼" }, 400);
+  const now = new Date().toISOString();
+  entry.payment = {
+    ...payment,
+    status: "reported",
+    method: "bank_transfer",
+    remittanceLast5,
+    reportedAt: now,
+    note: clean(input.note || payment.note),
+    updatedAt: now,
+    transactions: [{ type: "reported", remittanceLast5, at: now, note: clean(input.note) }, ...(payment.transactions || [])].slice(0, 50)
+  };
+  await updateRegistrationEverywhere(env, entry);
+  return json({ success: true, data: publicRegistrationEntry(entry) });
+}
+
+async function updateNativeRegistrationPayment(request: Request, env: Env) {
+  const guard = await requireAdmin(request, env);
+  if (guard) return guard;
+  const input = await request.json().catch(() => ({})) as Record<string, unknown>;
+  const registrationId = clean(input.registrationId);
+  const entry = await readNativeRegistration(env, registrationId);
+  if (!entry) return json({ success: false, message: "查無報名資料" }, 404);
+  const payment = normalizeRegistrationPayment(entry);
+  const status = clean(input.status) as PaymentStatus;
+  const safeStatus: PaymentStatus = ["unpaid", "reported", "paid", "cancelled", "refunded"].includes(status) ? status : payment.status;
+  const now = new Date().toISOString();
+  const admin = adminEmailFromRequest(request) || adminMemberNoFromRequest(request) || adminLineUserIdFromRequest(request) || "admin";
+  const amount = input.amount === undefined ? payment.amount : Math.max(0, numberValue(input.amount));
+  entry.payment = {
+    ...payment,
+    status: amount <= 0 ? "free" : safeStatus,
+    method: clean(input.method) as RegistrationPayment["method"] || payment.method || "bank_transfer",
+    amount,
+    remittanceLast5: clean(input.remittanceLast5 || payment.remittanceLast5).replace(/\D/g, "").slice(-5),
+    note: clean(input.note || payment.note),
+    paidAt: safeStatus === "paid" ? clean(input.paidAt) || payment.paidAt || now : "",
+    verifiedAt: safeStatus === "paid" ? now : "",
+    verifiedBy: safeStatus === "paid" ? admin : "",
+    updatedAt: now,
+    transactions: [{ type: "admin_update", status: safeStatus, amount, at: now, by: admin, note: clean(input.note) }, ...(payment.transactions || [])].slice(0, 50)
+  };
+  await updateRegistrationEverywhere(env, entry);
+  return json({ success: true, data: publicRegistrationEntry(entry) });
+}
+
 async function verifyNativeCheckin(request: Request, env: Env) {
   const url = new URL(request.url);
   const token = clean(url.searchParams.get("token"));
@@ -2515,6 +2622,7 @@ async function verifyNativeCheckin(request: Request, env: Env) {
   const registrationId = object ? await object.text() : "";
   const entry = await readNativeRegistration(env, registrationId);
   if (!entry || entry.checkinToken !== token) return json({ success: false, message: "核銷碼無效" }, 404);
+  if (!paymentIsSettled(entry)) return json({ success: false, message: "此報名尚未完成付款，不能核銷" }, 409);
   return json({ success: true, data: publicRegistrationEntry(entry) });
 }
 
@@ -2531,6 +2639,7 @@ async function confirmNativeCheckin(request: Request, env: Env) {
   const entry = await readNativeRegistration(env, registrationId);
   if (!entry || entry.checkinToken !== token) return json({ success: false, message: "核銷碼無效" }, 404);
   if (clean(entry.status || "active") === "cancelled") return json({ success: false, message: "此報名已取消，不能核銷" }, 409);
+  if (!paymentIsSettled(entry)) return json({ success: false, message: "此報名尚未完成付款，不能核銷" }, 409);
   const firstCheckin = !entry.checkedInAt;
   if (firstCheckin) {
     entry.checkedInAt = new Date().toISOString();
@@ -5239,6 +5348,8 @@ export default {
 	    if (request.method === "GET" && url.pathname === "/api/native-registrations/query") return queryNativeRegistration(request, env);
 	    if (request.method === "GET" && url.pathname === "/api/native-registrations/me") return queryNativeRegistrationsByLine(request, env);
 	    if (request.method === "POST" && url.pathname === "/api/native-registrations/cancel") return cancelNativeRegistration(request, env);
+	    if (request.method === "POST" && url.pathname === "/api/native-registrations/payment-report") return reportNativeRegistrationPayment(request, env);
+	    if ((request.method === "PUT" || request.method === "POST") && url.pathname === "/api/native-registrations/payment") return updateNativeRegistrationPayment(request, env);
 	    if (request.method === "GET" && url.pathname === "/api/native-checkin/verify") return verifyNativeCheckin(request, env);
 	    if (request.method === "POST" && url.pathname === "/api/native-checkin/confirm") return confirmNativeCheckin(request, env);
 	    if (request.method === "POST" && url.pathname === "/api/redeem/create") return createRedeemRequest(request, env);
