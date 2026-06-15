@@ -280,6 +280,7 @@
   }
 
   function loadLiff(options = {}) {
+    if (options.login && !lineUserId) liffReady = null;
     if (liffReady) return liffReady;
     liffReady = new Promise((resolve) => {
       const finish = (value = "") => { lineUserId = value || lineUserId; resolve(lineUserId); };
@@ -652,7 +653,7 @@
       }
       try {
         const operatorLineUserId = await loadLiff({ login: true });
-        if (!operatorLineUserId) throw new Error("無法取得工作人員 LINE UID，請從 LINE LIFF 開啟。");
+        if (!operatorLineUserId) throw new Error("無法取得工作人員 LINE UID，請用 LINE 開啟此核銷 QR。");
         const confirmResponse = await fetch(`${api}/api/native-checkin/confirm`, {
           method: "POST",
           headers: { "content-type": "application/json", "x-line-user-id": operatorLineUserId },
