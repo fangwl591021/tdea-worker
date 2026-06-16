@@ -10,6 +10,19 @@
     localStorage.setItem(key, JSON.stringify(data));
   }
 
+  function cleanUrlList(value) {
+    const seen = new Set();
+    const flatten = input => Array.isArray(input) ? input.flatMap(flatten) : String(input || "").split(/[\n,]+/);
+    return flatten(value)
+      .map(item => String(item || "").trim())
+      .filter(item => /^https?:\/\//i.test(item))
+      .filter(item => {
+        if (seen.has(item)) return false;
+        seen.add(item);
+        return true;
+      });
+  }
+
   async function loadRemoteActivitiesIntoLocal() {
     try {
       const response = await fetch(`${apiBase}/api/activities`, { cache: "no-store" });
@@ -94,6 +107,11 @@
       <div class="field">
         <label>活動主圖 / 海報連結</label>
         <input name="posterUrl" type="url" placeholder="若已有圖片網址也可貼上；上傳完成會自動回填">
+      </div>
+      <div class="field">
+        <label>活動圖集 / 說明頁輪播圖</label>
+        <textarea name="galleryUrls" placeholder="每行一張圖片網址；活動建立後也可到編輯活動一次上傳多張"></textarea>
+        <small class="form-builder-hint">活動說明頁會使用這些圖片做輪播；每月活動會從活動資料自動帶入。</small>
       </div>
       <div class="field">
         <label>報名表網址</label>
@@ -362,6 +380,7 @@
     const sessions = collectSessions(form);
     const settings = {
       posterUrl: form.posterUrl?.value?.trim() || "",
+      galleryUrls: cleanUrlList(form.galleryUrls?.value || ""),
       posterR2Key: "",
       formUrl,
       googleFormUrl: formUrl,
@@ -407,6 +426,7 @@
       if (latest.activityNo) data.formSettings[latest.activityNo] = settings;
       latest.formMode = "google_form";
       latest.posterUrl = settings.posterUrl;
+      latest.galleryUrls = settings.galleryUrls;
       latest.youtubeUrl = settings.youtubeUrl;
       if (settings.formUrl) {
         latest.formUrl = settings.formUrl;
