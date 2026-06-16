@@ -31,7 +31,7 @@
     "marquee-manager.js?v=marquee5",
     "push-manager.js?v=push6",
     "calendar-manager.js?v=calendar3",
-    "monthly-activity.js?v=monthly33",
+    "monthly-activity.js?v=monthly34",
     "native-form.js?v=liff-redeem-phone3",
     "liff-detail.js?v=liff-detail9",
     "personal-message.js?v=pm4",

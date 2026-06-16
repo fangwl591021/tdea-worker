@@ -830,6 +830,7 @@
     config.pages[selected].imageUrl = result.url.startsWith("http") ? result.url : api + result.url;
     render();
     toast("圖片已上傳");
+    if (canAutoPublish()) await autoPublish();
   }
 
   async function uploadGalleryImages(event) {
