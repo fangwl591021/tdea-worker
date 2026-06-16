@@ -1733,28 +1733,46 @@ async function insertMemberPoint(env: Env, input: { lineUserId: string; eventNam
   return { httpStatus: response.status, ...(body as Record<string, unknown>) };
 }
 
-async function queryPointBalance(env: Env, lineUserId: string) {
+async function queryPointBalanceOnce(env: Env, payload: Record<string, unknown>) {
   const apiKey = clean(env.WETW_POINT_API_KEY);
   if (!apiKey) return { success: false, code: "missing_api_key", message: "WETW_POINT_API_KEY is not configured" };
-  if (!lineUserId) return { success: false, code: "missing_line_user_id", message: "LINE user id is required" };
   const response = await fetch(`${pointApiBase}/query-user-point-list`, {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({
-      api_key: apiKey,
-      LINE_user_id: lineUserId,
-      shop_id: Number(env.WETW_SHOP_ID || 35),
-      point_type: env.WETW_POINT_TYPE || "system_point",
-      page: 1,
-      per_page: 100
-    })
+    body: JSON.stringify({ api_key: apiKey, page: 1, per_page: 100, ...payload })
   });
   const body = await response.json().catch(() => ({ success: false, message: "Invalid JSON response" })) as Record<string, unknown>;
   const data = asRecord(body.data);
   const list = Array.isArray(data.list) ? data.list.map(asRecord) : [];
+  const explicitBalance = Number(data.balance ?? body.balance);
   const firstBalance = list.map((item) => Number(item.point_balance)).find((value) => Number.isFinite(value));
-  const balance = Number.isFinite(firstBalance) ? Number(firstBalance) : list.reduce((sum, item) => sum + numberValue(item.get_point), 0);
-  return { httpStatus: response.status, ...body, balance, list };
+  const balance = Number.isFinite(explicitBalance)
+    ? Number(explicitBalance)
+    : Number.isFinite(firstBalance)
+      ? Number(firstBalance)
+      : list.reduce((sum, item) => sum + numberValue(item.get_point), 0);
+  return { httpStatus: response.status, ...body, balance, list, queryPayload: payload };
+}
+
+async function queryPointBalance(env: Env, lineUserId: string) {
+  if (!clean(env.WETW_POINT_API_KEY)) return { success: false, code: "missing_api_key", message: "WETW_POINT_API_KEY is not configured" };
+  if (!lineUserId) return { success: false, code: "missing_line_user_id", message: "LINE user id is required" };
+  const shopId = Number(env.WETW_SHOP_ID || 35);
+  const pointType = clean(env.WETW_POINT_TYPE || "system_point");
+  const attempts: Record<string, unknown>[] = [
+    { LINE_user_id: lineUserId, shop_id: shopId, point_type: pointType },
+    { LINE_user_id: lineUserId, shop_id: shopId },
+    { LINE_user_id: lineUserId }
+  ];
+  const results = [];
+  for (const payload of attempts) {
+    const result = await queryPointBalanceOnce(env, payload) as Record<string, unknown>;
+    results.push(result);
+    const list = Array.isArray(result.list) ? result.list : [];
+    if (result.success === true && (list.length || numberValue(result.balance) > 0)) return { ...result, attempts };
+  }
+  const successful = [...results].reverse().find((item) => item.success === true) || results[results.length - 1];
+  return { ...successful, attempts };
 }
 
 async function syncMotherPointToLocal(env: Env, lineUserId: string) {

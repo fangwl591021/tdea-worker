@@ -945,7 +945,34 @@
     return `<div class="admin-profile" title="${esc(label)}"><div class="admin-avatar">${avatar}</div><div class="admin-profile-text"><strong>${esc(label)}</strong><small>${esc(detail)}</small></div></div>`;
   }
 
+  function ensureCrmMemberStyles() {
+    if (document.getElementById("tdea-crm-member-style")) return;
+    const style = document.createElement("style");
+    style.id = "tdea-crm-member-style";
+    style.textContent = `
+      .crm-member-profile-layout{display:grid;grid-template-columns:minmax(0,1fr) minmax(360px,420px);gap:18px;align-items:start}
+      .crm-member-profile-layout #drawer-member{min-width:0}
+      .member-point-panel{grid-column:2;grid-row:1;overflow:hidden}
+      .member-registration-history{grid-column:1/-1}
+      .crm-point-summary{display:flex;align-items:baseline;justify-content:center;gap:10px;padding:24px 24px 12px}
+      .crm-point-summary span{color:#8a98ad;font-weight:900}
+      .crm-point-summary strong{font-size:44px;line-height:1;color:#dc2626;font-weight:900}
+      .crm-point-summary small{color:#8a98ad;font-weight:900}
+      .crm-point-actions{display:grid;grid-template-columns:1fr 1fr;gap:12px;padding:14px 24px 22px;border-bottom:1px solid #e5e7eb}
+      .crm-point-actions .field{grid-column:1/-1}
+      .crm-point-actions .actions{grid-column:1/-1;display:grid;grid-template-columns:1fr 1fr;gap:12px}
+      .crm-point-actions .btn{min-height:58px;font-size:17px;font-weight:900}
+      .crm-point-actions .btn.primary{background:#ecfdf3;color:#079455;border-color:#abefc6}
+      .crm-point-actions .btn.danger{background:#fff1f3;color:#d92d20;border-color:#fecdca}
+      .crm-point-history h3{margin:0;padding:18px 24px 8px;font-size:16px;color:#344054}
+      .crm-point-history .empty{border:0;border-radius:0;background:#fff;color:#667085}
+      @media(max-width:1100px){.crm-member-profile-layout{grid-template-columns:1fr}.member-point-panel{grid-column:auto;grid-row:auto}}
+    `;
+    document.head.appendChild(style);
+  }
+
   function render() {
+    ensureCrmMemberStyles();
     const [title, sub] = labels[state.view] || labels.dashboard;
     const collapsed = sidebarCollapsed();
     document.querySelector("#app").innerHTML = `
@@ -1230,7 +1257,7 @@
     const profileFields = `${field("會員編號", "memberNo", x.memberNo)}${field("LINE UID", "lineUserId", memberLineUid(x), "例如：Ub68b9724664b889e790c789ece72f717")}${field("母站帳號", "legacyAccount", firstValue(x.legacyAccount, x.aiweMemberNo, x.motherAccount), "母站帳號")}${field("手機", "phone", firstValue(x.phone, x.mobile, x.tel), "手機")}${field("Email", "email", x.email, "會員 Email", false, "email")}`;
     const vendorFields = `${field("公司名稱", "companyName", x.companyName)}${field("統一編號", "taxId", x.taxId)}${field("負責人", "owner", x.owner)}${field("聯絡窗口", "contact", x.contact)}`;
     const memberFields = `${field("身分", "identity", x.identity)}${field("姓名", "name", x.name)}${select("性別", "gender", ["", "男", "女"], x.gender)}${field("本職", "jobTitle", firstValue(x.jobTitle, x.title, x.position), "本職")}${field("公司/單位", "company", firstValue(x.company, x.companyName, x.unit), "公司/單位")}`;
-    return `<form class="form-grid" id="drawer-member" data-type="${type}">${hidden("id", x.id)}${profileFields}${vendor ? vendorFields : memberFields}${select("會員資格", "qualification", ["Y", "N"], x.qualification || "Y")}<label class="sync-toggle"><input type="checkbox" name="loginAccess" value="Y" ${memberLoginAllowed(x) ? "checked" : ""}> 舊允許資料（正式權限請到 LINE 專區 / 白名單設定）</label><div class="field"><label>備註</label><textarea name="note">${esc(x.note)}</textarea></div><button class="btn primary" type="submit">儲存</button></form>`;
+    return `<div class="crm-member-profile-layout"><form class="form-grid" id="drawer-member" data-type="${type}">${hidden("id", x.id)}${profileFields}${vendor ? vendorFields : memberFields}${select("會員資格", "qualification", ["Y", "N"], x.qualification || "Y")}<label class="sync-toggle"><input type="checkbox" name="loginAccess" value="Y" ${memberLoginAllowed(x) ? "checked" : ""}> 舊允許資料（正式權限請到 LINE 專區 / 白名單設定）</label><div class="field"><label>備註</label><textarea name="note">${esc(x.note)}</textarea></div><button class="btn primary" type="submit">儲存</button></form></div>`;
   }
   function importForm(type) {
     const vendor = type === "vendor";
@@ -1720,7 +1747,7 @@
     panel.className = "panel member-registration-history";
     panel.dataset.memberRegistrationPanel = "1";
     panel.innerHTML = `<div class="panel-head"><h3>報名活動記錄</h3><button class="btn" type="button" data-refresh-member-registrations data-member-type="${esc(info.type)}" data-member-id="${esc(info.rowId)}">重新載入</button></div>${!lineUserId ? `<div class="empty">此會員尚未綁定 LINE UID，無法查詢報名活動記錄。</div>` : rows ? memberRegistrationRowsHtml(rows) : `<div class="empty">正在載入報名活動記錄...</div>`}`;
-    form.insertAdjacentElement("afterend", panel);
+    (document.querySelector("[data-member-point-panel]") || form).insertAdjacentElement("afterend", panel);
     if (lineUserId && !rows) loadMemberRegistrationList(info.type, info.rowId);
   }
 
