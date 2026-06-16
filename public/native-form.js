@@ -766,11 +766,12 @@
 
   function parseMemberQr(rawValue) {
     const raw = trim(rawValue);
-    const output = { raw, lineUserId: "", memberNo: "", balanceHint: "" };
+    const output = { raw, lineUserId: "", memberNo: "", phone: "", balanceHint: "" };
     const pick = (source = {}) => {
       const data = source || {};
       output.lineUserId ||= trim(data.lineUserId || data.LINE_user_id || data.line_user_id || data.uid || data.UID || data.userId || data.lineUid);
       output.memberNo ||= trim(data.memberNo || data.member_no || data.rosterMemberNo || data.user_login || data.no || data["會員編號"]);
+      output.phone ||= trim(data.phone || data.mobile || data.tel || data.telephone || data.contactPhone || data["手機"] || data["行動電話"]);
       output.balanceHint ||= trim(data.balance || data.pointBalance || data.point_balance || data.points || data["購物金餘額"] || data["點數"]);
     };
     try { pick(JSON.parse(raw)); } catch (_) {}
@@ -784,6 +785,8 @@
     }
     const uidMatch = raw.match(/U[a-f0-9]{32}/i);
     if (!output.lineUserId && uidMatch) output.lineUserId = uidMatch[0];
+    const phoneMatch = raw.replace(/\D/g, "");
+    if (!output.phone && !output.lineUserId && phoneMatch.length >= 8 && phoneMatch.length <= 12) output.phone = phoneMatch;
     return output;
   }
 
@@ -802,13 +805,15 @@
     return `<div class="nf-member-card" data-redeem-preview>
       <strong>已讀取會員</strong>
       <div class="nf-member-grid">
-        <span>LINE UID</span><b>${esc(member.lineUserId)}</b>
+        ${member.phone ? `<span>手機</span><b>${esc(member.phone)}</b>` : ""}
         ${member.memberNo ? `<span>會員編號</span><b>${esc(member.memberNo)}</b>` : ""}
+        ${!member.phone && !member.memberNo ? `<span>會員識別</span><b>${esc(member.lineUserId)}</b>` : ""}
         ${member.balanceHint ? `<span>QR 顯示餘額</span><b>${esc(member.balanceHint)}（僅供參考）</b>` : ""}
         <span>系統可用點數</span><b>${esc(balance.toLocaleString())}</b>
       </div>
       <form class="nf-form" data-redeem-use style="margin-top:10px">
         <input type="hidden" name="lineUserId" value="${esc(member.lineUserId)}">
+        <input type="hidden" name="phone" value="${esc(member.phone || "")}">
         ${mode === "manual" ? `<div class="nf-field"><label>本次扣抵點數 <span class="nf-required">*</span></label><input name="points" type="number" min="1" required></div>` : ""}
         ${mode === "rate" ? `<div class="nf-field"><label>消費金額 <span class="nf-required">*</span></label><input name="amount" type="number" min="1" required></div>` : ""}
         ${mode === "fixed" ? `<div class="nf-ok">本次固定扣抵 ${esc(Number(data.points || 0).toLocaleString())} 點。</div>` : ""}
@@ -833,7 +838,7 @@
       <div class="nf-detail">${esc(redeemRuleText(data))}\n有效時間：${esc(new Date(data.startsAt || data.createdAt || "").toLocaleString("zh-TW", { hour12: false }))} - ${esc(new Date(data.expiresAt || "").toLocaleString("zh-TW", { hour12: false }))}</div>
       <div class="nf-actions"><button class="nf-btn primary" data-redeem-scan ${active ? "" : "disabled"}>掃描會員 QR</button></div>
       <form class="nf-form" data-redeem-manual>
-        <div class="nf-field"><label>手動輸入 UID 或貼上 QR 內容</label><input name="qr" placeholder="U... 或 QR 原始內容"></div>
+        <div class="nf-field"><label>手動輸入行動電話</label><input name="qr" inputmode="tel" placeholder="例如 0912345678"></div>
         <div class="nf-actions"><button class="nf-btn" type="submit" ${active ? "" : "disabled"}>讀取會員點數</button></div>
       </form>
       <div data-redeem-member-area></div>
@@ -845,18 +850,29 @@
     const readMember = async (raw) => {
       const member = parseMemberQr(raw);
       if (!member.lineUserId) {
-        const message = member.memberNo ? `此 QR 只解析到會員編號 ${member.memberNo}，尚缺 LINE UID，請先完成會員綁定或改掃會員個人 QR。` : "掃描內容無法解析 LINE UID。";
-        memberArea.innerHTML = `<div class="nf-alert">${esc(message)}</div>`;
-        return;
+        if (!member.phone) {
+          const message = member.memberNo ? `此 QR 只解析到會員編號 ${member.memberNo}，尚缺 LINE UID 或手機，請先完成會員綁定或改掃會員個人 QR。` : "掃描內容無法解析 LINE UID 或手機。";
+          memberArea.innerHTML = `<div class="nf-alert">${esc(message)}</div>`;
+          return;
+        }
       }
       memberArea.innerHTML = `<div class="nf-ok">正在查詢會員點數...</div>`;
-      const detailResponse = await fetch(`${api}/api/redeem/${encodeURIComponent(token)}?lineUserId=${encodeURIComponent(member.lineUserId)}`, { cache: "no-store" });
+      const query = member.lineUserId ? `lineUserId=${encodeURIComponent(member.lineUserId)}` : `phone=${encodeURIComponent(member.phone)}`;
+      const detailResponse = await fetch(`${api}/api/redeem/${encodeURIComponent(token)}?${query}`, { cache: "no-store" });
       const detailResult = await detailResponse.json().catch(() => ({}));
       if (!detailResponse.ok || !detailResult.success) {
         memberArea.innerHTML = `<div class="nf-alert">${esc(detailResult.message || "會員點數查詢失敗")}</div>`;
         return;
       }
-      memberArea.innerHTML = redeemMemberPreviewHtml(data, member, detailResult.data || {});
+      const detailData = detailResult.data || {};
+      if (!detailData.lineUserId && !detailData.member?.lineUserId && detailData.lookupMessage) {
+        memberArea.innerHTML = `<div class="nf-alert">${esc(detailData.lookupMessage)}</div>`;
+        return;
+      }
+      member.lineUserId ||= detailData.lineUserId || detailData.member?.lineUserId || "";
+      member.memberNo ||= detailData.member?.memberNo || detailData.member?.rosterMemberNo || "";
+      member.phone ||= detailData.member?.phone || "";
+      memberArea.innerHTML = redeemMemberPreviewHtml(data, member, detailData);
       bindRedeemUse();
     };
     const bindRedeemUse = () => {
@@ -882,7 +898,7 @@
     };
     app.querySelector("[data-redeem-scan]")?.addEventListener("click", async () => {
       try {
-        if (!window.liff?.scanCodeV2) return alert("目前環境不支援 LIFF 掃描器，請改用手動輸入 UID 或貼上 QR 內容。");
+        if (!window.liff?.scanCodeV2) return alert("目前環境不支援 LIFF 掃描器，請改用手動輸入行動電話。");
         const scan = await window.liff.scanCodeV2();
         const value = scan?.value || scan?.text || "";
         if (!value) return;

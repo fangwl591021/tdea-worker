@@ -32,7 +32,7 @@
     "push-manager.js?v=push6",
     "calendar-manager.js?v=calendar3",
     "monthly-activity.js?v=monthly33",
-    "native-form.js?v=liff-redeem-workbench1",
+    "native-form.js?v=liff-redeem-phone3",
     "liff-detail.js?v=liff-detail9",
     "personal-message.js?v=pm4",
     "keyword-extra.js?v=kw2",
@@ -150,7 +150,7 @@
     const params = searchParams();
     if (params.has("monthlyDetail") || params.has("close")) return ["liff-detail.js?v=liff-detail9"];
     if (params.has("personalMessages")) return ["personal-message.js?v=pm4"];
-    return ["native-form.js?v=liff-redeem-workbench1"];
+    return ["native-form.js?v=liff-redeem-phone3"];
   }
 
   function loadScript(src) {

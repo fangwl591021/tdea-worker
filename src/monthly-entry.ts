@@ -2192,15 +2192,33 @@ async function listRedeemRequests(request: Request, env: Env) {
   return json({ success: true, data: list.map((item) => publicRedeem(item)) });
 }
 
+async function resolveRedeemMember(env: Env, input: { lineUserId?: unknown; phone?: unknown }) {
+  const lineUserId = firstClean(input.lineUserId);
+  if (lineUserId) return { lineUserId, member: await resolveLineLoginMember(env, lineUserId) };
+  const phone = firstClean(input.phone);
+  if (!phone) return { lineUserId: "", member: null };
+  const rows = await readAiweMembers(env);
+  const matched = rows.filter((row) => rowMatchesPhone(row, phone));
+  if (!matched.length) return { lineUserId: "", member: null, phone, message: "查無此手機對應會員" };
+  const withUid = matched.find((row) => memberLineUid(row));
+  if (!withUid) return { lineUserId: "", member: null, phone, message: "此手機會員尚未綁定 LINE UID" };
+  const uid = memberLineUid(withUid);
+  return { lineUserId: uid, member: publicAiweMember(withUid), phone };
+}
+
 async function getRedeemRequest(request: Request, env: Env, token: string) {
   const redeem = await readRedeem(env, token);
   if (!redeem) return json({ success: false, message: "找不到此折抵授權" }, 404);
   const url = new URL(request.url);
-  const lineUserId = clean(url.searchParams.get("lineUserId"));
+  const resolved = await resolveRedeemMember(env, { lineUserId: url.searchParams.get("lineUserId"), phone: url.searchParams.get("phone") });
+  const lineUserId = clean(resolved.lineUserId);
   let balanceInfo: Record<string, unknown> = {};
+  if (!lineUserId && (url.searchParams.get("phone") || url.searchParams.get("lineUserId"))) {
+    balanceInfo = { memberLookup: resolved, lookupMessage: clean(resolved.message) };
+  }
   if (lineUserId && ["active", "pending"].includes(redeem.status)) {
     const account = await getUnifiedPointAccount(env, lineUserId, { autoImport: true }) as Record<string, unknown>;
-    balanceInfo = { balance: account.balance, pointAccount: account };
+    balanceInfo = { balance: account.balance, pointAccount: account, member: resolved.member || { lineUserId }, lineUserId };
   }
   await writeRedeem(env, redeem);
   return json({ success: true, data: publicRedeem(redeem, balanceInfo) });
@@ -2218,8 +2236,9 @@ async function confirmRedeemRequest(request: Request, env: Env, token: string) {
     return json({ success: false, message: "此折抵授權已過期" }, 409);
   }
   const input = await request.json().catch(() => ({})) as Record<string, unknown>;
-  const lineUserId = clean(input.lineUserId);
-  if (!lineUserId) return json({ success: false, message: "請掃描會員 QR Code" }, 400);
+  const resolved = await resolveRedeemMember(env, { lineUserId: input.lineUserId, phone: input.phone });
+  const lineUserId = clean(resolved.lineUserId);
+  if (!lineUserId) return json({ success: false, message: clean(resolved.message) || "請輸入會員手機或掃描會員 QR Code" }, 400);
   const mode = redeem.mode || "fixed";
   const amount = Math.abs(numberValue(input.amount));
   let points = Math.abs(numberValue(input.points));
