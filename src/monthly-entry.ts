@@ -3256,7 +3256,7 @@ function buildVendorCardFlex(config: VendorCardConfig) {
 
 function base64ToBytes(value: string) { const binary = atob(value); const bytes = new Uint8Array(binary.length); for (let index = 0; index < binary.length; index += 1) bytes[index] = binary.charCodeAt(index); return bytes; }
 function constantTimeEqual(a: string, b: string) { let left: Uint8Array; let right: Uint8Array; try { left = base64ToBytes(a); right = base64ToBytes(b); } catch (_) { return false; } if (left.length !== right.length) return false; let diff = 0; for (let index = 0; index < left.length; index += 1) diff |= left[index] ^ right[index]; return diff === 0; }
-async function verifyLineSignature(rawBody: string, signature: string | null, channelSecret?: string) { const cleanSignature = signature?.trim(); const cleanSecret = channelSecret?.trim(); if (!cleanSignature || !cleanSecret) return false; const encoder = new TextEncoder(); const key = await crypto.subtle.importKey("raw", encoder.encode(cleanSecret), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]); const digest = await crypto.subtle.sign("HMAC", key, encoder.encode(rawBody)); const expected = btoa(String.fromCharCode(...new Uint8Array(digest))); return constantTimeEqual(expected, cleanSignature); }
+async function verifyLineSignature(rawBody: string, signature: string | null, channelSecret?: string) { const cleanSignature = signature?.trim(); const cleanSecret = channelSecret?.trim(); if (!cleanSignature || !cleanSecret) return false; const encoder = new TextEncoder(); const key = await crypto.subtle.importKey("raw", encoder.encode(cleanSecret), { name: "HMAC", hash: "SHA-256" }, false, ["verify"]); return crypto.subtle.verify("HMAC", key, base64ToBytes(cleanSignature), encoder.encode(rawBody)); }
 function extractLineEvents(payload: unknown): LineEvent[] { if (!payload || typeof payload !== "object") return []; const events = (payload as { events?: unknown }).events; return Array.isArray(events) ? events as LineEvent[] : []; }
 function extractTriggerText(event: LineEvent) { if (event.message?.type === "text" && event.message.text) return event.message.text; if (event.postback?.data) return event.postback.data; return ""; }
 async function replyToLine(replyToken: string, messages: Array<Record<string, unknown>>, env: Env) { const token = env.LINE_CHANNEL_ACCESS_TOKEN?.trim(); if (!token) return { ok: false, status: 503, message: "LINE token is not configured" }; const response = await fetch("https://api.line.me/v2/bot/message/reply", { method: "POST", headers: { authorization: `Bearer ${token}`, "content-type": "application/json" }, body: JSON.stringify({ replyToken, messages }) }); return { ok: response.ok, status: response.status, body: await response.text().catch(() => "") }; }
@@ -5123,7 +5123,13 @@ async function replyMonthlyActivityEvents(events: LineEvent[], allEvents: LineEv
   const lineReplies = await Promise.all(events.map(async (event) => {
     if (!event.replyToken) return { ok: false, status: 400, message: "Missing replyToken" };
     try {
-      return await replyToLine(event.replyToken, [message], env);
+      const result = await replyToLine(event.replyToken, [message], env) as Record<string, unknown>;
+      if (result.ok === false && message.type === "flex") {
+        const fallback = { type: "text", text: "TDEA 每月活動已更新，請稍後再試一次。" };
+        const fallbackResult = await replyToLine(event.replyToken, [fallback], env) as Record<string, unknown>;
+        return { ...result, fallback: fallbackResult };
+      }
+      return result;
     } catch (error) {
       return { ok: false, status: 599, message: error instanceof Error ? error.message : String(error) };
     }
@@ -5136,7 +5142,13 @@ async function replyMonthlyActivityEvents(events: LineEvent[], allEvents: LineEv
     pageCount: pages.length,
     enabled: config.enabled !== false,
     texts: allEvents.map((event) => clean(extractTriggerText(event))).filter(Boolean).slice(0, 5),
-    lineReplies: lineReplies.map((item) => ({ ok: item.ok, status: item.status, message: "message" in item ? item.message : undefined }))
+    lineReplies: lineReplies.map((item) => ({
+      ok: item.ok,
+      status: item.status,
+      message: "message" in item ? item.message : undefined,
+      body: "body" in item ? String(item.body || "").slice(0, 500) : undefined,
+      fallback: "fallback" in item ? item.fallback : undefined
+    }))
   });
   if (ctx) ctx.waitUntil(logTask);
   else await logTask;
@@ -5148,8 +5160,8 @@ async function handleMonthlyWebhook(request: Request, env: Env, rawBody: string,
   try { payload = JSON.parse(rawBody); } catch (_) { return null; }
   const allEvents = extractLineEvents(payload);
   const watchedTexts = allEvents.map((event) => clean(extractTriggerText(event))).filter((text) => /TDEA|每月活動/i.test(text));
-  if (watchedTexts.length) {
-    ctx?.waitUntil(appendLineWebhookLog(env, {
+  if (watchedTexts.length && !allEvents.some((event) => isMonthlyActivityKeyword(extractTriggerText(event)))) {
+    await appendLineWebhookLog(env, {
       at: new Date().toISOString(),
       mode: "incoming-text",
       result: "received",
@@ -5159,12 +5171,26 @@ async function handleMonthlyWebhook(request: Request, env: Env, rawBody: string,
       monthlyMatches: watchedTexts.map((text) => isMonthlyActivityKeyword(text)).slice(0, 5),
       codePoints: watchedTexts.map((text) => Array.from(text).map((char) => char.codePointAt(0)?.toString(16) || "").join(" ")).slice(0, 3),
       eventCount: allEvents.length
-    }));
+    });
   }
   const events = allEvents.filter((event) => isMonthlyActivityKeyword(extractTriggerText(event)));
   if (events.length) {
     const signature = request.headers.get("x-line-signature");
-    const signatureOk = await verifyLineSignature(rawBody, signature, env.LINE_CHANNEL_SECRET);
+    let signatureOk = false;
+    try {
+      signatureOk = await verifyLineSignature(rawBody, signature, env.LINE_CHANNEL_SECRET);
+    } catch (error) {
+      await appendLineWebhookLog(env, {
+        at: new Date().toISOString(),
+        mode: "monthly-activity",
+        result: "signature-error",
+        hasSignature: Boolean(clean(signature)),
+        error: error instanceof Error ? error.message : String(error),
+        texts: allEvents.map((event) => clean(extractTriggerText(event))).filter(Boolean).slice(0, 5),
+        eventCount: allEvents.length
+      });
+      return new Response("Invalid Signature", { status: 403, headers });
+    }
     if (!signatureOk) {
       await appendLineWebhookLog(env, {
         at: new Date().toISOString(),
