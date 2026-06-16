@@ -4572,7 +4572,14 @@ function lineUidFromText(value: unknown) {
 }
 
 function memberLineUid(row: Record<string, unknown>) {
-  return firstClean(row.lineUserId, row.LINE_user_id, row.uid, row.user_login, row.email, lineUidFromText(JSON.stringify(row)));
+  return firstClean(
+    lineUidFromText(row.lineUserId),
+    lineUidFromText(row.LINE_user_id),
+    lineUidFromText(row.uid),
+    lineUidFromText(row.lineUid),
+    lineUidFromText(row.line_user_id),
+    lineUidFromText(JSON.stringify(row))
+  );
 }
 
 function explicitMemberLineUid(row: Record<string, unknown>) {

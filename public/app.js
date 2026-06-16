@@ -18,6 +18,7 @@
   };
   purgeLegacyManagerCache();
   const state = { view: "dashboard", drawer: "", data: load(), archivedActivities: [], registrationLists: {}, memberRegistrationLists: {}, memberPointAccounts: {}, memberApplications: null, adminWhitelist: null, adminWhitelistMeta: null, rosterSearch: { association: "", vendor: "" } };
+  let motherRosterMapPromise = null;
   let managerDataSaveTimer = null;
   let managerDataLoading = false;
   let lineDraftAutoImporting = false;
@@ -1553,7 +1554,52 @@
   }
 
   function memberLineUid(row) {
-    return String(row?.lineUserId || row?.lineUid || row?.uid || row?.LINE_user_id || row?.line_user_id || "").trim();
+    return validLineUid(row?.lineUserId || row?.lineUid || row?.uid || row?.LINE_user_id || row?.line_user_id);
+  }
+  function validLineUid(value) {
+    const match = String(value || "").trim().match(/^U[0-9a-f]{32}$/i);
+    return match ? match[0] : "";
+  }
+  function rosterMemberKey(row) {
+    return String(row?.memberNo || row?.rosterMemberNo || row?.member_no || row?.aiweMemberNo || "").trim().toUpperCase();
+  }
+  async function loadMotherRosterMap() {
+    if (motherRosterMapPromise) return motherRosterMapPromise;
+    motherRosterMapPromise = (async () => {
+      const response = await fetch(api + "/api/aiwe-members-public", { headers: adminHeaders(), cache: "no-store" });
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok || !result.success) throw new Error(result.message || "母站綁定名冊讀取失敗");
+      const map = new Map();
+      for (const item of result.data || []) {
+        const uid = validLineUid(item.lineUserId || item.LINE_user_id || item.uid);
+        if (!uid) continue;
+        [item.rosterMemberNo, item.memberNo, item.member_no, item.aiweMemberNo].forEach((value) => {
+          const key = String(value || "").trim().toUpperCase();
+          if (key && !map.has(key)) map.set(key, { ...item, lineUserId: uid });
+        });
+      }
+      return map;
+    })().catch((error) => {
+      console.warn(error);
+      return new Map();
+    });
+    return motherRosterMapPromise;
+  }
+  async function resolveMemberLineUidFromMother(info) {
+    const current = memberLineUid(info?.row);
+    if (current) return current;
+    const key = rosterMemberKey(info?.row);
+    if (!key) return "";
+    const map = await loadMotherRosterMap();
+    const remote = map.get(key);
+    const uid = validLineUid(remote?.lineUserId || remote?.LINE_user_id || remote?.uid);
+    if (uid && info?.row) {
+      info.row.lineUserId = uid;
+      if (!info.row.LINE_user_id) info.row.LINE_user_id = uid;
+      if (!info.row.uid) info.row.uid = uid;
+      queueManagerDataSave();
+    }
+    return uid;
   }
   function shortUid(value) {
     const text = String(value || "").trim();
@@ -1576,7 +1622,8 @@
 
   function memberPointPanelHtml(info, account) {
     const lineUserId = memberLineUid(info.row);
-    if (!lineUserId) return `<div class="empty">此會員尚未綁定 LINE UID，無法贈扣點。</div>`;
+    if (!lineUserId && account?.resolving) return `<div class="empty">正在比對母站綁定名冊...</div>`;
+    if (!lineUserId) return `<div class="empty">本地名冊沒有 LINE UID，且母站綁定名冊尚未回補成功。</div>`;
     if (!account) return `<div class="empty">正在讀取母站點數...</div>`;
     if (account.success === false) return `<div class="empty">${esc(account.message || "母站點數讀取失敗")}</div>`;
     const balance = Number(account.balance || 0);
@@ -1602,16 +1649,19 @@
     panel.dataset.memberPointPanel = "1";
     panel.innerHTML = `<div class="panel-head"><h3>點數贈扣區</h3><button class="btn" type="button" data-refresh-member-points data-member-type="${esc(info.type)}" data-member-id="${esc(info.rowId)}">重新載入</button></div>${memberPointPanelHtml(info, account)}`;
     form.insertAdjacentElement("afterend", panel);
-    if (memberLineUid(info.row) && !account) loadMemberPointAccount(info.type, info.rowId);
+    if (!account) loadMemberPointAccount(info.type, info.rowId);
   }
 
   async function loadMemberPointAccount(type, rowId, showMessage = false) {
     const row = state.data[type]?.find(item => item.id === rowId);
     const key = `${type}:${rowId}`;
-    const lineUserId = memberLineUid(row);
+    const info = row ? { type, rowId, row } : null;
+    state.memberPointAccounts[key] = { resolving: true };
+    if (!showMessage) render();
+    const lineUserId = info ? await resolveMemberLineUidFromMother(info) : "";
     if (!lineUserId) {
-      state.memberPointAccounts[key] = { success: false, message: "此會員尚未綁定 LINE UID" };
-      if (showMessage) toast("此會員尚未綁定 LINE UID");
+      state.memberPointAccounts[key] = { success: false, message: "母站綁定名冊查無此會員 LINE UID" };
+      if (showMessage) toast("母站綁定名冊查無此會員 LINE UID");
       render();
       return;
     }
@@ -1638,12 +1688,14 @@
     if (!amount) return toast("請輸入點數");
     if (submitter?.dataset.pointAction === "spend") amount = -Math.abs(amount);
     if (submitter?.dataset.pointAction === "add") amount = Math.abs(amount);
+    const lineUserId = validLineUid(data.lineUserId) || await resolveMemberLineUidFromMother(info);
+    if (!lineUserId) return toast("母站綁定名冊查無此會員 LINE UID");
     const actionName = amount >= 0 ? "贈點" : "扣點";
     if (!confirm(`確認${actionName} ${Math.abs(amount).toLocaleString()} 點？\n\n此操作會寫入母站點數。`)) return;
     const response = await fetch(api + "/api/points/adjust", {
       method: "POST",
       headers: adminHeaders({ "content-type": "application/json" }),
-      body: JSON.stringify({ lineUserId: data.lineUserId, memberNo: data.memberNo, amount, note: data.note })
+      body: JSON.stringify({ lineUserId, memberNo: data.memberNo, amount, note: data.note })
     });
     const result = await response.json().catch(() => ({}));
     if (!response.ok || !result.success) return toast(result.message || "點數異動失敗");
