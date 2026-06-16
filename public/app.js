@@ -1359,10 +1359,58 @@
     toast("活動已恢復，狀態為下架");
   }
 
+  function ensureActivityMediaStyles() {
+    if (document.getElementById("activity-media-style")) return;
+    const style = document.createElement("style");
+    style.id = "activity-media-style";
+    style.textContent = `
+      .activity-extra-fields{grid-column:1/-1;display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px;margin:4px 0 10px}
+      .activity-extra-fields>.field{grid-column:1/-1}
+      .activity-media-card{border:1px solid #dbe7f5;border-radius:10px;padding:16px;background:#f8fbff;display:grid;gap:12px;align-content:start}
+      .activity-media-card .field{margin:0}
+      .activity-media-card input,.activity-media-card textarea{background:#fff}
+      .activity-media-head{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;border-bottom:1px solid rgba(37,99,235,.14);padding-bottom:10px}
+      .activity-media-head strong{display:block;color:#0f172a;font-size:15px}
+      .activity-media-head span{display:block;margin-top:3px;color:#64748b;font-size:12px;line-height:1.45}
+      .activity-media-chip{flex:0 0 auto;border-radius:999px;padding:5px 9px;font-size:12px;font-weight:900}
+      .activity-media-poster{background:#eff6ff;border-color:#bfdbfe}
+      .activity-media-poster .activity-media-chip{background:#dbeafe;color:#1d4ed8}
+      .activity-media-gallery{background:#ecfdf5;border-color:#bbf7d0}
+      .activity-media-gallery .activity-media-chip{background:#dcfce7;color:#047857}
+      .activity-upload-status{margin-top:8px;font-weight:800;color:#047857}
+      @media(max-width:920px){.activity-extra-fields{grid-template-columns:1fr}}
+    `;
+    document.head.appendChild(style);
+  }
+
+  function makeActivityMediaCard(kind, title, description, chip, fields) {
+    const card = document.createElement("section");
+    card.className = `activity-media-card activity-media-${kind}`;
+    card.innerHTML = `<div class="activity-media-head"><div><strong>${esc(title)}</strong><span>${esc(description)}</span></div><div class="activity-media-chip">${esc(chip)}</div></div>`;
+    fields.filter(Boolean).forEach(field => card.appendChild(field));
+    return card;
+  }
+
+  function groupActivityMediaFields(wrap) {
+    if (!wrap || wrap.dataset.mediaGrouped) return;
+    const posterFileField = wrap.querySelector("[data-activity-poster-file]")?.closest(".field");
+    const posterUrlField = wrap.querySelector("[name='posterUrl']")?.closest(".field");
+    const galleryFileField = wrap.querySelector("[data-activity-gallery-file]")?.closest(".field");
+    const galleryUrlField = wrap.querySelector("[name='galleryUrls']")?.closest(".field");
+    const nativeFormField = wrap.querySelector("[name='nativeFormUrl']")?.closest(".field");
+    if (!posterFileField && !galleryFileField) return;
+    const posterCard = makeActivityMediaCard("poster", "活動主圖", "用於報名頁、每月活動卡片與說明頁第一張圖。", "主圖", [posterFileField, posterUrlField]);
+    const galleryCard = makeActivityMediaCard("gallery", "活動圖集 / 說明頁輪播圖", "可一次上傳多張；說明頁會輪播，月活動會自動帶入張數。", "輪播", [galleryFileField, galleryUrlField]);
+    nativeFormField?.insertAdjacentElement("beforebegin", galleryCard);
+    galleryCard.insertAdjacentElement("beforebegin", posterCard);
+    wrap.dataset.mediaGrouped = "true";
+  }
+
   function ensureActivityEditorFields() {
     const form = document.querySelector("#drawer-activity");
     if (!form || form.dataset.mediaFieldsReady) return;
     form.dataset.mediaFieldsReady = "true";
+    ensureActivityMediaStyles();
     const id = form.querySelector("input[name='id']")?.value || "";
     const activity = state.data.activities.find((item) => item.id === id) || {};
     const insertBefore = form.querySelector("input[name='formUrl']")?.closest(".field") || form.querySelector("button[type='submit']");
@@ -1376,6 +1424,7 @@
       <div class="field"><label>圖集網址</label><textarea name="galleryUrls" placeholder="每行一張圖片網址；也可直接貼上既有圖片 URL">${esc(cleanUrlList(activity.galleryUrls).join("\n"))}</textarea></div>
       <div class="field"><label>報名頁網址</label><input name="nativeFormUrl" value="${esc(activity.nativeFormUrl || "")}" placeholder="系統會自動產生"></div>`;
     insertBefore?.insertAdjacentElement("beforebegin", wrap);
+    groupActivityMediaFields(wrap);
     const galleryFileInput = wrap.querySelector("[data-activity-gallery-file]");
     if (galleryFileInput && !wrap.querySelector("[data-activity-gallery-status]")) {
       const status = document.createElement("div");
