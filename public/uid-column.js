@@ -766,6 +766,17 @@
       const uidMap = await loadUidMap();
       remote = uidMap.get(memberNo);
     }
+    const existingUidInput = form.querySelector('input[name="lineUserId"]');
+    const existingAiweInput = form.querySelector('input[name="aiweMemberNo"], input[name="legacyAccount"]');
+    const existingEmailInput = form.querySelector('input[name="email"]');
+    const existingPhoneInput = form.querySelector('input[name="phone"]');
+    if (existingUidInput || existingAiweInput || existingEmailInput || existingPhoneInput) {
+      if (existingUidInput && value && !clean(existingUidInput.value)) existingUidInput.value = value;
+      if (existingAiweInput && !clean(existingAiweInput.value)) existingAiweInput.value = current.aiweMemberNo || aiweMemberNoOf(remote) || "";
+      if (existingEmailInput && !clean(existingEmailInput.value)) existingEmailInput.value = bestEditorEmail(current.email, emailOf(remote));
+      if (existingPhoneInput && !clean(existingPhoneInput.value)) existingPhoneInput.value = current.phone || phoneOf(remote) || "";
+      return;
+    }
     const memberField = form.querySelector('input[name="memberNo"]')?.closest(".field");
     const wrapper = document.createElement("div");
     wrapper.className = "aiwe-profile-grid";
