@@ -2314,6 +2314,19 @@ async function getPointAccountApi(request: Request, env: Env, lineUserId: string
   return json({ success: true, data: await getUnifiedPointAccount(env, lineUserId, { autoImport: true }) });
 }
 
+async function adjustMemberPointApi(request: Request, env: Env) {
+  const guard = await requireAdmin(request, env);
+  if (guard) return guard;
+  const input = await request.json().catch(() => ({})) as Record<string, unknown>;
+  const lineUserId = firstClean(input.lineUserId, input.uid, input.LINE_user_id);
+  const amount = numberValue(input.amount);
+  const note = firstClean(input.note, input.reason, amount >= 0 ? "CRM 手動贈點" : "CRM 手動扣點");
+  if (!lineUserId) return json({ success: false, message: "缺少會員 LINE UID" }, 400);
+  if (!amount) return json({ success: false, message: "請輸入點數異動值" }, 400);
+  const result = await updateLocalPoints(env, lineUserId, amount, note, { source: "crm_manual_point", referenceId: firstClean(input.referenceId, input.memberNo) }) as Record<string, unknown>;
+  if (result.success !== true) return json({ success: false, message: clean(result.message) || "點數異動失敗", data: result }, 400);
+  return json({ success: true, data: result });
+}
 async function syncLegacyPointApi(request: Request, env: Env) {
   const guard = await requireAdmin(request, env);
   if (guard) return guard;
@@ -5406,6 +5419,7 @@ export default {
 	    const redeemMatch = url.pathname.match(/^\/api\/redeem\/([^/]+)$/);
 	    if (redeemMatch && request.method === "GET") return getRedeemRequest(request, env, decodeURIComponent(redeemMatch[1]));
 	    if (redeemMatch && request.method === "POST") return confirmRedeemRequest(request, env, decodeURIComponent(redeemMatch[1]));
+	    if (request.method === "POST" && url.pathname === "/api/points/adjust") return adjustMemberPointApi(request, env);
 	    if (request.method === "POST" && url.pathname === "/api/points/sync-legacy") return syncLegacyPointApi(request, env);
 	    if (request.method === "GET" && url.pathname === "/api/points/ledger") return listPointLedgerApi(request, env);
 	    if (request.method === "POST" && url.pathname === "/api/member-points/batch") return queryMemberPointBatchApi(request, env);

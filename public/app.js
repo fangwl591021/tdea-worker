@@ -17,7 +17,7 @@
     redeem: ["點數折抵", "建立限時店家掃碼工作台，店家掃會員 QR 後執行扣點。"]
   };
   purgeLegacyManagerCache();
-  const state = { view: "dashboard", drawer: "", data: load(), archivedActivities: [], registrationLists: {}, memberRegistrationLists: {}, memberApplications: null, adminWhitelist: null, adminWhitelistMeta: null, rosterSearch: { association: "", vendor: "" } };
+  const state = { view: "dashboard", drawer: "", data: load(), archivedActivities: [], registrationLists: {}, memberRegistrationLists: {}, memberPointAccounts: {}, memberApplications: null, adminWhitelist: null, adminWhitelistMeta: null, rosterSearch: { association: "", vendor: "" } };
   let managerDataSaveTimer = null;
   let managerDataLoading = false;
   let lineDraftAutoImporting = false;
@@ -1476,8 +1476,11 @@
       }
     });
     document.querySelectorAll("[data-drawer]").forEach(b => b.onclick = () => { state.drawer = b.dataset.drawer; render(); });
+    mountMemberPointPanel();
     mountMemberRegistrationPanel();
     document.querySelectorAll("[data-refresh-member-registrations]").forEach(b => b.onclick = () => loadMemberRegistrationList(b.dataset.memberType, b.dataset.memberId, true));
+    document.querySelectorAll("[data-refresh-member-points]").forEach(b => b.onclick = () => loadMemberPointAccount(b.dataset.memberType, b.dataset.memberId, true));
+    document.querySelectorAll("[data-member-point-form]").forEach(form => form.onsubmit = submitMemberPointAdjust);
     document.querySelectorAll("[data-import]").forEach(b => b.onclick = () => { state.drawer = "import-" + b.dataset.import + ":new"; render(); });
     document.querySelectorAll("[data-close]").forEach(b => b.onclick = () => { state.drawer = ""; render(); });
     document.querySelectorAll("[data-toggle]").forEach(b => b.onclick = async () => {
@@ -1565,6 +1568,90 @@
     return row ? { type, rowId, row } : null;
   }
 
+
+  function memberPointRowsHtml(logs) {
+    if (!logs?.length) return `<div class="empty">目前沒有點數異動紀錄。</div>`;
+    return `<div class="table-wrap"><table><thead><tr><th>時間</th><th>類型</th><th>異動</th><th>餘額</th><th>原因</th></tr></thead><tbody>${logs.slice(0, 8).map(log => `<tr><td>${esc(formatTime(log.createdAt))}</td><td>${esc(log.type || "")}</td><td>${Number(log.amount || 0) >= 0 ? "+" : ""}${n(log.amount)}</td><td>${n(log.balanceAfter)}</td><td>${esc(log.reason || log.event_name || "")}</td></tr>`).join("")}</tbody></table></div>`;
+  }
+
+  function memberPointPanelHtml(info, account) {
+    const lineUserId = memberLineUid(info.row);
+    if (!lineUserId) return `<div class="empty">此會員尚未綁定 LINE UID，無法贈扣點。</div>`;
+    if (!account) return `<div class="empty">正在讀取母站點數...</div>`;
+    if (account.success === false) return `<div class="empty">${esc(account.message || "母站點數讀取失敗")}</div>`;
+    const balance = Number(account.balance || 0);
+    const motherLogs = Array.isArray(account.motherSynced?.list) ? account.motherSynced.list.map(item => ({
+      createdAt: item.created_at,
+      type: Number(item.get_point || 0) >= 0 ? "EARN" : "SPEND",
+      amount: Number(item.get_point || 0),
+      balanceAfter: item.point_balance,
+      reason: item.event_name || item.event_content || ""
+    })) : [];
+    const logs = Array.isArray(account.logs) && account.logs.length ? account.logs : motherLogs;
+    return `<div class="crm-point-summary"><span>可用點數</span><strong>${esc(balance.toLocaleString())}</strong><small>點</small></div><form class="crm-point-actions" data-member-point-form><input type="hidden" name="lineUserId" value="${esc(lineUserId)}"><input type="hidden" name="memberNo" value="${esc(info.row.memberNo || "")}"><div class="field"><label>異動點數</label><input name="amount" type="number" placeholder="正數贈點，負數扣點" required></div><div class="field"><label>原因</label><input name="note" placeholder="例：活動補點、人工扣點" required></div><div class="actions"><button class="btn primary" type="submit" data-point-action="add">贈點</button><button class="btn danger" type="submit" data-point-action="spend">扣點</button></div></form><div class="crm-point-history"><h3>點數歷史紀錄</h3>${memberPointRowsHtml(logs)}</div>`;
+  }
+
+  function mountMemberPointPanel() {
+    const form = document.querySelector("#drawer-member");
+    const info = currentMemberDrawer();
+    if (!form || !info || document.querySelector("[data-member-point-panel]")) return;
+    const key = `${info.type}:${info.rowId}`;
+    const account = state.memberPointAccounts[key];
+    const panel = document.createElement("section");
+    panel.className = "panel member-point-panel";
+    panel.dataset.memberPointPanel = "1";
+    panel.innerHTML = `<div class="panel-head"><h3>點數贈扣區</h3><button class="btn" type="button" data-refresh-member-points data-member-type="${esc(info.type)}" data-member-id="${esc(info.rowId)}">重新載入</button></div>${memberPointPanelHtml(info, account)}`;
+    form.insertAdjacentElement("afterend", panel);
+    if (memberLineUid(info.row) && !account) loadMemberPointAccount(info.type, info.rowId);
+  }
+
+  async function loadMemberPointAccount(type, rowId, showMessage = false) {
+    const row = state.data[type]?.find(item => item.id === rowId);
+    const key = `${type}:${rowId}`;
+    const lineUserId = memberLineUid(row);
+    if (!lineUserId) {
+      state.memberPointAccounts[key] = { success: false, message: "此會員尚未綁定 LINE UID" };
+      if (showMessage) toast("此會員尚未綁定 LINE UID");
+      render();
+      return;
+    }
+    try {
+      const res = await fetch(api + "/api/points/" + encodeURIComponent(lineUserId), { headers: adminHeaders(), cache: "no-store" });
+      const result = await res.json().catch(() => ({}));
+      state.memberPointAccounts[key] = result.data || { success: false, message: result.message || "點數讀取失敗" };
+      if (showMessage) toast("點數已更新");
+    } catch (error) {
+      state.memberPointAccounts[key] = { success: false, message: error?.message || "點數讀取失敗" };
+      if (showMessage) toast("點數讀取失敗");
+    }
+    render();
+  }
+
+  async function submitMemberPointAdjust(event) {
+    event.preventDefault();
+    const form = event.currentTarget;
+    const info = currentMemberDrawer();
+    if (!info) return;
+    const submitter = event.submitter;
+    const data = Object.fromEntries(new FormData(form));
+    let amount = Number(data.amount || 0);
+    if (!amount) return toast("請輸入點數");
+    if (submitter?.dataset.pointAction === "spend") amount = -Math.abs(amount);
+    if (submitter?.dataset.pointAction === "add") amount = Math.abs(amount);
+    const actionName = amount >= 0 ? "贈點" : "扣點";
+    if (!confirm(`確認${actionName} ${Math.abs(amount).toLocaleString()} 點？\n\n此操作會寫入母站點數。`)) return;
+    const response = await fetch(api + "/api/points/adjust", {
+      method: "POST",
+      headers: adminHeaders({ "content-type": "application/json" }),
+      body: JSON.stringify({ lineUserId: data.lineUserId, memberNo: data.memberNo, amount, note: data.note })
+    });
+    const result = await response.json().catch(() => ({}));
+    if (!response.ok || !result.success) return toast(result.message || "點數異動失敗");
+    form.reset();
+    await loadMemberPointAccount(info.type, info.rowId);
+    await loadPointLedger(false);
+    toast(actionName + "完成");
+  }
   function memberRegistrationRowsHtml(rows) {
     if (!rows?.length) return `<div class="empty">目前沒有報名活動記錄。</div>`;
     return `<div class="table-wrap"><table><thead><tr><th>活動名稱</th><th>報名時間</th><th>簽到狀態</th><th>簽到時間</th></tr></thead><tbody>${rows.map(item => `<tr><td>${esc(item.activity?.name || item.activityName || item.eventName || "-")}</td><td>${esc(formatTime(item.submittedAt || item.createdAt || item.timestamp))}</td><td>${esc(item.checkinStatusText || (item.checkedInAt ? "已完成簽到" : "尚未簽到"))}</td><td>${esc(item.checkedInAt ? formatTime(item.checkedInAt) : "-")}</td></tr>`).join("")}</tbody></table></div>`;
