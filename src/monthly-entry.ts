@@ -5122,15 +5122,8 @@ async function replyMonthlyActivityEvents(events: LineEvent[], allEvents: LineEv
   const message = config.enabled && pages.length ? buildMonthlyFlex(config) as Record<string, unknown> : { type: "text", text: "TDEA 每月活動尚未啟用，請稍後再試。" };
   const lineReplies = await Promise.all(events.map(async (event) => {
     if (!event.replyToken) return { ok: false, status: 400, message: "Missing replyToken" };
-    let prompt: Record<string, unknown> | null = null;
     try {
-      prompt = await monthlyMemberStatusPrompt(event, env);
-    } catch (error) {
-      console.log("monthly member prompt failed", error);
-    }
-    const messages = prompt ? [message, prompt] : [message];
-    try {
-      return await replyToLine(event.replyToken, messages, env);
+      return await replyToLine(event.replyToken, [message], env);
     } catch (error) {
       return { ok: false, status: 599, message: error instanceof Error ? error.message : String(error) };
     }
