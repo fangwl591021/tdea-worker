@@ -966,7 +966,7 @@
       .drawer-panel:has(.crm-member-profile-layout) .drawer-title{height:72px;margin:0;padding:14px 22px;background:#fff;border-bottom:1px solid #e5e7eb;box-shadow:0 1px 4px rgba(15,23,42,.06)}
       .crm-member-title{margin:0;font-size:22px;font-weight:900;color:#172033;display:flex;align-items:center;gap:16px;flex-wrap:wrap}
       .crm-member-title small{font-size:13px;font-family:ui-monospace,SFMono-Regular,Consolas,monospace;color:#667085;background:#f1f5f9;border:1px solid #dbe3ee;border-radius:8px;padding:7px 12px}
-      .crm-member-profile-layout{display:grid;grid-template-columns:minmax(0,1fr) minmax(300px,360px);gap:20px;align-items:start;padding:32px 20px 96px;min-height:calc(100vh - 72px);max-width:100%;overflow:hidden}
+      .crm-member-profile-layout{display:grid;grid-template-columns:minmax(520px,680px) minmax(300px,340px);gap:18px;justify-content:start;align-items:start;padding:32px 20px 96px;min-height:calc(100vh - 72px);max-width:100%;overflow:hidden}
       .crm-member-card,.member-point-panel,.member-registration-history{background:#fff;border:1px solid #dfe5ee;border-radius:16px;box-shadow:none;overflow:hidden}
       .crm-member-card{grid-column:1;grid-row:1}
       .crm-member-section-title{display:flex;align-items:center;gap:10px;padding:28px 30px 18px;font-size:20px;font-weight:900;color:#172033;border-bottom:1px solid #e5e7eb}
