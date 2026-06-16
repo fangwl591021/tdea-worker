@@ -277,17 +277,8 @@
   async function handleLineLogin(event) {
     const button = event.currentTarget;
     try {
-      const params = searchParams();
-      if (!params.has("adminLogin") && !params.has("liff.state") && !/Line/i.test(navigator.userAgent)) {
-        location.href = adminLiffUrl;
-        return;
-      }
       await completeLineLogin({ button, redirectIfNeeded: true });
     } catch (error) {
-      if (!window.liff && !/Line/i.test(navigator.userAgent)) {
-        location.href = adminLiffUrl;
-        return;
-      }
       renderLogin(error.message || "LINE 登入失敗");
     }
   }
