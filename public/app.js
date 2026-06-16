@@ -969,11 +969,15 @@
       .crm-member-profile-layout{display:grid;grid-template-columns:minmax(520px,680px) minmax(300px,340px);gap:18px;justify-content:start;align-items:start;padding:32px 20px 96px;min-height:calc(100vh - 72px);max-width:100%;overflow:hidden}
       .crm-member-card,.member-point-panel,.member-registration-history{background:#fff;border:1px solid #dfe5ee;border-radius:16px;box-shadow:none;overflow:hidden}
       .crm-member-card{grid-column:1;grid-row:1}
-      .crm-member-section-title{display:flex;align-items:center;gap:10px;padding:28px 30px 18px;font-size:20px;font-weight:900;color:#172033;border-bottom:1px solid #e5e7eb}
-      .crm-member-section-title:before{content:"";width:22px;height:22px;border-radius:7px;background:#635bff;display:inline-block}
-      .drawer-panel .crm-member-form.form-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:18px 22px;padding:22px 26px 26px;align-items:start}
+      .crm-member-section-title{display:flex;align-items:center;gap:10px;padding:22px 28px 14px;font-size:19px;font-weight:900;color:#172033;border-bottom:1px solid #e5e7eb}
+      .crm-member-section-title:before{content:"";width:20px;height:20px;border-radius:7px;background:#635bff;display:inline-block}
+      .drawer-panel .crm-member-form.form-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px 20px;padding:18px 24px 22px;align-items:start}
+      .drawer-panel .crm-member-form .field{gap:5px}
+      .drawer-panel .crm-member-form label{font-size:14px}
+      .drawer-panel .crm-member-form input,.drawer-panel .crm-member-form select{min-height:44px;height:44px;padding:8px 14px;font-size:16px}
+      .drawer-panel .crm-member-form textarea{min-height:78px;padding:10px 14px;font-size:16px}
       .drawer-panel .crm-member-form .field:has(textarea){grid-column:1/-1}
-      .drawer-panel .crm-member-form .sync-toggle{grid-column:1/-1;min-height:52px;border-color:#dfe5ee;background:#fff}
+      .drawer-panel .crm-member-form .sync-toggle{grid-column:1/-1;min-height:44px;padding:10px 14px;border-color:#dfe5ee;background:#fff}
       .crm-member-savebar{position:fixed;right:0;left:270px;bottom:0;height:72px;background:#fff;border-top:1px solid #e5e7eb;display:flex;justify-content:flex-end;align-items:center;gap:18px;padding:12px 28px;z-index:25}
       .crm-member-savebar .btn.primary{min-width:260px;min-height:52px;border-radius:8px;font-size:18px}
       .crm-member-savebar .btn:not(.primary){border:0;background:#fff;color:#667085;font-size:18px}
