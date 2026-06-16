@@ -85,20 +85,20 @@
     const block = document.createElement("section");
     block.className = "form-builder-block";
     block.innerHTML = `
-      <div class="form-builder-title">Google 表單設定</div>
+      <div class="form-builder-title">報名設定</div>
       <div class="field">
-        <label>活動圖片 / 海報上傳</label>
+        <label>活動主圖 / 海報上傳</label>
         <input name="posterFile" type="file" accept="image/png,image/jpeg,image/webp,image/gif,application/pdf">
-        <small class="form-builder-hint">可上傳到 Cloudflare R2；未設定 R2 前會保留為待上傳。</small>
+        <small class="form-builder-hint">活動主圖會作為活動卡片、每月活動與說明頁的預設圖片來源。</small>
       </div>
       <div class="field">
-        <label>活動圖片 / 海報連結</label>
-        <input name="posterUrl" type="url" placeholder="若已有圖片網址也可貼上；R2 上傳完成會自動回填">
+        <label>活動主圖 / 海報連結</label>
+        <input name="posterUrl" type="url" placeholder="若已有圖片網址也可貼上；上傳完成會自動回填">
       </div>
       <div class="field">
-        <label>Google 表單報名網址</label>
-        <input name="formUrl" type="url" placeholder="貼上 Google 表單公開報名網址，會同步寫入活動的表單連結">
-        <small class="form-builder-hint">目前這裡負責保存網址；之後接 Google Drive / Forms API 後可改為自動建立並回填。</small>
+        <label>報名表網址</label>
+        <input name="formUrl" type="url" placeholder="可貼既有報名網址；沒有時系統會依報名設定產生">
+        <small class="form-builder-hint">這裡保存活動報名入口；可以是系統內建報名頁，特殊情況才使用外部表單。</small>
       </div>
       <div class="field">
         <label>YouTube 影片網址</label>
@@ -171,10 +171,10 @@
     const addCustomButton = block.querySelector("[data-add-custom-field]");
     if (addCustomButton) addCustomButton.textContent = "新增題目";
     const customHint = block.querySelector(".custom-fields-block .form-builder-hint");
-    if (customHint) customHint.textContent = "像 Google 表單一樣新增題目；單選、複選、下拉選單可逐列新增選項。";
+    if (customHint) customHint.textContent = "新增報名題目；單選、複選、下拉選單可逐列新增選項。";
 
     submit?.insertAdjacentElement("beforebegin", block);
-    submit.textContent = "建立 Google 表單設定";
+    submit.textContent = "建立活動與報名設定";
 	    block.querySelector("[data-add-custom-field]")?.addEventListener("click", () => addCustomField(block));
 	    block.querySelector("[data-add-session]")?.addEventListener("click", () => addSession(block));
 	  }

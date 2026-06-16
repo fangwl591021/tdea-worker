@@ -266,7 +266,7 @@
   }
 
   function pageFromActivity(activity, existing = {}) {
-    const imageUrl = firstUrl(existing.imageUrl, posterUrlFor(activity), defaultImageUrl);
+    const imageUrl = firstUrl(posterUrlFor(activity), defaultImageUrl);
     return {
       ...existing,
       id: existing.id || id(),
@@ -277,7 +277,7 @@
       detailText: detailTextFor(activity) || existing.detailText || fallbackDetailText(activity),
       formUrl: formUrlFor(activity) || existing.formUrl || "",
       imageUrl,
-      galleryUrls: uniqueUrls([existing.galleryUrls, galleryUrlsFor(activity)]),
+      galleryUrls: galleryUrlsFor(activity),
       shareUrl: existing.shareUrl || ""
     };
   }
@@ -348,8 +348,8 @@
     page.detailTitle = activity.name || page.detailTitle || "詳細說明";
     page.detailText = detailTextFor(activity);
     page.formUrl = formUrlFor(activity);
-    if (!page.imageUrl) page.imageUrl = posterUrlFor(activity);
-    if (!Array.isArray(page.galleryUrls) || !page.galleryUrls.length) page.galleryUrls = galleryUrlsFor(activity);
+    page.imageUrl = posterUrlFor(activity);
+    page.galleryUrls = galleryUrlsFor(activity);
   }
 
   function hydratePage(page) {
@@ -510,7 +510,9 @@
     const hydrated = hydratePage(page);
     const linked = trim(hydrated.activityNo || hydrated.activityId);
     const manualFields = !linked ? `<div class="field"><label>手動頁標題</label><input name="activityName" data-monthly-page value="${esc(page.activityName || page.detailTitle || "")}" placeholder="例如：6 月廠商參訪"></div><div class="field"><label>詳細說明</label><textarea name="detailText" data-monthly-page placeholder="輸入會顯示在活動說明頁的內容">${esc(page.detailText || "")}</textarea></div><div class="field"><label>報名連結</label><input name="formUrl" data-monthly-page value="${esc(page.formUrl || "")}" placeholder="可留空；留空時按鈕會開詳細說明頁"></div>` : "";
-    return `<div class="monthly-form"><div class="field"><label>連動活動</label>${activitySelect(page)}<div class="monthly-link-note">可選上架活動自動帶入；沒有上架活動時，也可用手動頁輸入內容。</div></div>${linkedInfo(page)}${manualFields}<div class="field"><label>主圖 / LINE Flex 圖片</label><input type="file" accept="image/*" data-monthly-file><div class="muted">主圖會用在 LINE Flex 卡片與第一張輪播圖。</div></div><div class="field"><label>主圖網址</label><input name="imageUrl" data-monthly-page value="${esc(page.imageUrl)}" placeholder="上傳後自動填入，也可貼既有海報網址"></div><div class="field"><label>活動圖集</label><input type="file" accept="image/*" multiple data-monthly-gallery-file><div class="muted">可一次選多張；LIFF 詳細頁會每 3 秒自動左移換圖。</div></div><div class="field"><label>圖集網址</label><textarea name="galleryUrls" data-monthly-gallery placeholder="每行一張圖片網址">${esc((page.galleryUrls || []).join("\n"))}</textarea></div>${linked && !trim(hydrated.formUrl) ? `<div class="monthly-warning">這個活動還沒有報名表；發布時系統會自動產生並寫回活動。</div>` : ""}${linked && !meaningfulText(hydrated.detailText) ? `<div class="monthly-warning">此活動沒有詳細說明，請回到活動編輯補上「詳細說明」。</div>` : ""}</div>`;
+    const linkedImageInfo = linked ? `<div class="monthly-linked-box"><strong>圖片來源：活動資料</strong><span>主圖與活動圖集已從「創建活動 / 編輯活動」帶入。若要換圖，請回活動編輯修改，避免每月活動與活動頁顯示不同圖片。</span></div>` : "";
+    const manualImageFields = !linked ? `<div class="field"><label>主圖 / LINE Flex 圖片</label><input type="file" accept="image/*" data-monthly-file><div class="muted">手動頁才需要在這裡上傳；連動活動會直接使用活動主圖。</div></div><div class="field"><label>主圖網址</label><input name="imageUrl" data-monthly-page value="${esc(page.imageUrl)}" placeholder="上傳後自動填入，也可貼既有海報網址"></div><div class="field"><label>活動圖集</label><input type="file" accept="image/*" multiple data-monthly-gallery-file><div class="muted">手動頁可一次選多張；連動活動請回活動編輯維護圖集。</div></div><div class="field"><label>圖集網址</label><textarea name="galleryUrls" data-monthly-gallery placeholder="每行一張圖片網址">${esc((page.galleryUrls || []).join("\n"))}</textarea></div>` : "";
+    return `<div class="monthly-form"><div class="field"><label>連動活動</label>${activitySelect(page)}<div class="monthly-link-note">選擇上架活動後，名稱、說明、報名表、主圖與活動圖集都會自動帶入。每月活動只負責組 LINE Flex，不重複維護圖片。</div></div>${linkedInfo(page)}${manualFields}${linkedImageInfo}${manualImageFields}${linked && !trim(hydrated.formUrl) ? `<div class="monthly-warning">這個活動還沒有報名表；發布時系統會自動產生並寫回活動。</div>` : ""}${linked && !meaningfulText(hydrated.detailText) ? `<div class="monthly-warning">此活動沒有詳細說明，請回到活動編輯補上「詳細說明」。</div>` : ""}</div>`;
   }
 
   function preview() {
@@ -820,6 +822,7 @@
     if (!file) return;
     if (!hasAdminIdentity()) return toast("尚未登入，暫不能上傳。請重新登入管理中心。");
     const page = hydratePage(config.pages[selected]);
+    if (trim(page.activityNo || page.activityId)) return toast("連動活動的主圖請回「創建活動 / 編輯活動」修改，月活動不重複上傳。");
     const form = new FormData();
     form.append("file", file);
     form.append("purpose", "monthly");
@@ -838,6 +841,7 @@
     if (!files.length) return;
     if (!hasAdminIdentity()) return toast("請先登入管理者，才能上傳活動圖集");
     const page = hydratePage(config.pages[selected]);
+    if (trim(page.activityNo || page.activityId)) return toast("連動活動的圖集請回「創建活動 / 編輯活動」修改，月活動不重複上傳。");
     const uploadedUrls = [];
     for (const file of files) {
       const form = new FormData();
