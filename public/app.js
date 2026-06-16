@@ -974,16 +974,13 @@
       .drawer-panel .crm-member-form.form-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:22px 26px;padding:24px 30px 28px;align-items:start}
       .drawer-panel .crm-member-form .field:has(textarea){grid-column:1/-1}
       .drawer-panel .crm-member-form .sync-toggle{grid-column:1/-1;min-height:52px;border-color:#dfe5ee;background:#fff}
-      .drawer-panel .crm-member-form [data-member-registration-slot]{grid-column:1/-1}
-      .drawer-panel .crm-member-form .member-registration-history{border-radius:14px}
-      .drawer-panel .crm-member-form .member-registration-history .table-wrap{max-height:300px;overflow:auto}
       .crm-member-savebar{position:fixed;right:0;left:270px;bottom:0;height:72px;background:#fff;border-top:1px solid #e5e7eb;display:flex;justify-content:flex-end;align-items:center;gap:18px;padding:12px 28px;z-index:25}
       .crm-member-savebar .btn.primary{min-width:260px;min-height:52px;border-radius:8px;font-size:18px}
       .crm-member-savebar .btn:not(.primary){border:0;background:#fff;color:#667085;font-size:18px}
       .crm-member-side{grid-column:2;grid-row:1;display:grid;gap:28px;align-content:start}
       .crm-member-side .member-point-panel{border-radius:16px}
       .member-point-panel{border-radius:16px}
-      .member-registration-history{grid-column:1/-1;border-radius:16px}
+      .member-registration-wide{grid-column:1/-1;align-self:stretch}.member-registration-wide .member-registration-history{width:100%;border-radius:16px}.member-registration-wide .member-registration-history .table-wrap{max-height:360px;overflow:auto}
       .crm-point-summary{display:flex;align-items:baseline;justify-content:center;gap:10px;padding:24px 24px 12px}
       .crm-point-summary span{color:#8a98ad;font-weight:900}
       .crm-point-summary strong{font-size:44px;line-height:1;color:#dc2626;font-weight:900}
@@ -1296,7 +1293,7 @@
     const profileFields = `${field("會員編號", "memberNo", x.memberNo)}${field("LINE UID", "lineUserId", memberLineUid(x), "例如：Ub68b9724664b889e790c789ece72f717")}${field("母站帳號", "legacyAccount", firstValue(x.legacyAccount, x.aiweMemberNo, x.motherAccount), "母站帳號")}${field("手機", "phone", firstValue(x.phone, x.mobile, x.tel), "手機")}${field("Email", "email", x.email, "會員 Email", false, "email")}`;
     const vendorFields = `${field("公司名稱", "companyName", x.companyName)}${field("統一編號", "taxId", x.taxId)}${field("負責人", "owner", x.owner)}${field("聯絡窗口", "contact", x.contact)}`;
     const memberFields = `${field("身分", "identity", x.identity)}${field("姓名", "name", x.name)}${select("性別", "gender", ["", "男", "女"], x.gender)}${field("本職", "jobTitle", firstValue(x.jobTitle, x.title, x.position), "本職")}${field("公司/單位", "company", firstValue(x.company, x.companyName, x.unit), "公司/單位")}`;
-    return `<div class="crm-member-profile-layout"><section class="crm-member-card"><div class="crm-member-section-title">基本資料</div><form class="form-grid crm-member-form" id="drawer-member" data-type="${type}">${hidden("id", x.id)}${profileFields}${vendor ? vendorFields : memberFields}${select("會員資格", "qualification", ["Y", "N"], x.qualification || "Y")}<label class="sync-toggle"><input type="checkbox" name="loginAccess" value="Y" ${memberLoginAllowed(x) ? "checked" : ""}> 舊允許資料（正式權限請到 LINE 專區 / 白名單設定）</label><div class="field"><label>備註</label><textarea name="note">${esc(x.note)}</textarea></div><div data-member-registration-slot></div><div class="crm-member-savebar"><button class="btn" type="button" data-close>取消</button><button class="btn primary" type="submit">儲存檔案變更</button></div></form></section><aside class="crm-member-side" data-member-side><div data-member-point-slot></div></aside></div>`;
+    return `<div class="crm-member-profile-layout"><section class="crm-member-card"><div class="crm-member-section-title">基本資料</div><form class="form-grid crm-member-form" id="drawer-member" data-type="${type}">${hidden("id", x.id)}${profileFields}${vendor ? vendorFields : memberFields}${select("會員資格", "qualification", ["Y", "N"], x.qualification || "Y")}<label class="sync-toggle"><input type="checkbox" name="loginAccess" value="Y" ${memberLoginAllowed(x) ? "checked" : ""}> 舊允許資料（正式權限請到 LINE 專區 / 白名單設定）</label><div class="field"><label>備註</label><textarea name="note">${esc(x.note)}</textarea></div><div class="crm-member-savebar"><button class="btn" type="button" data-close>取消</button><button class="btn primary" type="submit">儲存檔案變更</button></div></form></section><aside class="crm-member-side" data-member-side><div data-member-point-slot></div></aside><section class="member-registration-wide" data-member-registration-slot></section></div>`;
   }
   function importForm(type) {
     const vendor = type === "vendor";
