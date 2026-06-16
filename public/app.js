@@ -950,23 +950,34 @@
     const style = document.createElement("style");
     style.id = "tdea-crm-member-style";
     style.textContent = `
-      .crm-member-profile-layout{display:grid;grid-template-columns:minmax(0,1fr) minmax(360px,420px);gap:18px;align-items:start}
-      .crm-member-profile-layout #drawer-member{min-width:0}
-      .member-point-panel{grid-column:2;grid-row:1;overflow:hidden}
-      .member-registration-history{grid-column:1/-1}
+      .drawer-panel:has(.crm-member-profile-layout){background:#f5f7fb;padding:0;display:flex;flex-direction:column}
+      .drawer-panel:has(.crm-member-profile-layout) .drawer-title{height:72px;margin:0;padding:14px 22px;background:#fff;border-bottom:1px solid #e5e7eb;box-shadow:0 1px 4px rgba(15,23,42,.06)}
+      .crm-member-profile-layout{display:grid;grid-template-columns:minmax(0,1fr) minmax(360px,420px);gap:28px;align-items:start;padding:40px 30px 96px;min-height:calc(100vh - 72px)}
+      .crm-member-card,.member-point-panel,.member-registration-history{background:#fff;border:1px solid #dfe5ee;border-radius:16px;box-shadow:none;overflow:hidden}
+      .crm-member-card{grid-column:1;grid-row:1}
+      .crm-member-section-title{display:flex;align-items:center;gap:10px;padding:28px 30px 18px;font-size:20px;font-weight:900;color:#172033;border-bottom:1px solid #e5e7eb}
+      .crm-member-section-title:before{content:"";width:22px;height:22px;border-radius:7px;background:#635bff;display:inline-block}
+      .drawer-panel .crm-member-form.form-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:22px 26px;padding:24px 30px 28px;align-items:start}
+      .drawer-panel .crm-member-form .field:has(textarea){grid-column:1/-1}
+      .drawer-panel .crm-member-form .sync-toggle{grid-column:1/-1;min-height:52px;border-color:#dfe5ee;background:#fff}
+      .crm-member-savebar{position:fixed;right:0;left:270px;bottom:0;height:72px;background:#fff;border-top:1px solid #e5e7eb;display:flex;justify-content:flex-end;align-items:center;gap:18px;padding:12px 28px;z-index:25}
+      .crm-member-savebar .btn.primary{min-width:260px;min-height:52px;border-radius:8px;font-size:18px}
+      .crm-member-savebar .btn:not(.primary){border:0;background:#fff;color:#667085;font-size:18px}
+      .member-point-panel{grid-column:2;grid-row:1;border-radius:16px}
+      .member-registration-history{grid-column:1/-1;border-radius:16px}
       .crm-point-summary{display:flex;align-items:baseline;justify-content:center;gap:10px;padding:24px 24px 12px}
       .crm-point-summary span{color:#8a98ad;font-weight:900}
       .crm-point-summary strong{font-size:44px;line-height:1;color:#dc2626;font-weight:900}
       .crm-point-summary small{color:#8a98ad;font-weight:900}
-      .crm-point-actions{display:grid;grid-template-columns:1fr 1fr;gap:12px;padding:14px 24px 22px;border-bottom:1px solid #e5e7eb}
+      .crm-point-actions{display:grid;grid-template-columns:1fr 1fr;gap:14px;padding:14px 30px 24px;border-bottom:1px solid #e5e7eb}
       .crm-point-actions .field{grid-column:1/-1}
       .crm-point-actions .actions{grid-column:1/-1;display:grid;grid-template-columns:1fr 1fr;gap:12px}
-      .crm-point-actions .btn{min-height:58px;font-size:17px;font-weight:900}
+      .crm-point-actions .btn{min-height:76px;font-size:18px;font-weight:900;border-radius:12px}
       .crm-point-actions .btn.primary{background:#ecfdf3;color:#079455;border-color:#abefc6}
       .crm-point-actions .btn.danger{background:#fff1f3;color:#d92d20;border-color:#fecdca}
       .crm-point-history h3{margin:0;padding:18px 24px 8px;font-size:16px;color:#344054}
       .crm-point-history .empty{border:0;border-radius:0;background:#fff;color:#667085}
-      @media(max-width:1100px){.crm-member-profile-layout{grid-template-columns:1fr}.member-point-panel{grid-column:auto;grid-row:auto}}
+      @media(max-width:1100px){.crm-member-profile-layout{grid-template-columns:1fr;padding:24px 18px 96px}.member-point-panel{grid-column:auto;grid-row:auto}.crm-member-savebar{left:0}.drawer-panel .crm-member-form.form-grid{grid-template-columns:1fr}}
     `;
     document.head.appendChild(style);
   }
@@ -1257,7 +1268,7 @@
     const profileFields = `${field("會員編號", "memberNo", x.memberNo)}${field("LINE UID", "lineUserId", memberLineUid(x), "例如：Ub68b9724664b889e790c789ece72f717")}${field("母站帳號", "legacyAccount", firstValue(x.legacyAccount, x.aiweMemberNo, x.motherAccount), "母站帳號")}${field("手機", "phone", firstValue(x.phone, x.mobile, x.tel), "手機")}${field("Email", "email", x.email, "會員 Email", false, "email")}`;
     const vendorFields = `${field("公司名稱", "companyName", x.companyName)}${field("統一編號", "taxId", x.taxId)}${field("負責人", "owner", x.owner)}${field("聯絡窗口", "contact", x.contact)}`;
     const memberFields = `${field("身分", "identity", x.identity)}${field("姓名", "name", x.name)}${select("性別", "gender", ["", "男", "女"], x.gender)}${field("本職", "jobTitle", firstValue(x.jobTitle, x.title, x.position), "本職")}${field("公司/單位", "company", firstValue(x.company, x.companyName, x.unit), "公司/單位")}`;
-    return `<div class="crm-member-profile-layout"><form class="form-grid" id="drawer-member" data-type="${type}">${hidden("id", x.id)}${profileFields}${vendor ? vendorFields : memberFields}${select("會員資格", "qualification", ["Y", "N"], x.qualification || "Y")}<label class="sync-toggle"><input type="checkbox" name="loginAccess" value="Y" ${memberLoginAllowed(x) ? "checked" : ""}> 舊允許資料（正式權限請到 LINE 專區 / 白名單設定）</label><div class="field"><label>備註</label><textarea name="note">${esc(x.note)}</textarea></div><button class="btn primary" type="submit">儲存</button></form></div>`;
+    return `<div class="crm-member-profile-layout"><section class="crm-member-card"><div class="crm-member-section-title">基本資料</div><form class="form-grid crm-member-form" id="drawer-member" data-type="${type}">${hidden("id", x.id)}${profileFields}${vendor ? vendorFields : memberFields}${select("會員資格", "qualification", ["Y", "N"], x.qualification || "Y")}<label class="sync-toggle"><input type="checkbox" name="loginAccess" value="Y" ${memberLoginAllowed(x) ? "checked" : ""}> 舊允許資料（正式權限請到 LINE 專區 / 白名單設定）</label><div class="field"><label>備註</label><textarea name="note">${esc(x.note)}</textarea></div><div class="crm-member-savebar"><button class="btn" type="button" data-close>取消</button><button class="btn primary" type="submit">儲存檔案變更</button></div></form></section></div>`;
   }
   function importForm(type) {
     const vendor = type === "vendor";
