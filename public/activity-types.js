@@ -36,28 +36,7 @@
       if (typeSelect.dataset.typeLabelReady) return;
       typeSelect.dataset.typeLabelReady = "true";
 
-      const form = typeSelect.closest("form");
-      const field = typeSelect.closest(".field");
-      const currentLabel = form ? selectedDisplayValue(form, typeSelect) : "";
-      const isKnown = displayNames.includes(currentLabel);
-      const custom = document.createElement("div");
-      custom.className = "field custom-type-field";
-      custom.innerHTML = `
-        <label>活動類型顯示名稱</label>
-        <select name="activityTypeLabel">
-          <option value="">同活動類型</option>
-          ${displayNames.map(type => `<option value="${esc(type)}" ${currentLabel === type ? "selected" : ""}>${esc(type)}</option>`).join("")}
-          <option value="__custom" ${currentLabel && !isKnown ? "selected" : ""}>自訂...</option>
-        </select>
-        <input name="activityTypeLabelOther" type="text" value="${esc(currentLabel && !isKnown ? currentLabel : "")}" placeholder="輸入自訂顯示名稱" ${currentLabel && !isKnown ? "" : "hidden"}>
-      `;
-      field?.insertAdjacentElement("afterend", custom);
-      const labelSelect = custom.querySelector("select[name='activityTypeLabel']");
-      const labelInput = custom.querySelector("input[name='activityTypeLabelOther']");
-      labelSelect?.addEventListener("change", () => {
-        labelInput.hidden = labelSelect.value !== "__custom";
-        if (!labelInput.hidden) labelInput.focus();
-      });
+      typeSelect.closest("form")?.querySelector(".custom-type-field")?.remove();
     });
   }
 

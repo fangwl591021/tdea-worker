@@ -20,7 +20,7 @@
     "app.js?v=gallery-editor1",
     "line-zone.js?v=line-order1",
     "lottery.js?v=lottery4",
-    "activity-types.js?v=types3",
+    "activity-types.js?v=types4",
     "form-builder.js?v=form11",
     "google-form-engine.js?v=gform15",
     "activity-detail.js?v=activity-detail6",
