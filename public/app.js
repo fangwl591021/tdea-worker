@@ -966,18 +966,18 @@
       .drawer-panel:has(.crm-member-profile-layout) .drawer-title{height:72px;margin:0;padding:14px 22px;background:#fff;border-bottom:1px solid #e5e7eb;box-shadow:0 1px 4px rgba(15,23,42,.06)}
       .crm-member-title{margin:0;font-size:22px;font-weight:900;color:#172033;display:flex;align-items:center;gap:16px;flex-wrap:wrap}
       .crm-member-title small{font-size:13px;font-family:ui-monospace,SFMono-Regular,Consolas,monospace;color:#667085;background:#f1f5f9;border:1px solid #dbe3ee;border-radius:8px;padding:7px 12px}
-      .crm-member-profile-layout{display:grid;grid-template-columns:minmax(0,1fr) minmax(360px,420px);gap:28px;align-items:start;padding:40px 30px 96px;min-height:calc(100vh - 72px)}
+      .crm-member-profile-layout{display:grid;grid-template-columns:minmax(0,1fr) minmax(300px,360px);gap:20px;align-items:start;padding:32px 20px 96px;min-height:calc(100vh - 72px);max-width:100%;overflow:hidden}
       .crm-member-card,.member-point-panel,.member-registration-history{background:#fff;border:1px solid #dfe5ee;border-radius:16px;box-shadow:none;overflow:hidden}
       .crm-member-card{grid-column:1;grid-row:1}
       .crm-member-section-title{display:flex;align-items:center;gap:10px;padding:28px 30px 18px;font-size:20px;font-weight:900;color:#172033;border-bottom:1px solid #e5e7eb}
       .crm-member-section-title:before{content:"";width:22px;height:22px;border-radius:7px;background:#635bff;display:inline-block}
-      .drawer-panel .crm-member-form.form-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:22px 26px;padding:24px 30px 28px;align-items:start}
+      .drawer-panel .crm-member-form.form-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:18px 22px;padding:22px 26px 26px;align-items:start}
       .drawer-panel .crm-member-form .field:has(textarea){grid-column:1/-1}
       .drawer-panel .crm-member-form .sync-toggle{grid-column:1/-1;min-height:52px;border-color:#dfe5ee;background:#fff}
       .crm-member-savebar{position:fixed;right:0;left:270px;bottom:0;height:72px;background:#fff;border-top:1px solid #e5e7eb;display:flex;justify-content:flex-end;align-items:center;gap:18px;padding:12px 28px;z-index:25}
       .crm-member-savebar .btn.primary{min-width:260px;min-height:52px;border-radius:8px;font-size:18px}
       .crm-member-savebar .btn:not(.primary){border:0;background:#fff;color:#667085;font-size:18px}
-      .crm-member-side{grid-column:2;grid-row:1;display:grid;gap:28px;align-content:start}
+      .crm-member-side{grid-column:2;grid-row:1;display:grid;gap:20px;align-content:start;min-width:0}
       .crm-member-side .member-point-panel{border-radius:16px}
       .member-point-panel{border-radius:16px}
       .member-registration-wide{grid-column:1/-1;align-self:stretch}.member-registration-wide .member-registration-history{width:100%;border-radius:16px}.member-registration-wide .member-registration-history .table-wrap{max-height:360px;overflow:auto}
@@ -985,13 +985,15 @@
       .crm-point-summary span{color:#8a98ad;font-weight:900}
       .crm-point-summary strong{font-size:44px;line-height:1;color:#dc2626;font-weight:900}
       .crm-point-summary small{color:#8a98ad;font-weight:900}
-      .crm-point-actions{display:grid;grid-template-columns:1fr 1fr;gap:14px;padding:14px 30px 24px;border-bottom:1px solid #e5e7eb}
+      .crm-point-actions{display:grid;grid-template-columns:1fr 1fr;gap:12px;padding:12px 22px 22px;border-bottom:1px solid #e5e7eb}
       .crm-point-actions .field{grid-column:1/-1}
       .crm-point-actions .actions{grid-column:1/-1;display:grid;grid-template-columns:1fr 1fr;gap:12px}
-      .crm-point-actions .btn{min-height:76px;font-size:18px;font-weight:900;border-radius:12px}
+      .crm-point-actions .btn{min-height:58px;font-size:17px;font-weight:900;border-radius:12px}
       .crm-point-actions .btn.primary{background:#ecfdf3;color:#079455;border-color:#abefc6}
       .crm-point-actions .btn.danger{background:#fff1f3;color:#d92d20;border-color:#fecdca}
-      .crm-point-history h3{margin:0;padding:18px 24px 8px;font-size:16px;color:#344054}
+      .crm-point-history h3{margin:0;padding:16px 20px 8px;font-size:16px;color:#344054}
+      .member-point-panel .table-wrap{max-width:100%;overflow:auto}
+      .member-point-panel table{min-width:520px}
       .crm-point-history .empty{border:0;border-radius:0;background:#fff;color:#667085}
       @media(max-width:1100px){.crm-member-profile-layout{grid-template-columns:1fr;padding:24px 18px 96px}.crm-member-side{grid-column:auto;grid-row:auto}.member-point-panel{grid-column:auto;grid-row:auto}.crm-member-savebar{left:0}.drawer-panel .crm-member-form.form-grid{grid-template-columns:1fr}}
     `;
