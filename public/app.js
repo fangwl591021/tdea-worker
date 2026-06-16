@@ -977,7 +977,9 @@
       .crm-member-savebar{position:fixed;right:0;left:270px;bottom:0;height:72px;background:#fff;border-top:1px solid #e5e7eb;display:flex;justify-content:flex-end;align-items:center;gap:18px;padding:12px 28px;z-index:25}
       .crm-member-savebar .btn.primary{min-width:260px;min-height:52px;border-radius:8px;font-size:18px}
       .crm-member-savebar .btn:not(.primary){border:0;background:#fff;color:#667085;font-size:18px}
-      .member-point-panel{grid-column:2;grid-row:1;border-radius:16px}
+      .crm-member-side{grid-column:2;grid-row:1;display:grid;gap:28px;align-content:start}
+      .crm-member-side .member-point-panel,.crm-member-side .member-registration-history{border-radius:16px}
+      .member-point-panel{border-radius:16px}
       .member-registration-history{grid-column:1/-1;border-radius:16px}
       .crm-point-summary{display:flex;align-items:baseline;justify-content:center;gap:10px;padding:24px 24px 12px}
       .crm-point-summary span{color:#8a98ad;font-weight:900}
@@ -991,7 +993,7 @@
       .crm-point-actions .btn.danger{background:#fff1f3;color:#d92d20;border-color:#fecdca}
       .crm-point-history h3{margin:0;padding:18px 24px 8px;font-size:16px;color:#344054}
       .crm-point-history .empty{border:0;border-radius:0;background:#fff;color:#667085}
-      @media(max-width:1100px){.crm-member-profile-layout{grid-template-columns:1fr;padding:24px 18px 96px}.member-point-panel{grid-column:auto;grid-row:auto}.crm-member-savebar{left:0}.drawer-panel .crm-member-form.form-grid{grid-template-columns:1fr}}
+      @media(max-width:1100px){.crm-member-profile-layout{grid-template-columns:1fr;padding:24px 18px 96px}.crm-member-side{grid-column:auto;grid-row:auto}.member-point-panel{grid-column:auto;grid-row:auto}.crm-member-savebar{left:0}.drawer-panel .crm-member-form.form-grid{grid-template-columns:1fr}}
     `;
     document.head.appendChild(style);
   }
@@ -1291,7 +1293,7 @@
     const profileFields = `${field("會員編號", "memberNo", x.memberNo)}${field("LINE UID", "lineUserId", memberLineUid(x), "例如：Ub68b9724664b889e790c789ece72f717")}${field("母站帳號", "legacyAccount", firstValue(x.legacyAccount, x.aiweMemberNo, x.motherAccount), "母站帳號")}${field("手機", "phone", firstValue(x.phone, x.mobile, x.tel), "手機")}${field("Email", "email", x.email, "會員 Email", false, "email")}`;
     const vendorFields = `${field("公司名稱", "companyName", x.companyName)}${field("統一編號", "taxId", x.taxId)}${field("負責人", "owner", x.owner)}${field("聯絡窗口", "contact", x.contact)}`;
     const memberFields = `${field("身分", "identity", x.identity)}${field("姓名", "name", x.name)}${select("性別", "gender", ["", "男", "女"], x.gender)}${field("本職", "jobTitle", firstValue(x.jobTitle, x.title, x.position), "本職")}${field("公司/單位", "company", firstValue(x.company, x.companyName, x.unit), "公司/單位")}`;
-    return `<div class="crm-member-profile-layout"><section class="crm-member-card"><div class="crm-member-section-title">基本資料</div><form class="form-grid crm-member-form" id="drawer-member" data-type="${type}">${hidden("id", x.id)}${profileFields}${vendor ? vendorFields : memberFields}${select("會員資格", "qualification", ["Y", "N"], x.qualification || "Y")}<label class="sync-toggle"><input type="checkbox" name="loginAccess" value="Y" ${memberLoginAllowed(x) ? "checked" : ""}> 舊允許資料（正式權限請到 LINE 專區 / 白名單設定）</label><div class="field"><label>備註</label><textarea name="note">${esc(x.note)}</textarea></div><div class="crm-member-savebar"><button class="btn" type="button" data-close>取消</button><button class="btn primary" type="submit">儲存檔案變更</button></div></form></section></div>`;
+    return `<div class="crm-member-profile-layout"><section class="crm-member-card"><div class="crm-member-section-title">基本資料</div><form class="form-grid crm-member-form" id="drawer-member" data-type="${type}">${hidden("id", x.id)}${profileFields}${vendor ? vendorFields : memberFields}${select("會員資格", "qualification", ["Y", "N"], x.qualification || "Y")}<label class="sync-toggle"><input type="checkbox" name="loginAccess" value="Y" ${memberLoginAllowed(x) ? "checked" : ""}> 舊允許資料（正式權限請到 LINE 專區 / 白名單設定）</label><div class="field"><label>備註</label><textarea name="note">${esc(x.note)}</textarea></div><div class="crm-member-savebar"><button class="btn" type="button" data-close>取消</button><button class="btn primary" type="submit">儲存檔案變更</button></div></form></section><aside class="crm-member-side" data-member-side><div data-member-point-slot></div><div data-member-registration-slot></div></aside></div>`;
   }
   function importForm(type) {
     const vendor = type === "vendor";
@@ -1850,7 +1852,9 @@
     panel.className = "panel member-point-panel";
     panel.dataset.memberPointPanel = "1";
     panel.innerHTML = `<div class="panel-head"><h3>點數贈扣區</h3><button class="btn" type="button" data-refresh-member-points data-member-type="${esc(info.type)}" data-member-id="${esc(info.rowId)}">重新載入</button></div>${memberPointPanelHtml(info, account)}`;
-    form.insertAdjacentElement("afterend", panel);
+    const slot = document.querySelector("[data-member-point-slot]");
+    if (slot) slot.replaceChildren(panel);
+    else form.insertAdjacentElement("afterend", panel);
     if (!account) loadMemberPointAccount(info.type, info.rowId);
   }
 
@@ -1922,7 +1926,9 @@
     panel.className = "panel member-registration-history";
     panel.dataset.memberRegistrationPanel = "1";
     panel.innerHTML = `<div class="panel-head"><h3>報名活動記錄</h3><button class="btn" type="button" data-refresh-member-registrations data-member-type="${esc(info.type)}" data-member-id="${esc(info.rowId)}">重新載入</button></div>${!lineUserId ? `<div class="empty">此會員尚未綁定 LINE UID，無法查詢報名活動記錄。</div>` : rows ? memberRegistrationRowsHtml(rows) : `<div class="empty">正在載入報名活動記錄...</div>`}`;
-    (document.querySelector("[data-member-point-panel]") || form).insertAdjacentElement("afterend", panel);
+    const slot = document.querySelector("[data-member-registration-slot]");
+    if (slot) slot.replaceChildren(panel);
+    else (document.querySelector("[data-member-point-panel]") || form).insertAdjacentElement("afterend", panel);
     if (lineUserId && !rows) loadMemberRegistrationList(info.type, info.rowId);
   }
 
