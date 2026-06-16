@@ -981,8 +981,9 @@
       .crm-member-side .member-point-panel{border-radius:16px}
       .member-point-panel{border-radius:16px}
       .member-registration-wide{grid-column:1/-1;align-self:stretch}.member-registration-wide .member-registration-history{width:100%;border-radius:16px}.member-registration-wide .member-registration-history .table-wrap{max-height:360px;overflow:auto}
-      .crm-point-summary{display:flex;align-items:baseline;justify-content:center;gap:10px;padding:24px 24px 12px}
+      .crm-point-summary{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:8px;padding:24px 24px 12px}
       .crm-point-summary span{color:#8a98ad;font-weight:900}
+      .crm-point-summary .crm-point-number{display:flex;align-items:baseline;justify-content:center;gap:8px}
       .crm-point-summary strong{font-size:44px;line-height:1;color:#dc2626;font-weight:900}
       .crm-point-summary small{color:#8a98ad;font-weight:900}
       .crm-point-actions{display:grid;grid-template-columns:1fr 1fr;gap:12px;padding:12px 22px 22px;border-bottom:1px solid #e5e7eb}
@@ -1840,7 +1841,7 @@
       reason: item.event_name || item.event_content || ""
     })) : [];
     const logs = Array.isArray(account.logs) && account.logs.length ? account.logs : motherLogs;
-    return `<div class="crm-point-summary"><span>可用點數</span><strong>${esc(balance.toLocaleString())}</strong><small>點</small></div><form class="crm-point-actions" data-member-point-form><input type="hidden" name="lineUserId" value="${esc(lineUserId)}"><input type="hidden" name="memberNo" value="${esc(info.row.memberNo || "")}"><div class="field"><label>異動點數</label><input name="amount" type="number" placeholder="正數贈點，負數扣點" required></div><div class="field"><label>原因</label><input name="note" placeholder="例：活動補點、人工扣點" required></div><div class="actions"><button class="btn primary" type="submit" data-point-action="add">贈點</button><button class="btn danger" type="submit" data-point-action="spend">扣點</button></div></form><div class="crm-point-history"><h3>點數歷史紀錄</h3>${memberPointRowsHtml(logs)}</div>`;
+    return `<div class="crm-point-summary"><span>可用點數</span><div class="crm-point-number"><strong>${esc(balance.toLocaleString())}</strong><small>點</small></div></div><form class="crm-point-actions" data-member-point-form><input type="hidden" name="lineUserId" value="${esc(lineUserId)}"><input type="hidden" name="memberNo" value="${esc(info.row.memberNo || "")}"><div class="field"><label>異動點數</label><input name="amount" type="number" placeholder="正數贈點，負數扣點" required></div><div class="field"><label>原因</label><input name="note" placeholder="例：活動補點、人工扣點" required></div><div class="actions"><button class="btn primary" type="submit" data-point-action="add">贈點</button><button class="btn danger" type="submit" data-point-action="spend">扣點</button></div></form><div class="crm-point-history"><h3>點數歷史紀錄</h3>${memberPointRowsHtml(logs)}</div>`;
   }
 
   function mountMemberPointPanel() {
