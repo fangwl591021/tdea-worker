@@ -1376,6 +1376,18 @@
       <div class="field"><label>圖集網址</label><textarea name="galleryUrls" placeholder="每行一張圖片網址；也可直接貼上既有圖片 URL">${esc(cleanUrlList(activity.galleryUrls).join("\n"))}</textarea></div>
       <div class="field"><label>報名頁網址</label><input name="nativeFormUrl" value="${esc(activity.nativeFormUrl || "")}" placeholder="系統會自動產生"></div>`;
     insertBefore?.insertAdjacentElement("beforebegin", wrap);
+    const galleryFileInput = wrap.querySelector("[data-activity-gallery-file]");
+    if (galleryFileInput && !wrap.querySelector("[data-activity-gallery-status]")) {
+      const status = document.createElement("div");
+      status.className = "muted activity-upload-status";
+      status.dataset.activityGalleryStatus = "";
+      status.setAttribute("aria-live", "polite");
+      galleryFileInput.insertAdjacentElement("afterend", status);
+      galleryFileInput.addEventListener("change", () => {
+        const count = galleryFileInput.files?.length || 0;
+        status.textContent = count ? `已選擇 ${count} 張圖片，按下儲存後會開始上傳。` : "";
+      });
+    }
   }
 
   function deleteMember(token) {
@@ -1418,9 +1430,28 @@
     button.disabled = false;
     button.textContent = button.dataset.defaultText || "儲存";
   }
+  function setActivityUploadStatus(form, text) {
+    const status = form?.querySelector("[data-activity-gallery-status]");
+    if (status) status.textContent = text || "";
+  }
+  function setActivityUploadBusy(form, busy) {
+    if (!form) return;
+    form.querySelectorAll("[data-activity-poster-file], [data-activity-gallery-file]").forEach(input => {
+      input.disabled = Boolean(busy);
+    });
+    if (busy) form.dataset.uploading = "true";
+    else delete form.dataset.uploading;
+  }
+  function resetActivityUploadState(form) {
+    setActivityUploadBusy(form, false);
+    setActivityUploadStatus(form, "");
+    resetSubmitState(form);
+  }
   async function finishSubmitState(form, text = "已完成") {
     setSubmitState(form, text, true);
     await wait(1200);
+    setActivityUploadBusy(form, false);
+    setActivityUploadStatus(form, "");
     resetSubmitState(form);
   }
 
@@ -1433,13 +1464,21 @@
         event.preventDefault();
         event.stopImmediatePropagation();
         const form = event.currentTarget;
-        setSubmitState(form, "儲存中...");
+        if (form.dataset.uploading === "true") return;
         const d = Object.fromEntries(new FormData(form));
         const activity = state.data.activities.find((item) => item.id === d.id);
         if (!activity) {
           resetSubmitState(form);
           return;
         }
+        const posterFileInput = form.querySelector("[data-activity-poster-file]");
+        const galleryFileInput = form.querySelector("[data-activity-gallery-file]");
+        const file = posterFileInput?.files?.[0];
+        const galleryFiles = [...(galleryFileInput?.files || [])];
+        const hasUploadFiles = Boolean(file) || galleryFiles.length > 0;
+        setActivityUploadBusy(form, true);
+        setSubmitState(form, hasUploadFiles ? "上傳中..." : "儲存中...");
+        if (galleryFiles.length) setActivityUploadStatus(form, `上傳中：0 / ${galleryFiles.length} 張`);
         Object.assign(activity, {
           name: d.name,
           type: d.type,
@@ -1462,9 +1501,9 @@
           galleryUrls: cleanUrlList(d.galleryUrls || activity.galleryUrls)
         });
         const email = localStorage.getItem("tdea-admin-email") || sessionStorage.getItem("tdea-admin-email") || "";
-        const file = form.querySelector("[data-activity-poster-file]")?.files?.[0];
         if (file) {
           try {
+            setActivityUploadStatus(form, "主圖上傳中...");
             const uploaded = await uploadActivityPoster(file, activity.id, email);
             if (uploaded?.url) {
               activity.posterUrl = uploaded.url;
@@ -1472,24 +1511,25 @@
             }
           } catch (error) {
             toast(error.message || "圖片上傳失敗");
-            resetSubmitState(form);
+            resetActivityUploadState(form);
             return;
           }
         }
-        const galleryFiles = [...(form.querySelector("[data-activity-gallery-file]")?.files || [])];
         if (galleryFiles.length) {
           try {
             const uploadedUrls = [];
-            for (const galleryFile of galleryFiles) {
+            for (const [index, galleryFile] of galleryFiles.entries()) {
+              setActivityUploadStatus(form, `上傳中：${index + 1} / ${galleryFiles.length} 張`);
               const uploaded = await uploadActivityPoster(galleryFile, activity.id || d.id, email);
               if (uploaded?.url) uploadedUrls.push(uploaded.url);
             }
+            setActivityUploadStatus(form, `上傳完成：${uploadedUrls.length} 張`);
             activity.galleryUrls = cleanUrlList([activity.galleryUrls, uploadedUrls]);
             const galleryInput = form.querySelector("[name='galleryUrls']");
             if (galleryInput) galleryInput.value = activity.galleryUrls.join("\n");
           } catch (error) {
-            toast(error.message || "活動圖集上傳失敗");
-            resetSubmitState(form);
+            toast(error.message || "圖集上傳失敗");
+            resetActivityUploadState(form);
             return;
           }
         }
@@ -1497,7 +1537,7 @@
           await ensureNativeFormForActivity(activity, email);
         } catch (error) {
           toast(error?.message || "報名表處理失敗");
-          resetSubmitState(form);
+          resetActivityUploadState(form);
           return;
         }
         state.data.formSettings ||= {};
@@ -1518,7 +1558,7 @@
           Object.assign(activity, saved || {});
         } catch (error) {
           toast(error?.message || "活動儲存失敗");
-          resetSubmitState(form);
+          resetActivityUploadState(form);
           return;
         }
         save();
