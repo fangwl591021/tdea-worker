@@ -49,7 +49,6 @@ const vendorCardKey = "flex/vendor-card-menu.json";
 const marqueeKey = "line/marquee.json";
 const registrationSummaryKey = "registrations/summary.json";
 const redeemListKey = "redeem/records.json";
-const pointLedgerKey = "points/ledger.json";
 const pushLogKey = "push/logs.json";
 const personalMessagesKey = "personal-messages/messages.json";
 const richMenuKey = "line/rich-menu.json";
@@ -1467,14 +1466,6 @@ function nativeLineUserKey(lineUserId: string) {
   return `registrations/native-line/${encodeURIComponent(lineUserId)}.json`;
 }
 
-function pointAccountKey(lineUserId: string) {
-  return `points/accounts/${encodeURIComponent(lineUserId)}.json`;
-}
-
-function pointLegacySyncKey(lineUserId: string) {
-  return `points/legacy-sync/${encodeURIComponent(lineUserId)}.json`;
-}
-
 function redeemKey(token: string) {
   return `redeem/requests/${encodeURIComponent(token)}.json`;
 }
@@ -1778,22 +1769,7 @@ async function queryPointBalance(env: Env, lineUserId: string) {
 async function syncMotherPointToLocal(env: Env, lineUserId: string) {
   const result = await queryPointBalance(env, lineUserId) as Record<string, unknown>;
   if (result.success !== true) return result;
-  const current = await readPointAccount(env, lineUserId);
-  const account: PointAccount = {
-    ...current,
-    balance: numberValue(result.balance),
-    logs: Array.isArray(current.logs) ? current.logs : [],
-    source: "wetw-point/query-user-point-list",
-    syncedAt: new Date().toISOString(),
-    externalRaw: {
-      httpStatus: result.httpStatus,
-      code: result.code,
-      message: result.message,
-      latest: Array.isArray(result.list) ? result.list.slice(0, 5) : []
-    }
-  };
-  await writePointAccount(env, lineUserId, account);
-  return { ...result, cached: false, syncedAt: account.syncedAt };
+  return { ...result, cached: false, syncedAt: new Date().toISOString(), source: "wetw-point/query-user-point-list" };
 }
 
 async function syncBoundMemberPoints(env: Env, lineUserId: string) {
@@ -1829,42 +1805,13 @@ async function queryMemberPointBatchApi(request: Request, env: Env) {
   if (guard) return guard;
   const input = await request.json().catch(() => ({})) as Record<string, unknown>;
   const rawIds = Array.isArray(input.lineUserIds) ? input.lineUserIds : [];
-  const force = Boolean(input.force);
   const lineUserIds = Array.from(new Set(rawIds.map((item) => clean(item)).filter(Boolean))).slice(0, 1000);
-  const data = await mapWithConcurrency(lineUserIds, 8, async (lineUserId) => {
+  const data = await mapWithConcurrency(lineUserIds, 6, async (lineUserId) => {
     try {
-      const cached = await readPointAccount(env, lineUserId);
-      if (!force && clean(cached.updatedAt) && pointCacheIsFresh(cached)) {
-        return {
-          lineUserId,
-          success: true,
-          balance: numberValue(cached.balance),
-          cached: true,
-          syncedAt: cached.syncedAt || cached.updatedAt,
-          message: ""
-        };
-      }
-      const result = await syncMotherPointToLocal(env, lineUserId) as Record<string, unknown>;
-      const fallback = clean(cached.updatedAt);
-      return {
-        lineUserId,
-        success: result.success === true || Boolean(fallback),
-        balance: result.success === true ? numberValue(result.balance) : fallback ? numberValue(cached.balance) : null,
-        cached: result.success === true ? false : Boolean(fallback),
-        syncedAt: clean(result.syncedAt) || cached.syncedAt || cached.updatedAt || "",
-        message: result.success === true ? "" : clean(result.message) || clean(result.code) || "點數查詢失敗"
-      };
+      const result = await queryPointBalance(env, lineUserId) as Record<string, unknown>;
+      return { lineUserId, success: result.success === true, balance: result.success === true ? numberValue(result.balance) : null, cached: false, syncedAt: new Date().toISOString(), message: result.success === true ? "" : clean(result.message) || clean(result.code) || "mother point query failed", source: "wetw-point/query-user-point-list" };
     } catch (error) {
-      const cached = await readPointAccount(env, lineUserId);
-      const fallback = clean(cached.updatedAt);
-      return {
-        lineUserId,
-        success: Boolean(fallback),
-        balance: fallback ? numberValue(cached.balance) : null,
-        cached: Boolean(fallback),
-        syncedAt: cached.syncedAt || cached.updatedAt || "",
-        message: String((error as Error).message || error || "點數查詢失敗")
-      };
+      return { lineUserId, success: false, balance: null, cached: false, syncedAt: "", message: String((error as Error).message || error || "mother point query failed") };
     }
   });
   return json({ success: true, data });
@@ -1907,6 +1854,15 @@ function formatMotherPointReply(result: Record<string, unknown>, label: string) 
   return `${label}目前點數餘額：${balance}\n\n最近紀錄：\n${rows}`;
 }
 
+function pointLogsFromMotherList(list: Array<Record<string, unknown>>, fallbackLineUserId = "") {
+  return list.map((item, index) => {
+    const amount = numberValue(item.get_point);
+    const createdAt = firstClean(item.created_at, item.createdAt) || new Date().toISOString();
+    const ts = Date.parse(createdAt);
+    return { logId: firstClean(item.id, "mother-" + index + "-" + createdAt), lineUserId: firstClean(item.LINE_user_id, item.lineUserId, fallbackLineUserId), type: amount >= 0 ? "EARN" : "SPEND", amount, points: Math.abs(amount), reason: firstClean(item.event_name, item.event_content, item.shop_remark), balanceAfter: numberValue(item.point_balance), createdAt, createdTs: Number.isFinite(ts) ? ts : Date.now(), source: "wetw-point/query-user-point-list", referenceId: firstClean(item.shop_remark, item.id), externalSync: item } as PointLog;
+  });
+}
+
 async function handleMotherPointEvents(events: Array<{ event: LineEvent; query: { uid: string } }>, env: Env) {
   const lineReplies = await Promise.all(events.map(async ({ event, query }) => {
     if (!event.replyToken) return { ok: false, status: 400, message: "Missing replyToken" };
@@ -1921,73 +1877,18 @@ async function handleMotherPointEvents(events: Array<{ event: LineEvent; query: 
   return json({ success: true, mode: "mother-point-keyword", matched: ["TDEA點數"], forwarded: false, lineReplies });
 }
 
-async function readPointAccount(env: Env, lineUserId: string): Promise<PointAccount> {
-  if (!env.ASSETS_BUCKET || !lineUserId) return { balance: 0, logs: [] };
-  const object = await env.ASSETS_BUCKET.get(pointAccountKey(lineUserId));
-  if (!object) return { balance: 0, logs: [] };
-  const data = await object.json().catch(() => ({})) as Partial<PointAccount>;
-  return {
-    balance: numberValue(data.balance),
-    logs: Array.isArray(data.logs) ? data.logs as PointLog[] : [],
-    updatedAt: clean(data.updatedAt),
-    source: clean(data.source),
-    syncedAt: clean(data.syncedAt),
-    externalRaw: data.externalRaw
-  };
-}
-
-async function writePointAccount(env: Env, lineUserId: string, account: PointAccount) {
-  if (!env.ASSETS_BUCKET || !lineUserId) return;
-  account.updatedAt = new Date().toISOString();
-  await env.ASSETS_BUCKET.put(pointAccountKey(lineUserId), JSON.stringify(account, null, 2), { httpMetadata: { contentType: "application/json; charset=utf-8", cacheControl: "no-store" } });
-}
-
-async function appendPointLedger(env: Env, entry: PointLog) {
-  if (!env.ASSETS_BUCKET) return;
-  const object = await env.ASSETS_BUCKET.get(pointLedgerKey);
-  const current = object ? await object.json().catch(() => []) : [];
-  const list = Array.isArray(current) ? current as PointLog[] : [];
-  await env.ASSETS_BUCKET.put(pointLedgerKey, JSON.stringify([entry, ...list].slice(0, 5000), null, 2), { httpMetadata: { contentType: "application/json; charset=utf-8", cacheControl: "no-store" } });
-}
-
 async function updateLocalPoints(env: Env, lineUserId: string, amount: number, reason: string, options: { source?: string; referenceId?: string; skipExternalSync?: boolean } = {}) {
-  if (!env.ASSETS_BUCKET) return { success: false, message: "R2 bucket is not configured" };
   const numericAmount = Number(amount || 0);
-  if (!lineUserId || !numericAmount) return { success: false, message: "缺少 LINE UID 或點數異動值" };
-  const account = await readPointAccount(env, lineUserId);
-  let nextBalance = numberValue(account.balance) + numericAmount;
-  let externalSync: unknown = null;
-  let externalBalanceSync: unknown = null;
-  if (!options.skipExternalSync && motherPointSyncRequired(env)) {
-    if (!clean(env.WETW_POINT_API_KEY)) return { success: false, code: "missing_api_key", message: "母站點數 API Key 尚未設定，不能異動點數" };
-    externalSync = await insertMemberPoint(env, { lineUserId, eventName: numericAmount >= 0 ? "TDEA 贈點" : "TDEA 扣點", eventContent: reason, points: numericAmount, remark: options.referenceId || "" }) as Record<string, unknown>;
-    if ((externalSync as Record<string, unknown>).success !== true || clean((externalSync as Record<string, unknown>).code) !== "insert_success") {
-      return { success: false, message: clean((externalSync as Record<string, unknown>).message) || "母站點數寫入失敗", externalSync };
-    }
-    externalBalanceSync = await syncMotherPointToLocal(env, lineUserId) as Record<string, unknown>;
-    if ((externalBalanceSync as Record<string, unknown>).success === true) nextBalance = numberValue((externalBalanceSync as Record<string, unknown>).balance);
-  }
+  if (!lineUserId || !numericAmount) return { success: false, message: "Missing LINE UID or point amount" };
+  const before = await queryPointBalance(env, lineUserId) as Record<string, unknown>;
+  if (before.success !== true) return { success: false, message: clean(before.message) || clean(before.code) || "mother point query failed", before };
+  const externalSync = await insertMemberPoint(env, { lineUserId, eventName: numericAmount >= 0 ? "TDEA add points" : "TDEA deduct points", eventContent: reason, points: numericAmount, remark: options.referenceId || options.source || "TDEA Worker" }) as Record<string, unknown>;
+  if (externalSync.success !== true || clean(externalSync.code) !== "insert_success") return { success: false, message: clean(externalSync.message) || "mother point insert failed", externalSync, before };
+  const after = await queryPointBalance(env, lineUserId) as Record<string, unknown>;
   const createdTs = Date.now();
-  const log: PointLog = {
-    logId: crypto.randomUUID ? crypto.randomUUID() : String(createdTs),
-    lineUserId,
-    type: numericAmount >= 0 ? "EARN" : "SPEND",
-    amount: numericAmount,
-    points: Math.abs(numericAmount),
-    reason,
-    balanceAfter: nextBalance,
-    createdAt: new Date(createdTs).toISOString(),
-    createdTs,
-    source: options.source || "tdea",
-    referenceId: options.referenceId || ""
-  };
-  if (externalSync) log.externalSync = externalSync;
-  if (externalBalanceSync) log.externalBalanceSync = externalBalanceSync;
-  const syncedAccount = externalBalanceSync && (externalBalanceSync as Record<string, unknown>).success === true ? await readPointAccount(env, lineUserId) : account;
-  const next: PointAccount = { ...syncedAccount, balance: nextBalance, logs: [log, ...(syncedAccount.logs || [])].slice(0, 100) };
-  await writePointAccount(env, lineUserId, next);
-  await appendPointLedger(env, log);
-  return { success: true, balance: nextBalance, log, account: next };
+  const balanceAfter = after.success === true ? numberValue(after.balance) : numberValue(before.balance) + numericAmount;
+  const log: PointLog = { logId: crypto.randomUUID ? crypto.randomUUID() : String(createdTs), lineUserId, type: numericAmount >= 0 ? "EARN" : "SPEND", amount: numericAmount, points: Math.abs(numericAmount), reason, balanceAfter, createdAt: new Date(createdTs).toISOString(), createdTs, source: options.source || "tdea", referenceId: options.referenceId || "", externalSync, externalBalanceSync: after };
+  return { success: true, balance: balanceAfter, log, account: { balance: balanceAfter, logs: after.success === true && Array.isArray(after.list) ? pointLogsFromMotherList(after.list as Record<string, unknown>[], lineUserId) : [log], updatedAt: new Date(createdTs).toISOString(), source: "wetw-point", syncedAt: new Date(createdTs).toISOString(), externalRaw: after }, before, externalSync, externalBalanceSync: after };
 }
 
 function taipeiDateKey(date = new Date()) {
@@ -2009,19 +1910,11 @@ async function rewardMarqueePoint(request: Request, env: Env) {
   const title = clean(item.title || config.title || "TDEA 跑馬燈");
   const dateKey = taipeiDateKey();
   const referenceId = `marquee:${dateKey}:${clean(item.id || item.imageUrl || imageUrl)}`;
-  const account = await readPointAccount(env, lineUserId);
-  const existing = (account.logs || []).find((log) => log.source === "marquee_image_click" && log.referenceId === referenceId);
+  const motherBefore = await queryPointBalance(env, lineUserId) as Record<string, unknown>;
+  const motherLogs = Array.isArray(motherBefore.list) ? motherBefore.list.map(asRecord) : [];
+  const existing = motherLogs.find((log) => firstClean(log.shop_remark, log.event_content, log.event_name).includes(referenceId));
   if (existing) {
-    return json({
-      success: true,
-      awarded: false,
-      duplicate: true,
-      points: 0,
-      balance: account.balance,
-      imageId: item.id,
-      linkUrl: clean(item.linkUrl),
-      message: "今日已領取此圖片點數"
-    });
+    return json({ success: true, awarded: false, duplicate: true, points: 0, balance: motherBefore.balance, imageId: item.id, linkUrl: clean(item.linkUrl), message: "already awarded" });
   }
   const eventContent = `${title} 圖片點擊每日贈點`;
   const result = await updateLocalPoints(env, lineUserId, points, eventContent, {
@@ -2059,49 +1952,19 @@ async function queryMarqueePoints(request: Request, env: Env) {
   }, result.success === false ? 502 : 200);
 }
 
-async function getLegacySyncRecord(env: Env, lineUserId: string) {
-  if (!env.ASSETS_BUCKET || !lineUserId) return null;
-  const object = await env.ASSETS_BUCKET.get(pointLegacySyncKey(lineUserId));
-  return object ? await object.json().catch(() => null) as Record<string, unknown> | null : null;
-}
-
 async function importLegacyPointsOnce(env: Env, lineUserId: string, force = false) {
-  if (!env.ASSETS_BUCKET) return { success: false, reason: "missing_r2", imported: 0, message: "R2 bucket is not configured" };
-  if (!lineUserId) return { success: false, reason: "missing_uid", imported: 0, message: "蝻箏?? UID" };
-  const synced = await getLegacySyncRecord(env, lineUserId);
-  if (synced?.importedAt && !force) return { success: false, reason: "already_synced", imported: 0, ...synced };
-  const legacy = await queryPointBalance(env, lineUserId) as Record<string, unknown>;
-  if (legacy.success === false) return { success: false, reason: clean(legacy.code) || "legacy_query_failed", imported: 0, message: clean(legacy.message) || "瘥?暺?亥岷憭望?", raw: legacy };
-  const balance = Math.max(0, Number(legacy.balance || 0));
-  if (balance <= 0) {
-    const importedAt = new Date().toISOString();
-    const record = { imported: 0, importedAt, source: "wetw-point/query-user-point-list", raw: legacy };
-    await env.ASSETS_BUCKET.put(pointLegacySyncKey(lineUserId), JSON.stringify(record, null, 2), { httpMetadata: { contentType: "application/json; charset=utf-8", cacheControl: "no-store" } });
-    return { success: false, reason: "no_legacy_points", imported: 0, balance: 0, importedAt };
-  }
-  const update = await updateLocalPoints(env, lineUserId, balance, "瘥?暺鋆", { source: "legacy_import", skipExternalSync: true });
-  const importedAt = new Date().toISOString();
-  const record = { imported: balance, importedAt, source: "wetw-point/query-user-point-list", raw: legacy };
-  await env.ASSETS_BUCKET.put(pointLegacySyncKey(lineUserId), JSON.stringify(record, null, 2), { httpMetadata: { contentType: "application/json; charset=utf-8", cacheControl: "no-store" } });
-  return { success: true, imported: balance, importedAt, balance: (update as Record<string, unknown>).balance, raw: legacy };
+  const result = await queryPointBalance(env, lineUserId) as Record<string, unknown>;
+  if (result.success !== true) return { success: false, reason: clean(result.code) || "mother_query_failed", imported: 0, message: clean(result.message) || "mother point query failed", raw: result };
+  return { success: true, reason: "mother_direct", imported: 0, balance: numberValue(result.balance), importedAt: new Date().toISOString(), source: "wetw-point/query-user-point-list", raw: result, message: "mother point is the source of truth; no local import was written" };
 }
 
 async function getUnifiedPointAccount(env: Env, lineUserId: string, options: { autoImport?: boolean } = {}) {
-  const before = await readPointAccount(env, lineUserId);
-  if (motherPointSyncRequired(env)) {
-    if (!motherPointApiReady(env)) return { success: false, balance: numberValue(before.balance), logs: before.logs || [], message: "母站點數 API Key 尚未設定" };
-    const synced = await syncMotherPointToLocal(env, lineUserId) as Record<string, unknown>;
-    const account = await readPointAccount(env, lineUserId);
-    if (synced.success !== true) return { success: false, balance: numberValue(account.balance), logs: account.logs || [], message: clean(synced.message) || clean(synced.code) || "母站點數查詢失敗", externalRaw: synced };
-    return { success: true, balance: numberValue(account.balance), logs: account.logs || [], imported: null, legacySynced: await getLegacySyncRecord(env, lineUserId), motherSynced: synced };
-  }
-  let importResult: unknown = null;
-  const synced = await getLegacySyncRecord(env, lineUserId);
-  if (options.autoImport && !synced?.importedAt && numberValue(before.balance) <= 0) {
-    importResult = await importLegacyPointsOnce(env, lineUserId);
-  }
-  const account = await readPointAccount(env, lineUserId);
-  return { success: true, balance: numberValue(account.balance), logs: account.logs || [], imported: importResult, legacySynced: await getLegacySyncRecord(env, lineUserId) };
+  if (!lineUserId) return { success: false, balance: 0, logs: [], message: "Missing LINE UID" };
+  if (!motherPointApiReady(env)) return { success: false, balance: 0, logs: [], message: "Mother point API key is not configured" };
+  const result = await queryPointBalance(env, lineUserId) as Record<string, unknown>;
+  if (result.success !== true) return { success: false, balance: 0, logs: [], message: clean(result.message) || clean(result.code) || "mother point query failed", motherSynced: result };
+  const list = Array.isArray(result.list) ? result.list.map(asRecord) : [];
+  return { success: true, balance: numberValue(result.balance), logs: pointLogsFromMotherList(list, lineUserId), imported: null, legacySynced: null, motherSynced: result, source: "wetw-point/query-user-point-list" };
 }
 
 async function syncCheckinPoints(env: Env, entry: RegistrationEntry) {
@@ -2310,7 +2173,7 @@ async function confirmRedeemRequest(request: Request, env: Env, token: string) {
     amount,
     points: -Math.abs(points),
     balanceBefore: pointBalance,
-    balanceAfter: pointBalance - points,
+    balanceAfter: numberValue(result.balance || pointBalance - points),
     createdAt,
     note: clean(input.note),
     pointResult: result
@@ -2318,7 +2181,7 @@ async function confirmRedeemRequest(request: Request, env: Env, token: string) {
   redeem.status = "active";
   redeem.usedAt = createdAt;
   redeem.lineUserId = lineUserId;
-  redeem.pointBalance = pointBalance - points;
+  redeem.pointBalance = numberValue(result.balance || pointBalance - points);
   redeem.pointResult = result;
   redeem.transactions = [transaction, ...(Array.isArray(redeem.transactions) ? redeem.transactions : [])].slice(0, 200);
   await writeRedeem(env, redeem);
@@ -2345,25 +2208,17 @@ async function adjustMemberPointApi(request: Request, env: Env) {
   if (result.success !== true) return json({ success: false, message: clean(result.message) || "點數異動失敗", data: result }, 400);
   return json({ success: true, data: result });
 }
-async function syncLegacyPointApi(request: Request, env: Env) {
-  const guard = await requireAdmin(request, env);
-  if (guard) return guard;
-  const input = await request.json().catch(() => ({})) as Record<string, unknown>;
-  const lineUserId = firstClean(input.lineUserId, input.uid, input.LINE_user_id);
-  if (!lineUserId) return json({ success: false, message: "蝻箏?? UID" }, 400);
-  const force = Boolean(input.force);
-  return json({ success: true, data: await importLegacyPointsOnce(env, lineUserId, force) });
-}
-
 async function listPointLedgerApi(request: Request, env: Env) {
   const guard = await requireAdmin(request, env);
   if (guard) return guard;
-  if (!env.ASSETS_BUCKET) return json({ success: true, data: [] });
   const url = new URL(request.url);
-  const limit = Math.max(1, Math.min(numberValue(url.searchParams.get("limit")) || 500, 5000));
-  const object = await env.ASSETS_BUCKET.get(pointLedgerKey);
-  const data = object ? await object.json().catch(() => []) : [];
-  return json({ success: true, data: Array.isArray(data) ? data.slice(0, limit) : [] });
+  const limit = Math.max(1, Math.min(numberValue(url.searchParams.get("limit")) || 200, 500));
+  const lineUserId = clean(url.searchParams.get("lineUserId"));
+  const payload: Record<string, unknown> = lineUserId ? { LINE_user_id: lineUserId, page: 1, per_page: limit } : { shop_id: Number(env.WETW_SHOP_ID || 35), page: 1, per_page: limit };
+  const result = await queryPointBalanceOnce(env, payload) as Record<string, unknown>;
+  if (result.success !== true) return json({ success: false, message: clean(result.message) || clean(result.code) || "mother point ledger query failed", data: [], raw: result }, 502);
+  const list = Array.isArray(result.list) ? result.list.map(asRecord) : [];
+  return json({ success: true, data: pointLogsFromMotherList(list), raw: result });
 }
 
 function publicNativeForm(form: NativeForm) {
@@ -5464,7 +5319,6 @@ export default {
 	    if (redeemMatch && request.method === "GET") return getRedeemRequest(request, env, decodeURIComponent(redeemMatch[1]));
 	    if (redeemMatch && request.method === "POST") return confirmRedeemRequest(request, env, decodeURIComponent(redeemMatch[1]));
 	    if (request.method === "POST" && url.pathname === "/api/points/adjust") return adjustMemberPointApi(request, env);
-	    if (request.method === "POST" && url.pathname === "/api/points/sync-legacy") return syncLegacyPointApi(request, env);
 	    if (request.method === "GET" && url.pathname === "/api/points/ledger") return listPointLedgerApi(request, env);
 	    if (request.method === "POST" && url.pathname === "/api/member-points/batch") return queryMemberPointBatchApi(request, env);
 	    const pointMatch = url.pathname.match(/^\/api\/points\/([^/]+)$/);

@@ -411,7 +411,7 @@
       }
       if (item.success) {
         cell.textContent = Number.isFinite(Number(item.balance)) ? String(Number(item.balance)) : "0";
-        cell.title = `${item.cached ? "本地快取" : "母站同步"}；LINE UID: ${uid}${item.syncedAt ? `；同步時間: ${item.syncedAt}` : ""}`;
+        cell.title = `母站即時查詢；LINE UID: ${uid}${item.syncedAt ? `；同步時間: ${item.syncedAt}` : ""}`;
       } else {
         cell.textContent = "查詢失敗";
         cell.title = item.message || "點數查詢失敗";
