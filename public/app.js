@@ -1389,6 +1389,22 @@
     toast("測試資料已清空");
   }
 
+  const wait = (ms) => new Promise(resolve => setTimeout(resolve, ms));
+  function setSubmitState(form, text, disabled = true) {
+    const button = form?.querySelector("button[type='submit']");
+    if (!button) return null;
+    if (!button.dataset.defaultText) button.dataset.defaultText = button.textContent || "儲存";
+    button.disabled = disabled;
+    button.textContent = text || button.dataset.defaultText;
+    return button;
+  }
+  function resetSubmitState(form) {
+    const button = form?.querySelector("button[type='submit']");
+    if (!button) return;
+    button.disabled = false;
+    button.textContent = button.dataset.defaultText || "儲存";
+  }
+
   function bind() {
     ensureActivityEditorFields();
     const enhancedActivityForm = document.querySelector("#drawer-activity");
@@ -1398,9 +1414,13 @@
         event.preventDefault();
         event.stopImmediatePropagation();
         const form = event.currentTarget;
+        setSubmitState(form, "儲存中...");
         const d = Object.fromEntries(new FormData(form));
         const activity = state.data.activities.find((item) => item.id === d.id);
-        if (!activity) return;
+        if (!activity) {
+          resetSubmitState(form);
+          return;
+        }
         Object.assign(activity, {
           name: d.name,
           type: d.type,
@@ -1432,10 +1452,17 @@
             }
           } catch (error) {
             toast(error.message || "圖片上傳失敗");
+            resetSubmitState(form);
             return;
           }
         }
-        await ensureNativeFormForActivity(activity, email);
+        try {
+          await ensureNativeFormForActivity(activity, email);
+        } catch (error) {
+          toast(error?.message || "報名表處理失敗");
+          resetSubmitState(form);
+          return;
+        }
         state.data.formSettings ||= {};
         state.data.formSettings[activity.id] ||= {};
         Object.assign(state.data.formSettings[activity.id], {
@@ -1453,12 +1480,15 @@
           Object.assign(activity, saved || {});
         } catch (error) {
           toast(error?.message || "活動儲存失敗");
+          resetSubmitState(form);
           return;
         }
+        setSubmitState(form, "已完成", true);
+        toast("活動已儲存");
+        await wait(650);
         state.drawer = "";
         save();
         render();
-        toast("活動已儲存");
       }, true);
     }
     const sidebarToggle = document.querySelector("[data-sidebar-toggle]");
@@ -1586,8 +1616,8 @@
       if (url) location.href = url;
       else toast("這個活動尚未建立報名表，請到編輯活動產生。");
     });
-    const af = document.querySelector("#activity-form"); if (af) af.onsubmit = async e => { e.preventDefault(); const d = Object.fromEntries(new FormData(af)); const templateMode = d.templateMode || "custom"; const registrationMode = d.registrationMode || (templateMode === "mode1_vendor_visit" ? "member_login" : "form"); const item = { id: uid(), name: d.name.trim(), templateMode, type: d.type, typeLabel: formTypeLabel(d), courseTime: d.courseTime, deadline: d.deadline, capacity: Number(d.capacity || 0), checkinPoints: Number(d.checkinPoints || 0), feePoints: Number(d.feePoints || 0), paymentAmount: Number(d.paymentAmount || 0), remittanceInfo: d.remittanceInfo || "", registrationMode, detailText: d.detailText || "", reg: 0, check: 0, status: d.status, formUrl: "" }; try { const saved = await saveActivityRemote(item); state.data.activities.unshift(saved || item); state.view = "dashboard"; render(); toast("活動已建立"); } catch (err) { toast(err?.message || "活動建立失敗"); } };
-    const ea = document.querySelector("#drawer-activity"); if (ea) ea.onsubmit = async e => { e.preventDefault(); const d = Object.fromEntries(new FormData(ea)); const x = state.data.activities.find(r => r.id === d.id); if (x) { Object.assign(x, { name: d.name, templateMode: d.templateMode || x.templateMode || "custom", type: d.type, typeLabel: formTypeLabel(d), courseTime: d.courseTime, deadline: d.deadline, capacity: Number(d.capacity || 0), checkinPoints: Number(d.checkinPoints || 0), feePoints: Number(d.feePoints || 0), paymentAmount: Number(d.paymentAmount || 0), remittanceInfo: d.remittanceInfo || "", registrationMode: d.registrationMode || "form", reg: Number(d.reg || 0), check: Number(d.check || 0), status: d.status, formUrl: d.formUrl }); try { const saved = await saveActivityRemote(x); Object.assign(x, saved || {}); } catch (err) { toast(err?.message || "活動儲存失敗"); return; } } state.drawer = ""; save(); render(); toast("活動已儲存"); };
+    const af = document.querySelector("#activity-form"); if (af) af.onsubmit = async e => { e.preventDefault(); setSubmitState(af, "儲存中..."); const d = Object.fromEntries(new FormData(af)); const templateMode = d.templateMode || "custom"; const registrationMode = d.registrationMode || (templateMode === "mode1_vendor_visit" ? "member_login" : "form"); const item = { id: uid(), name: d.name.trim(), templateMode, type: d.type, typeLabel: formTypeLabel(d), courseTime: d.courseTime, deadline: d.deadline, capacity: Number(d.capacity || 0), checkinPoints: Number(d.checkinPoints || 0), feePoints: Number(d.feePoints || 0), paymentAmount: Number(d.paymentAmount || 0), remittanceInfo: d.remittanceInfo || "", registrationMode, detailText: d.detailText || "", reg: 0, check: 0, status: d.status, formUrl: "" }; try { const saved = await saveActivityRemote(item); state.data.activities.unshift(saved || item); setSubmitState(af, "已完成", true); toast("活動已建立"); await wait(650); state.view = "dashboard"; render(); } catch (err) { toast(err?.message || "活動建立失敗"); resetSubmitState(af); } };
+    const ea = document.querySelector("#drawer-activity"); if (ea) ea.onsubmit = async e => { e.preventDefault(); setSubmitState(ea, "儲存中..."); const d = Object.fromEntries(new FormData(ea)); const x = state.data.activities.find(r => r.id === d.id); if (x) { Object.assign(x, { name: d.name, templateMode: d.templateMode || x.templateMode || "custom", type: d.type, typeLabel: formTypeLabel(d), courseTime: d.courseTime, deadline: d.deadline, capacity: Number(d.capacity || 0), checkinPoints: Number(d.checkinPoints || 0), feePoints: Number(d.feePoints || 0), paymentAmount: Number(d.paymentAmount || 0), remittanceInfo: d.remittanceInfo || "", registrationMode: d.registrationMode || "form", reg: Number(d.reg || 0), check: Number(d.check || 0), status: d.status, formUrl: d.formUrl }); try { const saved = await saveActivityRemote(x); Object.assign(x, saved || {}); } catch (err) { toast(err?.message || "活動儲存失敗"); resetSubmitState(ea); return; } } setSubmitState(ea, "已完成", true); toast("活動已儲存"); await wait(650); state.drawer = ""; save(); render(); };
     const mf = document.querySelector("#drawer-member"); if (mf) mf.onsubmit = e => { e.preventDefault(); const type = mf.dataset.type; const d = Object.fromEntries(new FormData(mf)); const rows = state.data[type]; const old = rows.find(r => r.id === d.id); const loginAccess = d.loginAccess === "Y"; const item = { ...d, id: d.id || uid(), loginAccess, allowLogin: loginAccess, canLogin: loginAccess }; old ? Object.assign(old, item) : rows.unshift(item); state.drawer = ""; save(); syncRosterMemberToWorker(type, item); syncAdminAccessForMember(type, item); render(); toast("名冊已儲存"); };
     const im = document.querySelector("#import-form"); if (im) im.onsubmit = e => { e.preventDefault(); const d = Object.fromEntries(new FormData(im)); const count = importRows(im.dataset.type, d.csv || ""); state.drawer = ""; render(); toast(`已導入 ${count} 筆資料`); };
     const loadRoster = document.querySelector("[data-load-roster]"); if (loadRoster) loadRoster.onclick = () => loadRosterSeed(true);
