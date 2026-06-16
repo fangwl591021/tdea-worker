@@ -241,6 +241,14 @@
     }
   }
 
+  function lineLoginRedirectUri() {
+    const url = new URL(location.href);
+    url.searchParams.set("adminLogin", "1");
+    ["code", "state", "liff.state", "friendship_status_changed"].forEach((key) => url.searchParams.delete(key));
+    url.hash = "";
+    return url.href;
+  }
+
   async function completeLineLogin({ button = null, redirectIfNeeded = true } = {}) {
     if (button) {
       button.disabled = true;
@@ -249,7 +257,7 @@
     await ensureLiffSdk();
     await liff.init({ liffId: adminLiffId });
     if (!liff.isLoggedIn()) {
-      if (redirectIfNeeded) liff.login({ redirectUri: adminLiffUrl });
+      if (redirectIfNeeded) liff.login({ redirectUri: lineLoginRedirectUri() });
       return false;
     }
     const profile = await liff.getProfile();
