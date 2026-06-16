@@ -2197,12 +2197,17 @@ async function resolveRedeemMember(env: Env, input: { lineUserId?: unknown; phon
   if (lineUserId) return { lineUserId, member: await resolveLineLoginMember(env, lineUserId) };
   const phone = firstClean(input.phone);
   if (!phone) return { lineUserId: "", member: null };
+  const managerData = await readManagerData(env);
+  const rosterRows = [
+    ...(Array.isArray(managerData?.association) ? managerData.association.map(asRecord) : []),
+    ...(Array.isArray(managerData?.vendor) ? managerData.vendor.map(asRecord) : [])
+  ];
   const rows = await readAiweMembers(env);
-  const matched = rows.filter((row) => rowMatchesPhone(row, phone));
+  const matched = [...rosterRows, ...rows].filter((row) => rowMatchesPhone(row, phone));
   if (!matched.length) return { lineUserId: "", member: null, phone, message: "查無此手機對應會員" };
-  const withUid = matched.find((row) => memberLineUid(row));
+  const withUid = matched.find((row) => explicitMemberLineUid(row));
   if (!withUid) return { lineUserId: "", member: null, phone, message: "此手機會員尚未綁定 LINE UID" };
-  const uid = memberLineUid(withUid);
+  const uid = explicitMemberLineUid(withUid);
   return { lineUserId: uid, member: publicAiweMember(withUid), phone };
 }
 
