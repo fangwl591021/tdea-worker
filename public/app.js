@@ -9,8 +9,8 @@
   const sidebarCollapsedKey = "tdea-sidebar-collapsed";
   const labels = {
     dashboard: ["活動總覽", "查看活動狀態、報名與簽到概況。"],
-    association: ["協會名冊", "維護協會會員資料與會員資格，可匯入 CSV。"],
-    vendor: ["廠商名冊", "維護廠商會員、統編、窗口與備註，可匯入 CSV。"],
+    association: ["會員 CRM", "維護協會會員檔案、會員資格與點數資料，可匯入 CSV。"],
+    vendor: ["廠商 CRM", "維護廠商會員檔案、統編、窗口與備註，可匯入 CSV。"],
     creator: ["創建活動", "建立活動草稿，之後可直接改接 D1。"],
     keywords: ["關鍵字", "整理 LINE OA 觸發關鍵字、用途與回覆行為。"],
     adminWhitelist: ["白名單", "管理後台、核銷與 LINE 工具使用權限。"],
@@ -952,6 +952,8 @@
     style.textContent = `
       .drawer-panel:has(.crm-member-profile-layout){background:#f5f7fb;padding:0;display:flex;flex-direction:column}
       .drawer-panel:has(.crm-member-profile-layout) .drawer-title{height:72px;margin:0;padding:14px 22px;background:#fff;border-bottom:1px solid #e5e7eb;box-shadow:0 1px 4px rgba(15,23,42,.06)}
+      .crm-member-title{margin:0;font-size:22px;font-weight:900;color:#172033;display:flex;align-items:center;gap:16px;flex-wrap:wrap}
+      .crm-member-title small{font-size:13px;font-family:ui-monospace,SFMono-Regular,Consolas,monospace;color:#667085;background:#f1f5f9;border:1px solid #dbe3ee;border-radius:8px;padding:7px 12px}
       .crm-member-profile-layout{display:grid;grid-template-columns:minmax(0,1fr) minmax(360px,420px);gap:28px;align-items:start;padding:40px 30px 96px;min-height:calc(100vh - 72px)}
       .crm-member-card,.member-point-panel,.member-registration-history{background:#fff;border:1px solid #dfe5ee;border-radius:16px;box-shadow:none;overflow:hidden}
       .crm-member-card{grid-column:1;grid-row:1}
@@ -991,7 +993,7 @@
         <aside class="sidebar">
           <div class="brand"><span>TDEA 管理中心</span><button class="sidebar-toggle" type="button" data-sidebar-toggle title="${collapsed ? "展開選單" : "收合選單"}" aria-label="${collapsed ? "展開選單" : "收合選單"}">${collapsed ? "›" : "‹"}</button></div>
           ${adminProfileHtml()}
-          <nav class="nav">${nav("dashboard", "活動總覽")}${nav("association", "協會名冊")}${nav("vendor", "廠商名冊")}${nav("creator", "創建活動")}${nav("redeem", "點數折抵")}</nav>
+          <nav class="nav">${nav("dashboard", "活動總覽")}${nav("association", "會員 CRM")}${nav("vendor", "廠商 CRM")}${nav("creator", "創建活動")}${nav("redeem", "點數折抵")}</nav>
         </aside>
         <main class="main">
           <div class="topbar"><div><h1>${title}</h1><div class="subtitle">${sub}</div></div><div class="actions">${actions()}</div></div>
@@ -1070,7 +1072,7 @@
     const body = `<div class="table-wrap"><table><thead><tr><th>會員編號</th><th>${vendor ? "公司名稱" : "姓名"}</th><th>LINE UID</th><th>點數</th><th>${vendor ? "統編" : "身分"}</th><th>${vendor ? "聯絡窗口" : "性別"}</th><th>資格</th><th>舊允許</th><th>備註</th><th>操作</th></tr></thead><tbody>${allRows.map(x => {
       const searchText = rosterSearchValue(x, vendor);
       const hidden = rosterSearchQuery(type) && !searchText.includes(rosterSearchQuery(type));
-      return `<tr data-roster-row="${type}" data-roster-search-text="${esc(searchText)}" ${hidden ? `style="display:none"` : ""}><td>${esc(x.memberNo)}</td><td><strong>${esc(vendor ? x.companyName : x.name)}</strong></td><td>${esc(shortUid(memberLineUid(x)))}</td><td>${esc(x.pointBalance ?? x.points ?? "")}</td><td>${esc(vendor ? x.taxId : x.identity)}</td><td>${esc(vendor ? x.contact : x.gender)}</td><td><span class="badge ${x.qualification === "Y" ? "live" : "off"}">${esc(x.qualification)}</span></td><td><label class="sync-toggle"><input type="checkbox" data-member-login-toggle="${type}:${x.id}" ${memberLoginAllowed(x) ? "checked" : ""}> 舊資料</label></td><td>${esc(x.note)}</td><td><button class="link" data-drawer="${type}:${x.id}">編輯</button><span class="muted"> / </span><button class="link danger-link" data-delete-member="${type}:${x.id}">刪除</button></td></tr>`;
+      return `<tr data-roster-row="${type}" data-roster-search-text="${esc(searchText)}" ${hidden ? `style="display:none"` : ""}><td>${esc(x.memberNo)}</td><td><strong>${esc(vendor ? x.companyName : x.name)}</strong></td><td>${esc(shortUid(memberLineUid(x)))}</td><td>${esc(x.pointBalance ?? x.points ?? "")}</td><td>${esc(vendor ? x.taxId : x.identity)}</td><td>${esc(vendor ? x.contact : x.gender)}</td><td><span class="badge ${x.qualification === "Y" ? "live" : "off"}">${esc(x.qualification)}</span></td><td><label class="sync-toggle"><input type="checkbox" data-member-login-toggle="${type}:${x.id}" ${memberLoginAllowed(x) ? "checked" : ""}> 舊資料</label></td><td>${esc(x.note)}</td><td><button class="link" data-drawer="${type}:${x.id}">CRM 檔案</button><span class="muted"> / </span><button class="link danger-link" data-delete-member="${type}:${x.id}">刪除</button></td></tr>`;
     }).join("")}</tbody></table></div>`;
     return `<section class="panel"><div class="panel-head"><h2 class="panel-title">${title}</h2><div class="actions">${search}${count}<button class="btn" data-import="${type}">匯入 CSV</button><button class="btn" data-export>匯出備份</button></div></div>${body}</section>`;
   }
@@ -1174,7 +1176,16 @@
     const [type, rowId] = state.drawer.split(":");
     const title = type === "activity" ? "編輯活動" : type === "registrations" ? "報名名單" : type === "vendor" ? "編輯廠商會員" : type === "association" ? "編輯協會會員" : type === "import-vendor" ? "匯入廠商名冊" : "匯入協會名冊";
     const content = type === "activity" ? activityForm(rowId) : type === "registrations" ? registrationList(rowId) : type.startsWith("import-") ? importForm(type.replace("import-", "")) : memberForm(type, rowId);
-    return `<div class="drawer open" id="drawer"><div class="drawer-backdrop" data-close></div><div class="drawer-panel"><div class="drawer-title"><h2>${title}</h2><button class="btn icon" data-close>×</button></div>${content}</div></div>`;
+    const memberTitle = memberDrawerTitle(type, rowId);
+    return `<div class="drawer open" id="drawer"><div class="drawer-backdrop" data-close></div><div class="drawer-panel"><div class="drawer-title">${memberTitle || `<h2>${title}</h2>`}<button class="btn icon" data-close>×</button></div>${content}</div></div>`;
+  }
+  function memberDrawerTitle(type, rowId) {
+    if (!["association", "vendor"].includes(type)) return "";
+    if (!rowId || rowId === "new") return `<h2>${type === "vendor" ? "新增廠商 CRM 檔案" : "新增會員 CRM 檔案"}</h2>`;
+    const row = state.data[type]?.find(item => item.id === rowId) || {};
+    const name = type === "vendor" ? firstValue(row.companyName, row.name, row.memberNo) : firstValue(row.name, row.memberNo);
+    const uid = memberLineUid(row);
+    return `<h2 class="crm-member-title"><span>會員檔案：${esc(name || "未命名")}</span>${uid ? `<small>UID: ${esc(uid)}</small>` : ""}</h2>`;
   }
   function registrationList(rowId) {
     const activity = state.data.activities.find(r => r.id === rowId) || {};
