@@ -19,7 +19,7 @@ type NativeField = { key: string; label: string; type: string; required?: boolea
 type NativeSession = { id: string; name: string; startTime?: string; endTime?: string; capacity?: number; status?: string };
 type NativeForm = { id: string; provider: "native_form"; activity: Record<string, unknown>; settings: Record<string, unknown>; fields: NativeField[]; sessions: NativeSession[]; formUrl: string; createdAt: string; updatedAt: string };
 type LineLoginMember = { rosterType: "association" | "vendor"; memberNo: string; name: string; role: string; lineUserId: string; company?: string; phone?: string; email?: string; gender?: string; raw: Record<string, unknown> };
-type PointLog = { logId: string; lineUserId: string; type: "EARN" | "SPEND"; amount: number; points: number; reason: string; balanceAfter: number; createdAt: string; createdTs: number; source?: string; referenceId?: string; externalSync?: unknown };
+type PointLog = { logId: string; lineUserId: string; type: "EARN" | "SPEND"; amount: number; points: number; reason: string; balanceAfter: number; createdAt: string; createdTs: number; source?: string; referenceId?: string; externalSync?: unknown; externalBalanceSync?: unknown };
 type PointAccount = { balance: number; logs: PointLog[]; updatedAt?: string; source?: string; syncedAt?: string; externalRaw?: unknown };
 type RedeemMode = "fixed" | "manual" | "rate";
 type RedeemTransaction = { id: string; lineUserId: string; amount?: number; points: number; balanceBefore?: number; balanceAfter?: number; createdAt: string; note?: string; pointResult?: unknown };
@@ -82,6 +82,12 @@ const publicAppUrl = "https://fangwl591021.github.io/tdea-worker/";
 const publicLiffUrl = "https://liff.line.me/2005868456-2jmxqyFU";
 const nativeLiffUrl = "https://liff.line.me/2005868456-cfANNVou";
 const pointApiBase = "https://aiwe.cc/index.php/wp-json/wetw-point/v1";
+function motherPointSyncRequired(env: Env) {
+  return clean(env.TDEA_POINT_EXTERNAL_SYNC).toLowerCase() !== "false";
+}
+function motherPointApiReady(env: Env) {
+  return motherPointSyncRequired(env) && Boolean(clean(env.WETW_POINT_API_KEY));
+}
 const headers = { "access-control-allow-origin": "*", "access-control-allow-methods": "GET,POST,PUT,DELETE,OPTIONS", "access-control-allow-headers": "content-type,x-admin-email,x-admin-member-no,x-line-user-id,x-line-uid,x-aiwe-token,x-line-signature" };
 
 const json = (data: unknown, status = 200) => new Response(JSON.stringify(data), { status, headers: { "content-type": "application/json; charset=utf-8", "cache-control": "no-store", ...headers } });
@@ -1931,7 +1937,18 @@ async function updateLocalPoints(env: Env, lineUserId: string, amount: number, r
   const numericAmount = Number(amount || 0);
   if (!lineUserId || !numericAmount) return { success: false, message: "缺少 LINE UID 或點數異動值" };
   const account = await readPointAccount(env, lineUserId);
-  const nextBalance = numberValue(account.balance) + numericAmount;
+  let nextBalance = numberValue(account.balance) + numericAmount;
+  let externalSync: unknown = null;
+  let externalBalanceSync: unknown = null;
+  if (!options.skipExternalSync && motherPointSyncRequired(env)) {
+    if (!clean(env.WETW_POINT_API_KEY)) return { success: false, code: "missing_api_key", message: "母站點數 API Key 尚未設定，不能異動點數" };
+    externalSync = await insertMemberPoint(env, { lineUserId, eventName: numericAmount >= 0 ? "TDEA 贈點" : "TDEA 扣點", eventContent: reason, points: numericAmount, remark: options.referenceId || "" }) as Record<string, unknown>;
+    if ((externalSync as Record<string, unknown>).success !== true || clean((externalSync as Record<string, unknown>).code) !== "insert_success") {
+      return { success: false, message: clean((externalSync as Record<string, unknown>).message) || "母站點數寫入失敗", externalSync };
+    }
+    externalBalanceSync = await syncMotherPointToLocal(env, lineUserId) as Record<string, unknown>;
+    if ((externalBalanceSync as Record<string, unknown>).success === true) nextBalance = numberValue((externalBalanceSync as Record<string, unknown>).balance);
+  }
   const createdTs = Date.now();
   const log: PointLog = {
     logId: crypto.randomUUID ? crypto.randomUUID() : String(createdTs),
@@ -1946,10 +1963,10 @@ async function updateLocalPoints(env: Env, lineUserId: string, amount: number, r
     source: options.source || "tdea",
     referenceId: options.referenceId || ""
   };
-  if (!options.skipExternalSync && clean(env.TDEA_POINT_EXTERNAL_SYNC).toLowerCase() !== "false" && env.WETW_POINT_API_KEY) {
-    log.externalSync = await insertMemberPoint(env, { lineUserId, eventName: numericAmount >= 0 ? "TDEA 贈點" : "TDEA 扣點", eventContent: reason, points: numericAmount, remark: options.referenceId || "" });
-  }
-  const next: PointAccount = { balance: nextBalance, logs: [log, ...(account.logs || [])].slice(0, 100) };
+  if (externalSync) log.externalSync = externalSync;
+  if (externalBalanceSync) log.externalBalanceSync = externalBalanceSync;
+  const syncedAccount = externalBalanceSync && (externalBalanceSync as Record<string, unknown>).success === true ? await readPointAccount(env, lineUserId) : account;
+  const next: PointAccount = { ...syncedAccount, balance: nextBalance, logs: [log, ...(syncedAccount.logs || [])].slice(0, 100) };
   await writePointAccount(env, lineUserId, next);
   await appendPointLedger(env, log);
   return { success: true, balance: nextBalance, log, account: next };
@@ -2053,6 +2070,13 @@ async function importLegacyPointsOnce(env: Env, lineUserId: string, force = fals
 
 async function getUnifiedPointAccount(env: Env, lineUserId: string, options: { autoImport?: boolean } = {}) {
   const before = await readPointAccount(env, lineUserId);
+  if (motherPointSyncRequired(env)) {
+    if (!motherPointApiReady(env)) return { success: false, balance: numberValue(before.balance), logs: before.logs || [], message: "母站點數 API Key 尚未設定" };
+    const synced = await syncMotherPointToLocal(env, lineUserId) as Record<string, unknown>;
+    const account = await readPointAccount(env, lineUserId);
+    if (synced.success !== true) return { success: false, balance: numberValue(account.balance), logs: account.logs || [], message: clean(synced.message) || clean(synced.code) || "母站點數查詢失敗", externalRaw: synced };
+    return { success: true, balance: numberValue(account.balance), logs: account.logs || [], imported: null, legacySynced: await getLegacySyncRecord(env, lineUserId), motherSynced: synced };
+  }
   let importResult: unknown = null;
   const synced = await getLegacySyncRecord(env, lineUserId);
   if (options.autoImport && !synced?.importedAt && numberValue(before.balance) <= 0) {
@@ -2255,6 +2279,7 @@ async function confirmRedeemRequest(request: Request, env: Env, token: string) {
   if (!points) return json({ success: false, message: "請輸入扣抵點數" }, 400);
   if (redeem.maxPoints && points > redeem.maxPoints) return json({ success: false, message: `超過此授權單次可扣抵上限 ${redeem.maxPoints} 點` }, 409);
   const account = await getUnifiedPointAccount(env, lineUserId, { autoImport: true }) as Record<string, unknown>;
+  if (account.success !== true) return json({ success: false, message: clean(account.message) || "母站點數查詢失敗", data: account }, 502);
   const pointBalance = Number(account.balance || 0);
   if (pointBalance < points) return json({ success: false, message: `點數不足，目前可用 ${pointBalance} 點`, data: { balance: pointBalance, required: points } }, 409);
   const reason = firstClean(clean(input.note), redeem.note, amount ? `${redeem.vendorName} 消費折抵 ${amount}` : `${redeem.vendorName} 扣抵 ${points} 點`);
