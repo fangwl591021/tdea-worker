@@ -1005,6 +1005,18 @@
     restart();
   }
 
+  function marqueePointDetailHtml(result) {
+    const balance = result.balance ?? result.pointBalance ?? result.point_balance ?? "-";
+    const rows = Array.isArray(result.logs) && result.logs.length ? result.logs : (Array.isArray(result.list) ? result.list : []);
+    const detail = rows.slice(0, 5).map((row) => {
+      const amount = row.amount ?? row.points ?? row.point ?? row.change_point ?? row.changed_point ?? "";
+      const reason = row.reason || row.event_name || row.event_content || row.shop_remark || "";
+      const time = row.createdAt || row.created_at || row.create_time || row.date || "";
+      const balanceAfter = row.balanceAfter ?? row.point_balance ?? "";
+      return `<li><strong>${esc(amount)}</strong><span>${esc(reason || "點數異動")}</span><small>${esc(time)}${balanceAfter !== "" ? `｜餘額 ${esc(balanceAfter)}` : ""}</small></li>`;
+    }).join("");
+    return `<div><strong>目前點數餘額：${esc(balance)}</strong>${detail ? `<ul style="margin:10px 0 0;padding-left:18px;display:grid;gap:8px;text-align:left">${detail}</ul>` : `<div style="margin-top:8px">目前沒有明細。</div>`}</div>`;
+  }
   async function showMarquee() {
     renderLoading("載入廣告贈點...");
     const uid = await loadLiff({ login: true });
@@ -1020,7 +1032,7 @@
     renderShell(`<section class="nf-card nf-marquee-card"><div class="nf-body">
       <div class="nf-marquee-square">${marqueeSliderHtml(items)}</div>
       <div class="nf-marquee-buttons">
-        <button class="nf-btn" data-marquee-action="checkin" ${left.enabled === false ? "disabled" : ""}>${esc(left.label || "簽到贈點")}</button>
+        <button class="nf-btn" data-marquee-action="checkin" ${left.enabled === false ? "disabled" : ""}>${esc((left.label || "系統簽到").replace("簽到贈點", "系統簽到"))}</button>
         <button class="nf-btn primary" data-marquee-action="points" ${right.enabled === false ? "disabled" : ""}>${esc(right.label || "查詢點數")}</button>
       </div>
       <div class="nf-ok" data-marquee-result hidden></div>
@@ -1094,11 +1106,11 @@
           const actionResult = await actionResponse.json().catch(() => ({}));
           if (!actionResponse.ok || !actionResult.success) {
             resultNode.hidden = false;
-            resultNode.textContent = actionResult.message || "簽到贈點失敗";
+            resultNode.textContent = actionResult.message || "系統簽到失敗";
             return;
           }
           resultNode.hidden = false;
-          resultNode.textContent = `已贈點，餘額 ${actionResult.balanceAfter ?? actionResult.balance ?? "-"}`;
+          resultNode.textContent = `系統簽到完成，餘額 ${actionResult.balanceAfter ?? actionResult.balance ?? "-"}`;
           return;
         }
         button.textContent = "送出中...";
@@ -1113,10 +1125,9 @@
         button.textContent = label;
         if (!actionResponse.ok || !actionResult.success) return alert(actionResult.message || "點數查詢失敗");
         const resultNode = app.querySelector("[data-marquee-result]");
-        const message = `目前點數餘額：${actionResult.balance ?? 0}`;
         if (resultNode) {
           resultNode.hidden = false;
-          resultNode.textContent = message;
+          resultNode.innerHTML = marqueePointDetailHtml(actionResult);
         }
         alert(message);
       });

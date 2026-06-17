@@ -1903,7 +1903,7 @@ async function rewardMarqueePoint(request: Request, env: Env) {
   const config = await readMarqueeConfig(env);
   if (config.enabled === false) return json({ success: false, message: "廣告贈點尚未啟用" }, 403);
   if (clean(input.action) === "checkin") {
-    if (config.left?.enabled === false) return json({ success: false, message: "簽到贈點尚未啟用" }, 403);
+    if (config.left?.enabled === false) return json({ success: false, message: "系統簽到尚未啟用" }, 403);
     const points = Math.max(1, Math.round(Number(config.left?.points || 1)));
     const eventContent = clean(config.left?.eventContent || "廣告贈點系統簽到") || "廣告贈點系統簽到";
     const referenceId = `marquee:${taipeiDateKey()}:button:left`;
@@ -1955,11 +1955,13 @@ async function queryMarqueePoints(request: Request, env: Env) {
   if (config.enabled === false) return json({ success: false, message: "廣告贈點尚未啟用" }, 403);
   if (config.right?.enabled === false) return json({ success: false, message: "查詢按鈕尚未啟用" }, 403);
   const result = await queryPointBalance(env, lineUserId) as Record<string, unknown>;
+  const list = Array.isArray(result.list) ? result.list.map(asRecord) : [];
   return json({
     success: result.success !== false,
     lineUserId,
     balance: result.balance ?? 0,
-    list: Array.isArray(result.list) ? result.list.slice(0, 5) : [],
+    list: list.slice(0, 5),
+    logs: pointLogsFromMotherList(list, lineUserId).slice(0, 5),
     result
   }, result.success === false ? 502 : 200);
 }

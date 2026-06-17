@@ -47,7 +47,7 @@
       imageUrl: "",
       imageUrls: [],
       imageItems: [],
-      left: blankButton("簽到贈點"),
+      left: blankButton("系統簽到"),
       right: { ...blankButton("查詢點數"), eventName: "TDEA 廣告贈點 查詢點數", eventContent: "查詢母站點數", points: 1 }
     };
   }
@@ -87,7 +87,7 @@
     next.imageItems = normalizeItems(next);
     next.imageUrls = next.imageItems.map((item) => item.imageUrl);
     next.imageUrl = next.imageUrls[0] || "";
-    next.left = normalizeButton(next.left, "簽到贈點");
+    next.left = normalizeButton(next.left, "系統簽到");
     next.right = normalizeButton(next.right, "查詢點數");
     return next;
   }
@@ -248,7 +248,7 @@
         </aside>
         <section class="panel" style="grid-column:1/-1">
           <div class="panel-head"><h2 class="panel-title">底部按鈕設定</h2></div>
-          <div class="marquee-form"><div class="marquee-button-grid">${buttonFields("left", config.left || blankButton("簽到贈點"))}${buttonFields("right", config.right || blankButton("查詢點數"))}</div></div>
+          <div class="marquee-form"><div class="marquee-button-grid">${buttonFields("left", config.left || blankButton("系統簽到"))}${buttonFields("right", config.right || blankButton("查詢點數"))}</div></div>
         </section>
       </div>
       <div class="toast" id="marquee-toast"></div>
