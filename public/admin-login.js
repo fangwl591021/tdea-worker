@@ -28,7 +28,7 @@
     "login-access.js?v=login6",
     "flex-manager.js?v=flex4",
     "vendor-card-manager.js?v=vendor-card7",
-    "marquee-manager.js?v=ad-points1",
+    "marquee-manager.js?v=ad-points-row-upload1",
     "push-manager.js?v=push6",
     "calendar-manager.js?v=calendar3",
     "monthly-activity.js?v=monthly35",

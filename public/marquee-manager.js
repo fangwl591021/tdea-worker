@@ -132,9 +132,11 @@
       .marquee-button-card{border:1px solid #e4e7ec;border-radius:10px;padding:14px;display:grid;gap:12px;background:#fff}
       .marquee-liff{display:flex;gap:8px;align-items:center;flex-wrap:wrap;padding:12px 14px;border-radius:10px;background:#f8fafc;border:1px solid #e4e7ec;color:#344054}
       .marquee-images{display:grid;gap:10px}
-      .marquee-image-row{display:grid;grid-template-columns:1fr 1fr 120px 180px auto;gap:8px;align-items:end;border:1px solid #e4e7ec;border-radius:8px;padding:10px;background:#f8fafc}
+      .marquee-image-row{display:grid;grid-template-columns:1fr 1fr 110px 150px 118px auto;gap:8px;align-items:end;border:1px solid #e4e7ec;border-radius:8px;padding:10px;background:#f8fafc}
       .marquee-image-row label{display:grid;gap:4px;font-weight:800;color:#344054}
       .marquee-image-row input{width:100%;box-sizing:border-box}
+      .marquee-replace-control{display:grid;gap:4px}
+      .marquee-replace-control input{display:none}
       .marquee-image-status{border-radius:999px;padding:10px 12px;font-weight:900;text-align:center;background:#ecfdf3;color:#067647;white-space:nowrap}
       .marquee-image-status.warn{background:#fff3f0;color:#b42318}
       .marquee-dots{position:absolute;left:0;right:0;bottom:10px;display:flex;gap:6px;justify-content:center}
@@ -198,6 +200,7 @@
         <label>點擊連結網址<input data-marquee-item="${esc(item.id)}" data-field="linkUrl" value="${esc(item.linkUrl)}" placeholder="https://..."></label>
         <label>每日贈點<input type="number" min="1" step="1" data-marquee-item="${esc(item.id)}" data-field="points" value="${esc(item.points || 1)}"></label>
         <div class="marquee-image-status ${item.linkUrl ? "" : "warn"}">${item.linkUrl ? "贈點並跳轉" : "只贈點不跳轉"}</div>
+        <label class="marquee-replace-control"><span>替換圖片</span><button class="btn" type="button" data-marquee-pick-image="${esc(item.id)}">選擇圖片</button><input type="file" accept="image/*" data-marquee-replace-image="${esc(item.id)}"></label>
         <button class="btn danger" type="button" data-marquee-remove-image="${index}">刪除</button>
       </div>
     `).join("")}</div>`;
@@ -311,17 +314,33 @@
     toast("廣告贈點已儲存");
   }
 
+  async function uploadSingle(file) {
+    if (!file) return "";
+    const body = new FormData();
+    body.append("file", file);
+    const response = await fetch(api + "/api/marquee/upload", { method: "POST", headers: adminHeaders(), body });
+    const result = await response.json().catch(() => ({}));
+    if (!response.ok || !result.success) throw new Error(result.message || `HTTP ${response.status}`);
+    return result.url;
+  }
+
+  async function replaceImage(itemId, file) {
+    const url = await uploadSingle(file);
+    if (!url) return;
+    updateDraftOnly();
+    draft.imageItems = normalizeItems(draft).map((item) => item.id === itemId ? { ...item, imageUrl: url } : item);
+    draft = normalizeConfig(draft);
+    saveLocal(draft);
+    render();
+    toast("圖片已替換，請記得儲存並啟用");
+  }
+
   async function upload(files) {
     const list = [...(files || [])].filter(Boolean);
     if (!list.length) return;
     const uploaded = [];
     for (const file of list) {
-      const body = new FormData();
-      body.append("file", file);
-      const response = await fetch(api + "/api/marquee/upload", { method: "POST", headers: adminHeaders(), body });
-      const result = await response.json().catch(() => ({}));
-      if (!response.ok || !result.success) throw new Error(result.message || `HTTP ${response.status}`);
-      uploaded.push(result.url);
+      uploaded.push(await uploadSingle(file));
     }
     updateDraftOnly();
     draft.imageItems = normalizeItems(draft).concat(uploaded.map((url, index) => ({
@@ -370,6 +389,19 @@
     document.querySelector("[data-marquee-copy-url]")?.addEventListener("click", async () => {
       await navigator.clipboard?.writeText(liffUrl).catch(() => {});
       toast("LIFF URL 已複製");
+    });
+    document.querySelectorAll("[data-marquee-pick-image]").forEach((button) => {
+      button.addEventListener("click", () => {
+        document.querySelector(`[data-marquee-replace-image="${CSS.escape(button.dataset.marqueePickImage || "")}"]`)?.click();
+      });
+    });
+    document.querySelectorAll("[data-marquee-replace-image]").forEach((input) => {
+      input.addEventListener("change", async (event) => {
+        const itemId = event.target.dataset.marqueeReplaceImage || "";
+        try { await replaceImage(itemId, event.target.files?.[0]); }
+        catch (error) { toast(error.message || "替換失敗", true); }
+        finally { event.target.value = ""; }
+      });
     });
     document.querySelectorAll("[data-marquee-field],[data-marquee-button],[data-marquee-enabled],[data-marquee-item]").forEach((input) => {
       input.addEventListener("input", () => { updateDraftOnly(); updatePreviewOnly(); });
