@@ -1006,14 +1006,14 @@
   }
 
   async function showMarquee() {
-    renderLoading("載入跑馬燈...");
+    renderLoading("載入廣告贈點...");
     const uid = await loadLiff({ login: true });
     if (!uid) return renderError("無法取得 LINE UID，請從 LINE LIFF 開啟。");
     const response = await fetch(`${api}/api/marquee`, { cache: "no-store" });
     const result = await response.json().catch(() => ({}));
-    if (!response.ok || !result.success) return renderError(result.message || "跑馬燈資料讀取失敗");
+    if (!response.ok || !result.success) return renderError(result.message || "廣告贈點資料讀取失敗");
     const config = result.data || {};
-    if (config.enabled === false) return renderError("跑馬燈尚未啟用。");
+    if (config.enabled === false) return renderError("廣告贈點尚未啟用。");
     const right = config.right || {};
     const items = marqueeItems(config);
     renderShell(`<section class="nf-card nf-marquee-card"><div class="nf-body">

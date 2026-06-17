@@ -65,8 +65,9 @@ const googleMemberSheetCsvUrl = "https://docs.google.com/spreadsheets/d/1KzXzRsA
 const workerBaseUrl = "https://tdeawork.fangwl591021.workers.dev";
 const fixedKeyword = "TDEA每月活動";
 const vendorCardKeyword = "TDEA廠商列表";
-const marqueeKeyword = "TDEA跑馬燈";
+const marqueeKeyword = "TDEA廣告贈點";
 const queryKeyword = "TDEA活動查詢";
+const marqueeLegacyKeywords = ["TDEA跑馬燈"];
 const memberQrKeyword = "TDEA會員QR";
 const calendarKeyword = "TDEA行事曆";
 const personalMessageKeyword = "TDEA個人訊息";
@@ -726,7 +727,7 @@ function normalizeMarqueeButton(input: MarqueeButtonConfig | undefined, fallback
     enabled: input?.enabled !== false,
     label: clean(input?.label || fallbackLabel) || fallbackLabel,
     eventName: clean(input?.eventName || fallbackEventName) || fallbackEventName,
-    eventContent: clean(input?.eventContent || "跑馬燈按鈕點擊簽到贈點") || "跑馬燈按鈕點擊簽到贈點",
+    eventContent: clean(input?.eventContent || "廣告贈點按鈕點擊簽到贈點") || "廣告贈點按鈕點擊簽到贈點",
     points: Number.isFinite(points) && points > 0 ? Math.min(Math.round(points), 9999) : 1
   };
 }
@@ -771,7 +772,7 @@ function normalizeMarqueeImageItems(config: MarqueeConfig | undefined): MarqueeI
 }
 
 function normalizeMarqueeConfig(config: MarqueeConfig | undefined): MarqueeConfig {
-  const title = clean(config?.title || "TDEA 跑馬燈");
+  const title = clean(config?.title || "TDEA 廣告贈點");
   const right = normalizeMarqueeButton(config?.right, "查詢點數", `${title} 查詢點數`);
   right.eventContent = clean(config?.right?.eventContent || "查詢母站點數") || "查詢母站點數";
   const imageItems = normalizeMarqueeImageItems(config);
@@ -779,7 +780,7 @@ function normalizeMarqueeConfig(config: MarqueeConfig | undefined): MarqueeConfi
   return {
     enabled: config?.enabled !== false,
     keyword: marqueeKeyword,
-    altText: clean(config?.altText || "TDEA 跑馬燈") || "TDEA 跑馬燈",
+    altText: clean(config?.altText || "TDEA 廣告贈點") || "TDEA 廣告贈點",
     title,
     imageUrl: imageUrls[0] || "",
     imageUrls,
@@ -1900,14 +1901,14 @@ async function rewardMarqueePoint(request: Request, env: Env) {
   const lineUserId = firstClean(input.lineUserId, input.lineUid, input.uid, input.LINE_user_id, input.line_user_id);
   if (!lineUserId) return json({ success: false, message: "Missing LINE UID" }, 400);
   const config = await readMarqueeConfig(env);
-  if (config.enabled === false) return json({ success: false, message: "跑馬燈尚未啟用" }, 403);
+  if (config.enabled === false) return json({ success: false, message: "廣告贈點尚未啟用" }, 403);
   const imageId = firstClean(input.imageId, input.itemId, input.id);
   const imageUrl = firstClean(input.imageUrl, input.url);
   const items = Array.isArray(config.imageItems) ? config.imageItems : [];
   const item = items.find((entry) => clean(entry.id) === imageId) || items.find((entry) => clean(entry.imageUrl) === imageUrl);
-  if (!item || item.enabled === false) return json({ success: false, message: "跑馬燈圖片尚未設定或未啟用" }, 404);
+  if (!item || item.enabled === false) return json({ success: false, message: "廣告贈點圖片尚未設定或未啟用" }, 404);
   const points = Math.max(1, Math.round(Number(item.points || 1)));
-  const title = clean(item.title || config.title || "TDEA 跑馬燈");
+  const title = clean(item.title || config.title || "TDEA 廣告贈點");
   const dateKey = taipeiDateKey();
   const referenceId = `marquee:${dateKey}:${clean(item.id || item.imageUrl || imageUrl)}`;
   const motherBefore = await queryPointBalance(env, lineUserId) as Record<string, unknown>;
@@ -1940,7 +1941,7 @@ async function queryMarqueePoints(request: Request, env: Env) {
   const lineUserId = firstClean(input.lineUserId, input.lineUid, input.uid, input.LINE_user_id, input.line_user_id);
   if (!lineUserId) return json({ success: false, message: "Missing LINE UID" }, 400);
   const config = await readMarqueeConfig(env);
-  if (config.enabled === false) return json({ success: false, message: "跑馬燈尚未啟用" }, 403);
+  if (config.enabled === false) return json({ success: false, message: "廣告贈點尚未啟用" }, 403);
   if (config.right?.enabled === false) return json({ success: false, message: "查詢按鈕尚未啟用" }, 403);
   const result = await queryPointBalance(env, lineUserId) as Record<string, unknown>;
   return json({
@@ -5067,7 +5068,8 @@ async function handleMonthlyWebhook(request: Request, env: Env, rawBody: string,
   const personalMessageEvents = allEvents.filter((event) => normalizeKeyword(extractTriggerText(event)) === normalizeKeyword(personalMessageKeyword));
   const uidBindEvents = allEvents.filter((event) => parseUidBindKeyword(extractTriggerText(event)).active);
   const vendorCardEvents = allEvents.filter((event) => normalizeKeyword(extractTriggerText(event)) === normalizeKeyword(vendorCardKeyword));
-  const marqueeEvents = allEvents.filter((event) => normalizeKeyword(extractTriggerText(event)) === normalizeKeyword(marqueeKeyword));
+  const marqueeKeywords = [marqueeKeyword, ...marqueeLegacyKeywords].map(normalizeKeyword);
+  const marqueeEvents = allEvents.filter((event) => marqueeKeywords.includes(normalizeKeyword(extractTriggerText(event))));
   const pointEvents = allEvents
     .map((event) => ({ event, query: parseMotherPointKeyword(extractTriggerText(event)) }))
     .filter((match): match is { event: LineEvent; query: { uid: string } } => Boolean(match.query));
@@ -5212,16 +5214,16 @@ async function handleMonthlyWebhook(request: Request, env: Env, rawBody: string,
     const marqueeUrl = `${nativeLiffUrl}?marquee=1`;
     const marqueeMessage = {
       type: "template",
-      altText: "TDEA 跑馬燈",
+      altText: "TDEA 廣告贈點",
       template: {
         type: "buttons",
-        title: "TDEA 跑馬燈",
-        text: "請點下方按鈕開啟跑馬燈互動頁。",
-        actions: [{ type: "uri", label: "開啟跑馬燈", uri: marqueeUrl }]
+        title: "TDEA 廣告贈點",
+        text: "請點下方按鈕開啟廣告贈點互動頁。",
+        actions: [{ type: "uri", label: "開啟廣告贈點", uri: marqueeUrl }]
       }
     };
     const lineReplies = await Promise.all(marqueeEvents.map((event) => event.replyToken ? replyToLine(event.replyToken, [marqueeMessage], env) : Promise.resolve({ ok: false, status: 400, message: "Missing replyToken" })));
-    return json({ success: true, mode: "marquee", matched: [marqueeKeyword], forwarded: false, lineReplies });
+    return json({ success: true, mode: "marquee", matched: [marqueeKeyword, ...marqueeLegacyKeywords], forwarded: false, lineReplies });
   }
   if (vendorCardEvents.length) {
     const config = await readVendorCardConfig(env);

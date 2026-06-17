@@ -1,7 +1,7 @@
 (() => {
   const api = location.hostname.endsWith("github.io") ? "https://tdeawork.fangwl591021.workers.dev" : "";
   const storageKey = "tdea-manager-v3";
-  const keyword = "TDEA跑馬燈";
+  const keyword = "TDEA廣告贈點";
   const liffUrl = "https://liff.line.me/2005868456-cfANNVou?marquee=1";
   let active = false;
   let draft = null;
@@ -35,20 +35,20 @@
   const id = () => (crypto?.randomUUID ? crypto.randomUUID() : `img-${Date.now()}-${Math.random().toString(36).slice(2)}`);
 
   function blankButton(label) {
-    return { enabled: true, label, eventName: `TDEA 跑馬燈 ${label}`, eventContent: "跑馬燈按鈕點擊", points: 1 };
+    return { enabled: true, label, eventName: `TDEA 廣告贈點 ${label}`, eventContent: "廣告贈點按鈕點擊", points: 1 };
   }
 
   function blankConfig() {
     return {
       enabled: true,
       keyword,
-      altText: "TDEA 跑馬燈",
-      title: "TDEA 跑馬燈",
+      altText: "TDEA 廣告贈點",
+      title: "TDEA 廣告贈點",
       imageUrl: "",
       imageUrls: [],
       imageItems: [],
       left: blankButton("簽到贈點"),
-      right: { ...blankButton("查詢點數"), eventName: "TDEA 跑馬燈 查詢點數", eventContent: "查詢母站點數", points: 1 }
+      right: { ...blankButton("查詢點數"), eventName: "TDEA 廣告贈點 查詢點數", eventContent: "查詢母站點數", points: 1 }
     };
   }
 
@@ -151,7 +151,7 @@
     if (!window.TDEALineNav) return;
     window.TDEALineNav.register({
       id: "marquee",
-      label: "跑馬燈",
+      label: "廣告贈點",
       order: 27,
       onClick: () => show(),
       isActive: () => active
@@ -221,7 +221,7 @@
     if (!main) return;
     main.innerHTML = `
       <div class="topbar">
-        <div><h1>跑馬燈</h1><div class="subtitle">LIFF Tall 多圖輪播。每張圖片可設定連結，會員每天點同一張圖只贈點一次。</div></div>
+        <div><h1>廣告贈點</h1><div class="subtitle">LIFF Tall 多圖廣告輪播。每張圖片可設定連結，會員每天點同一張圖只贈點一次。</div></div>
         <div class="actions"><button class="btn" data-marquee-copy-url>複製 LIFF URL</button><button class="btn primary" data-marquee-save>儲存並啟用</button></div>
       </div>
       <div class="marquee-workspace">
@@ -308,7 +308,7 @@
     draft = normalizeConfig(result.data);
     saveLocal(draft);
     render();
-    toast("跑馬燈已儲存");
+    toast("廣告贈點已儲存");
   }
 
   async function upload(files) {

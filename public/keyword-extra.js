@@ -10,12 +10,12 @@
       status: "啟用中"
     },
     {
-      keyword: "TDEA跑馬燈",
-      aliases: "",
-      purpose: "開啟 800 x 800 跑馬燈 LIFF；左鍵簽到贈點 +1，右鍵查詢母站點數。",
-      reply: "開啟 LIFF 頁面，系統取得 LINE UID 後執行贈點或查詢點數。",
+      keyword: "TDEA廣告贈點",
+      aliases: "TDEA跑馬燈",
+      purpose: "開啟 800 x 800 廣告贈點 LIFF；點擊廣告圖片可每日贈點，右側按鈕查詢母站點數。",
+      reply: "開啟 LIFF 頁面，系統取得 LINE UID 後執行廣告贈點或查詢點數。",
       entry: "https://liff.line.me/2005868456-2jmxqyFU?marquee=1",
-      owner: "LINE專區 / 跑馬燈",
+      owner: "LINE專區 / 廣告贈點",
       status: "啟用中"
     }
   ];

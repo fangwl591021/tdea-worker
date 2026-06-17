@@ -186,7 +186,7 @@
     const body = items.length === 1
       ? `<div class="liff-slider"><div class="liff-slider-track">${slides}</div></div>`
       : `<div class="liff-slider" data-liff-slider><div class="liff-slider-track">${slides}</div><div class="liff-slider-nav"><button type="button" data-liff-prev aria-label="上一張">‹</button><button type="button" data-liff-next aria-label="下一張">›</button></div><div class="liff-dots">${items.map((_, index) => `<button type="button" data-liff-dot="${index}" class="${index === 0 ? "active" : ""}" aria-label="第 ${index + 1} 張"></button>`).join("")}</div></div>`;
-    return `<section class="liff-marquee"><div class="liff-marquee-head"><strong>${esc(config?.title || "TDEA 跑馬燈")}</strong><span>${items.length} 張</span></div>${body}</section>`;
+    return `<section class="liff-marquee"><div class="liff-marquee-head"><strong>${esc(config?.title || "TDEA 廣告贈點")}</strong><span>${items.length} 張</span></div>${body}</section>`;
   }
 
   function bindSlider() {
