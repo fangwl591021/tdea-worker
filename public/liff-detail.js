@@ -107,14 +107,14 @@
     el.id = "liff-detail-style";
     el.textContent = `
       body.liff-detail-mode{margin:0;background:#f4f6f8;color:#111827;font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI","Noto Sans TC",sans-serif}
-      .liff-detail{max-width:760px;margin:0 auto;padding:20px}
-      .liff-card{background:#fff;border-radius:14px;padding:20px;box-shadow:0 14px 36px rgba(15,23,42,.08)}
-      .liff-card img{width:100%;border-radius:10px;margin-bottom:16px;display:block}
+      .liff-detail{max-width:none;margin:0 auto;padding:0}
+      .liff-card{background:transparent;border-radius:0;padding:0;box-shadow:none}
+      .liff-card img{width:100%;border-radius:0;margin-bottom:16px;display:block}
       .liff-gallery{margin:0 0 18px}
-      .liff-gallery-head{display:flex;align-items:center;justify-content:space-between;gap:10px;margin:0 0 10px;color:#111827}
+      .liff-gallery-head{display:flex;align-items:center;justify-content:space-between;gap:10px;margin:0;padding:16px 18px 10px;color:#111827;background:#fff}
       .liff-gallery-head strong{font-size:16px}
       .liff-gallery-head span{font-size:12px;color:#667085;font-weight:800}
-      .liff-slider{position:relative;margin:-4px 0 16px;overflow:hidden;border-radius:12px;background:#fff;aspect-ratio:210/297;min-height:0}
+      .liff-slider{position:relative;margin:0 0 16px;overflow:hidden;border-radius:0;background:#fff;aspect-ratio:210/297;min-height:0;width:100%}
       .liff-slider-track{display:flex;transition:transform .42s ease}
       .liff-slide{flex:0 0 100%;min-width:100%;aspect-ratio:210/297;min-height:0;background:#fff;display:flex;align-items:center;justify-content:center}
       .liff-slide img{width:100%;height:100%;object-fit:contain;border-radius:0;margin:0;background:#fff}
@@ -138,7 +138,7 @@
       .liff-done{padding:34px 24px;text-align:center}
       .liff-done h1{margin:0 0 10px;font-size:24px}
       .liff-done p{margin:0;color:#667085;line-height:1.7}
-      @media(max-width:480px){.liff-detail{padding:14px}.liff-card{padding:14px}.liff-slider,.liff-slide{min-height:0}}
+      @media(max-width:480px){.liff-detail{padding:0}.liff-card{padding:0}.liff-card h1,.liff-text,.liff-meta,.liff-btn{margin-left:18px;margin-right:18px}.liff-slider,.liff-slide{min-height:0}}
     `;
     document.head.appendChild(el);
   }
