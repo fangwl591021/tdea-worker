@@ -13,7 +13,7 @@ type RegistrationRecord = { activityId?: string; activityNo?: string; activityNa
 type RegistrationSummary = { updatedAt?: string; activities: Record<string, RegistrationRecord> };
 type PaymentStatus = "free" | "unpaid" | "reported" | "paid" | "cancelled" | "refunded";
 type RegistrationPayment = { status: PaymentStatus; method?: "free" | "bank_transfer" | "cash" | "manual"; amount: number; currency?: string; remittanceLast5?: string; reportedAt?: string; paidAt?: string; verifiedBy?: string; verifiedAt?: string; note?: string; updatedAt?: string; transactions?: Array<Record<string, unknown>> };
-type RegistrationEntry = { id: string; sourceId?: string; formId?: string; submittedAt?: string; activity?: Record<string, unknown>; answers?: Record<string, unknown>; status?: string; checkedInAt?: string; sessionId?: string; queryCode?: string; checkinToken?: string; cancelledAt?: string; lineUserId?: string; pointsSyncedAt?: string; pointResults?: unknown[]; payment?: RegistrationPayment };
+type RegistrationEntry = { id: string; sourceId?: string; formId?: string; submittedAt?: string; updatedAt?: string; activity?: Record<string, unknown>; answers?: Record<string, unknown>; status?: string; checkedInAt?: string; sessionId?: string; queryCode?: string; checkinToken?: string; cancelledAt?: string; lineUserId?: string; pointsSyncedAt?: string; pointResults?: unknown[]; payment?: RegistrationPayment };
 type ManagedSubmission = { formId?: string; sourceId?: string; submittedAt?: string; activity: Record<string, unknown>; answers: Record<string, unknown>; raw?: unknown };
 type NativeField = { key: string; label: string; type: string; required?: boolean; options?: string[] };
 type NativeSession = { id: string; name: string; startTime?: string; endTime?: string; capacity?: number; status?: string };
@@ -2491,6 +2491,42 @@ async function updateRegistrationEverywhere(env: Env, entry: RegistrationEntry) 
     if (existing) summary.activities[key] = { ...existing, count, lastSubmittedAt: existing.lastSubmittedAt };
   }
   await writeRegistrationSummary(env, summary);
+}
+
+async function updateNativeRegistration(request: Request, env: Env) {
+  if (!env.ASSETS_BUCKET) return json({ success: false, message: "R2 bucket is not configured" }, 503);
+  const input = await request.json().catch(() => ({})) as Record<string, unknown>;
+  const registrationId = clean(input.registrationId);
+  const queryCode = clean(input.queryCode);
+  const entry = await readNativeRegistration(env, registrationId);
+  if (!entry || entry.queryCode !== queryCode) return json({ success: false, message: "查無可修改的報名資料" }, 404);
+  if (clean(entry.status || "active") === "cancelled") return json({ success: false, message: "此報名已取消，不能修改" }, 409);
+  if (clean(entry.checkedInAt)) return json({ success: false, message: "此報名已完成核銷，不能修改" }, 409);
+  const form = await readNativeForm(env, clean(entry.formId));
+  if (!form) return json({ success: false, message: "找不到原報名表設定，無法修改" }, 404);
+
+  const sessionId = clean(input.sessionId || entry.sessionId || "default");
+  const active = activeRegistrations(await readRegistrationList(env, form.id)).filter((item) => item.id !== entry.id);
+  const session = form.sessions.find((item) => item.id === sessionId);
+  const sessionCapacity = Number(session?.capacity || 0);
+  const sessionCount = active.filter((item) => clean(item.sessionId || "default") === sessionId).length;
+  if (sessionCapacity > 0 && sessionCount >= sessionCapacity) return json({ success: false, message: "此場次已額滿" }, 409);
+
+  const previousAnswers = normalizeAnswersRecord(entry.answers || {});
+  const editedAnswers = normalizeAnswersRecord(asRecord(input.answers));
+  const answers = normalizeAnswersRecord({ ...previousAnswers, ...editedAnswers });
+  if (entry.lineUserId) answers.LINE_user_id = entry.lineUserId;
+  const source = clean(previousAnswers.registrationSource);
+  const errors = source === "line_member_claim"
+    ? validateNativeLoginAnswers(form, answers, sessionId)
+    : validateNativeAnswers(form, answers, sessionId);
+  if (errors.length) return json({ success: false, message: errors[0], errors }, 400);
+
+  entry.sessionId = sessionId;
+  entry.answers = answers;
+  entry.updatedAt = new Date().toISOString();
+  await updateRegistrationEverywhere(env, entry);
+  return json({ success: true, data: { ...publicRegistrationEntry(entry), checkinUrl: entry.checkinToken ? nativeCheckinUrl(entry.checkinToken) : "" } });
 }
 
 async function cancelNativeRegistration(request: Request, env: Env) {
@@ -5323,6 +5359,7 @@ export default {
 	    if (nativeFormMatch && request.method === "POST") return submitNativeForm(request, env, decodeURIComponent(nativeFormMatch[1]));
 	    if (request.method === "GET" && url.pathname === "/api/native-registrations/query") return queryNativeRegistration(request, env);
 	    if (request.method === "GET" && url.pathname === "/api/native-registrations/me") return queryNativeRegistrationsByLine(request, env);
+	    if (request.method === "POST" && url.pathname === "/api/native-registrations/update") return updateNativeRegistration(request, env);
 	    if (request.method === "POST" && url.pathname === "/api/native-registrations/cancel") return cancelNativeRegistration(request, env);
 	    if (request.method === "POST" && url.pathname === "/api/native-registrations/payment-report") return reportNativeRegistrationPayment(request, env);
 	    if ((request.method === "PUT" || request.method === "POST") && url.pathname === "/api/native-registrations/payment") return updateNativeRegistrationPayment(request, env);

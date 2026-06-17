@@ -152,25 +152,31 @@
     ].includes(label);
   }
 
-  function fieldHtml(field) {
+  function selectedValue(value, option) {
+    if (Array.isArray(value)) return value.map(String).includes(String(option));
+    return String(value ?? "") === String(option);
+  }
+
+  function fieldHtml(field, answers = {}) {
     if (isAutoMemberField(field)) return "";
     const type = fieldTypes.has(field.type) ? field.type : "text";
     const label = `${esc(field.label || field.key)}${field.required ? ' <span class="nf-required">*</span>' : ""}`;
     const name = esc(field.key);
-    if (type === "paragraph") return `<div class="nf-field"><label>${label}</label><textarea name="${name}" ${field.required ? "required" : ""}></textarea></div>`;
+    const value = answers[field.key] ?? answers[field.label] ?? "";
+    if (type === "paragraph") return `<div class="nf-field"><label>${label}</label><textarea name="${name}" ${field.required ? "required" : ""}>${esc(value)}</textarea></div>`;
     if (type === "dropdown") {
       const options = Array.isArray(field.options) ? field.options : [];
-      return `<div class="nf-field"><label>${label}</label><select name="${name}" ${field.required ? "required" : ""}><option value="">請選擇</option>${options.map((opt) => `<option value="${esc(opt)}">${esc(opt)}</option>`).join("")}</select></div>`;
+      return `<div class="nf-field"><label>${label}</label><select name="${name}" ${field.required ? "required" : ""}><option value="">請選擇</option>${options.map((opt) => `<option value="${esc(opt)}" ${selectedValue(value, opt) ? "selected" : ""}>${esc(opt)}</option>`).join("")}</select></div>`;
     }
     if (type === "radio") {
       const options = Array.isArray(field.options) ? field.options : [];
-      return `<div class="nf-field"><label>${label}</label><div class="nf-choice">${options.map((opt) => `<label><input type="radio" name="${name}" value="${esc(opt)}" ${field.required ? "required" : ""}>${esc(opt)}</label>`).join("")}</div></div>`;
+      return `<div class="nf-field"><label>${label}</label><div class="nf-choice">${options.map((opt) => `<label><input type="radio" name="${name}" value="${esc(opt)}" ${field.required ? "required" : ""} ${selectedValue(value, opt) ? "checked" : ""}>${esc(opt)}</label>`).join("")}</div></div>`;
     }
     if (type === "checkbox") {
       const options = Array.isArray(field.options) ? field.options : [];
-      return `<div class="nf-field" data-checkbox-field="${name}" data-required="${field.required ? "1" : "0"}"><label>${label}</label><div class="nf-choice">${options.map((opt) => `<label><input type="checkbox" name="${name}" value="${esc(opt)}">${esc(opt)}</label>`).join("")}</div></div>`;
+      return `<div class="nf-field" data-checkbox-field="${name}" data-required="${field.required ? "1" : "0"}"><label>${label}</label><div class="nf-choice">${options.map((opt) => `<label><input type="checkbox" name="${name}" value="${esc(opt)}" ${selectedValue(value, opt) ? "checked" : ""}>${esc(opt)}</label>`).join("")}</div></div>`;
     }
-    return `<div class="nf-field"><label>${label}</label><input name="${name}" type="${type === "email" ? "email" : "text"}" ${field.required ? "required" : ""}></div>`;
+    return `<div class="nf-field"><label>${label}</label><input name="${name}" type="${type === "email" ? "email" : "text"}" value="${esc(value)}" ${field.required ? "required" : ""}></div>`;
   }
 
   function collectAnswers(form, fields) {
@@ -249,10 +255,10 @@
     return { response: submitResponse, result: submitResult };
   }
 
-  function sessionFieldHtml(sessions) {
+  function sessionFieldHtml(sessions, selectedSessionId = "") {
     return sessions.length > 1
-      ? `<div class="nf-field"><label>場次 <span class="nf-required">*</span></label><select name="sessionId" required>${sessions.map((session) => `<option value="${esc(session.id)}">${esc(session.name || "場次")}${session.startTime ? ` ${esc(session.startTime)}` : ""}</option>`).join("")}</select></div>`
-      : `<input type="hidden" name="sessionId" value="${esc(sessions[0]?.id || "default")}">`;
+      ? `<div class="nf-field"><label>場次 <span class="nf-required">*</span></label><select name="sessionId" required>${sessions.map((session) => `<option value="${esc(session.id)}" ${trim(selectedSessionId) === trim(session.id) ? "selected" : ""}>${esc(session.name || "場次")}${session.startTime ? ` ${esc(session.startTime)}` : ""}</option>`).join("")}</select></div>`
+      : `<input type="hidden" name="sessionId" value="${esc(selectedSessionId || sessions[0]?.id || "default")}">`;
   }
 
   function memberSummary(member) {
@@ -572,11 +578,98 @@
           ${isCheckedIn ? `<div class="nf-ok">已完成報到</div>` : ""}
           ${lines || `<div>已找到報名紀錄。</div>`}
           ${paymentBlock(row)}
-          ${row.status === "cancelled" || isCheckedIn ? "" : `<div class="nf-actions" style="margin-top:10px"><button class="nf-btn danger" data-cancel-registration="${esc(row.id)}" data-query-code="${esc(row.queryCode || "")}">取消報名</button></div>`}
+          ${row.status === "cancelled" || isCheckedIn ? "" : `<div class="nf-actions" style="margin-top:10px"><button class="nf-btn" data-edit-registration="${esc(row.id)}" data-query-code="${esc(row.queryCode || "")}">修改報名資料</button><button class="nf-btn danger" data-cancel-registration="${esc(row.id)}" data-query-code="${esc(row.queryCode || "")}">取消報名</button></div>`}
         </div>
         ${!isCheckedIn && qrUrl ? `<div class="nf-query-qr"><img class="nf-qr" src="${qrUrl}" alt="核銷 QR Code"><span>活動核銷 QR</span></div>` : ""}
       </div>
     </article>`;
+  }
+
+  async function loadFormForRegistration(row) {
+    const id = trim(row.formId || row.activity?.formId || formId);
+    if (!id) throw new Error("找不到原報名表設定，無法修改。");
+    const response = await fetch(`${api}/api/native-forms/${encodeURIComponent(id)}`, { cache: "no-store" });
+    const result = await response.json().catch(() => ({}));
+    if (!response.ok || !result.success) throw new Error(result.message || "讀取原報名表失敗");
+    return result.data || {};
+  }
+
+  function editRegistrationForm(row, form) {
+    const fields = Array.isArray(form.fields) ? form.fields : [];
+    const sessions = Array.isArray(form.sessions) ? form.sessions : [];
+    const answers = row.answers || {};
+    return `<article class="nf-query-card">
+      <h2 class="nf-title" style="font-size:22px">修改報名資料</h2>
+      <div class="nf-ok">請確認資料後儲存，儲存完成會回到報名查詢。</div>
+      <form class="nf-form" data-edit-registration-form novalidate>
+        <input type="hidden" name="registrationId" value="${esc(row.id)}">
+        <input type="hidden" name="queryCode" value="${esc(row.queryCode || "")}">
+        ${sessionFieldHtml(sessions, row.sessionId || "default")}
+        ${fields.map((field) => fieldHtml(field, answers)).join("")}
+        <div class="nf-actions">
+          <button class="nf-btn primary" type="submit">儲存修改</button>
+          <button class="nf-btn" type="button" data-edit-cancel>返回</button>
+        </div>
+      </form>
+    </article>`;
+  }
+
+  async function bindEditRegistration(container, refresh) {
+    container.querySelectorAll("[data-edit-registration]").forEach((button) => {
+      button.addEventListener("click", async (event) => {
+        const current = event.currentTarget;
+        current.disabled = true;
+        const originalText = current.textContent;
+        current.textContent = "讀取中...";
+        const card = current.closest(".nf-query-card");
+        try {
+          const registrationId = current.dataset.editRegistration || "";
+          const queryCode = current.dataset.queryCode || "";
+          const response = await fetch(`${api}/api/native-registrations/query?registrationId=${encodeURIComponent(registrationId)}&code=${encodeURIComponent(queryCode)}`, { cache: "no-store" });
+          const result = await response.json().catch(() => ({}));
+          if (!response.ok || !result.success) throw new Error(result.message || "查無報名資料");
+          const row = result.data || {};
+          const form = await loadFormForRegistration(row);
+          const host = card || container;
+          host.outerHTML = editRegistrationForm(row, form);
+          const nextForm = container.querySelector("[data-edit-registration-form]");
+          const cancel = container.querySelector("[data-edit-cancel]");
+          cancel?.addEventListener("click", refresh);
+          nextForm?.addEventListener("submit", async (submitEvent) => {
+            submitEvent.preventDefault();
+            const requiredError = validateVisibleRequired(nextForm);
+            if (requiredError) return alert(requiredError);
+            const submit = nextForm.querySelector("button[type='submit']");
+            submit.disabled = true;
+            submit.textContent = "儲存中...";
+            const answers = collectAnswers(nextForm, Array.isArray(form.fields) ? form.fields : []);
+            const payload = {
+              registrationId: nextForm.elements.registrationId.value,
+              queryCode: nextForm.elements.queryCode.value,
+              sessionId: nextForm.elements.sessionId?.value || row.sessionId || "default",
+              answers
+            };
+            const updateResponse = await fetch(`${api}/api/native-registrations/update`, {
+              method: "POST",
+              headers: { "content-type": "application/json" },
+              body: JSON.stringify(payload)
+            });
+            const updateResult = await updateResponse.json().catch(() => ({}));
+            if (!updateResponse.ok || !updateResult.success) {
+              submit.disabled = false;
+              submit.textContent = "儲存修改";
+              return alert(updateResult.message || "儲存失敗");
+            }
+            alert("已更新報名資料");
+            refresh();
+          });
+        } catch (error) {
+          current.disabled = false;
+          current.textContent = originalText;
+          alert(error instanceof Error ? error.message : "讀取修改表單失敗");
+        }
+      });
+    });
   }
 
   async function bindCancel(container, refresh) {
@@ -642,6 +735,7 @@
         return;
       }
       box.innerHTML = registrationCard(result.data || {});
+      bindEditRegistration(box, () => runCodeQuery(code));
       bindCancel(box, () => runCodeQuery(code));
       bindPaymentReport(box, () => runCodeQuery(code));
     }
@@ -662,6 +756,7 @@
       }
       const rows = Array.isArray(result.data) ? result.data : [];
       box.innerHTML = rows.length ? `<div class="nf-form">${rows.map(registrationCard).join("")}</div>` : `<div class="nf-alert">目前沒有報名紀錄。</div>`;
+      bindEditRegistration(box, runLoginQuery);
       bindCancel(box, runLoginQuery);
       bindPaymentReport(box, runLoginQuery);
     }
