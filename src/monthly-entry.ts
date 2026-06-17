@@ -41,6 +41,7 @@ type MemberOnboardingSession = { lineUserId: string; step: "askMember" | "member
 type MemberApplication = { id: string; lineUserId: string; status: "pending" | "handled"; source: "line"; name?: string; phone?: string; triggerText?: string; createdAt: string; updatedAt?: string };
 
 const monthlyKey = "flex/monthly-activity.json";
+const monthlySnapshotKey = "flex/monthly-activity-effective.json";
 const managerDataKey = "manager/state.json";
 const activityIndexKey = "activities/index.json";
 const activityMigrationKey = "activities/migration-v1.json";
@@ -79,6 +80,7 @@ const lineActivityCreateAliases = ["TDEA新增活動", "TDEA活動上稿", "TDEA
 const defaultLiffBase = "https://liff.line.me/2005868456-2jmxqyFU?monthlyDetail={id}";
 const defaultLiffCloseUrl = "https://liff.line.me/2005868456-2jmxqyFU?close=1";
 const monthlyDefaultImageUrl = "https://fangwl591021.github.io/tdea-worker/public/assets/kooler-free-course.png";
+let monthlyReplyCache: { config: MonthlyConfig; expiresAt: number } | null = null;
 const publicAppUrl = "https://fangwl591021.github.io/tdea-worker/";
 const publicLiffUrl = "https://liff.line.me/2005868456-2jmxqyFU";
 const nativeLiffUrl = "https://liff.line.me/2005868456-cfANNVou";
@@ -425,6 +427,41 @@ async function writeMonthly(env: Env, config: MonthlyConfig) {
   return true;
 }
 
+
+async function writeMonthlySnapshot(env: Env, config: MonthlyConfig) {
+  if (!env.ASSETS_BUCKET) return false;
+  const normalized = normalizeConfig(config);
+  normalized.updatedAt = new Date().toISOString();
+  monthlyReplyCache = { config: normalized, expiresAt: Date.now() + 60_000 };
+  await env.ASSETS_BUCKET.put(monthlySnapshotKey, JSON.stringify(normalized, null, 2), { httpMetadata: { contentType: "application/json; charset=utf-8", cacheControl: "no-store" } });
+  return true;
+}
+
+async function readMonthlySnapshot(env: Env): Promise<MonthlyConfig | null> {
+  if (!env.ASSETS_BUCKET) return null;
+  const object = await env.ASSETS_BUCKET.get(monthlySnapshotKey);
+  if (!object) return null;
+  const data = await object.json().catch(() => null) as MonthlyConfig | null;
+  if (!data || typeof data !== "object") return null;
+  const normalized = normalizeConfig(data);
+  return normalized.pages?.length ? normalized : null;
+}
+
+async function refreshMonthlySnapshot(env: Env) {
+  const effective = await readEffectiveMonthly(env);
+  await writeMonthlySnapshot(env, effective);
+  return effective;
+}
+
+async function readMonthlyReplyConfig(env: Env): Promise<MonthlyConfig> {
+  if (monthlyReplyCache && monthlyReplyCache.expiresAt > Date.now()) return monthlyReplyCache.config;
+  const snapshot = await readMonthlySnapshot(env);
+  if (snapshot) {
+    monthlyReplyCache = { config: snapshot, expiresAt: Date.now() + 60_000 };
+    return snapshot;
+  }
+  return refreshMonthlySnapshot(env);
+}
 async function readManagerDataRaw(env: Env) {
   const object = env.ASSETS_BUCKET ? await env.ASSETS_BUCKET.get(managerDataKey) : null;
   if (!object) return null;
@@ -610,6 +647,7 @@ async function activityRecordsApi(request: Request, env: Env, url: URL) {
     const body = await request.json().catch(() => ({})) as Record<string, unknown>;
     if (!body || typeof body !== "object") return json({ success: false, message: "Invalid activity payload" }, 400);
     const record = await upsertActivityRecord(env, body, activityActorFromRequest(request));
+    await refreshMonthlySnapshot(env).catch(() => null);
     return json({ success: true, data: record, activities: await listActivityRecords(env) });
   }
   if (itemMatch && request.method === "PUT") {
@@ -619,18 +657,21 @@ async function activityRecordsApi(request: Request, env: Env, url: URL) {
     const body = await request.json().catch(() => ({})) as Record<string, unknown>;
     if (!body || typeof body !== "object") return json({ success: false, message: "Invalid activity payload" }, 400);
     const record = await upsertActivityRecord(env, { ...body, id }, activityActorFromRequest(request));
+    await refreshMonthlySnapshot(env).catch(() => null);
     return json({ success: true, data: record, activities: await listActivityRecords(env) });
   }
   if (itemMatch && request.method === "DELETE") {
     const guard = await requireAdmin(request, env);
     if (guard) return guard;
     const ok = await deleteActivityRecord(env, decodeURIComponent(itemMatch[1]), activityActorFromRequest(request));
+    if (ok) await refreshMonthlySnapshot(env).catch(() => null);
     return json({ success: ok, activities: await listActivityRecords(env) }, ok ? 200 : 404);
   }
   if (restoreMatch && request.method === "POST") {
     const guard = await requireAdmin(request, env);
     if (guard) return guard;
     const record = await restoreActivityRecord(env, decodeURIComponent(restoreMatch[1]), activityActorFromRequest(request));
+    if (record) await refreshMonthlySnapshot(env).catch(() => null);
     return json({ success: Boolean(record), data: record, activities: await listActivityRecords(env) }, record ? 200 : 404);
   }
   return json({ success: false, message: "Not found" }, 404);
@@ -5045,7 +5086,7 @@ async function lineWebhookLogsApi(request: Request, env: Env) {
 }
 
 async function replyMonthlyActivityEvents(events: LineEvent[], allEvents: LineEvent[], env: Env, ctx?: ExecutionContext) {
-  const config = await readEffectiveMonthly(env);
+  const config = await readMonthlyReplyConfig(env);
   const pages = config.pages || [];
   const message = config.enabled && pages.length ? buildMonthlyFlex(config) as Record<string, unknown> : { type: "text", text: "TDEA 每月活動尚未啟用，請稍後再試。" };
   const lineReplies = await Promise.all(events.map(async (event) => {
@@ -5345,8 +5386,8 @@ export default {
 	    if (request.method === "POST" && url.pathname === "/api/personal-messages") return createPersonalMessageApi(request, env);
 	    if (request.method === "POST" && url.pathname === "/api/personal-messages/upload") return uploadPersonalMessageFileApi(request, env);
 	    if (request.method === "GET" && url.pathname === "/api/monthly-activity") return json({ success: true, data: await readEffectiveMonthly(env) });
-	    if ((request.method === "PUT" || request.method === "POST") && url.pathname === "/api/monthly-activity") { const guard = await requireAdmin(request, env); if (guard) return guard; if (!env.ASSETS_BUCKET) return json({ success: false, message: "R2 bucket is not configured" }, 503); const config = await request.json().catch(() => ({})) as MonthlyConfig; const validation = validateMonthlyConfigForPublish(config); if (validation) return json({ success: false, message: validation }, 400); await writeMonthly(env, config); const effective = await readEffectiveMonthly(env); return json({ success: true, data: effective, flex: buildMonthlyFlex(effective) }); }
-	    if (request.method === "GET" && url.pathname === "/api/monthly-activity/flex") { const config = await readEffectiveMonthly(env); return json({ success: true, flex: buildMonthlyFlex(config), data: config }); }
+	    if ((request.method === "PUT" || request.method === "POST") && url.pathname === "/api/monthly-activity") { const guard = await requireAdmin(request, env); if (guard) return guard; if (!env.ASSETS_BUCKET) return json({ success: false, message: "R2 bucket is not configured" }, 503); const config = await request.json().catch(() => ({})) as MonthlyConfig; const validation = validateMonthlyConfigForPublish(config); if (validation) return json({ success: false, message: validation }, 400); await writeMonthly(env, config); const effective = await refreshMonthlySnapshot(env); return json({ success: true, data: effective, flex: buildMonthlyFlex(effective) }); }
+	    if (request.method === "GET" && url.pathname === "/api/monthly-activity/flex") { const config = await readMonthlyReplyConfig(env); return json({ success: true, flex: buildMonthlyFlex(config), data: config }); }
 	    if (request.method === "GET" && url.pathname === "/api/line-webhook/status") return lineWebhookStatusApi(request, env);
 	    if (request.method === "GET" && url.pathname === "/api/line-webhook/logs") return lineWebhookLogsApi(request, env);
 	    if (url.pathname === "/api/activities" || url.pathname === "/api/activities/archived" || /^\/api\/activities\/[^/]+(?:\/restore)?$/.test(url.pathname)) return activityRecordsApi(request, env, url);
