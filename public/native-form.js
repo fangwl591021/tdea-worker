@@ -108,7 +108,7 @@
       .nf-marquee-dots{position:absolute;left:0;right:0;bottom:10px;display:flex;gap:6px;justify-content:center}
       .nf-marquee-dots button{width:8px;height:8px;border:0;border-radius:999px;background:rgba(255,255,255,.65);padding:0}
       .nf-marquee-dots button.active{background:#06c755}
-      .nf-marquee-buttons{display:grid;grid-template-columns:1fr;gap:12px;padding:14px}
+      .nf-marquee-buttons{display:grid;grid-template-columns:1fr 1fr;gap:12px;padding:14px}
       .nf-marquee-card [data-marquee-result]{margin:0 14px 14px}
       .nf-marquee-toast{position:fixed;left:50%;bottom:24px;transform:translateX(-50%);z-index:20;background:rgba(17,24,39,.92);color:#fff;border-radius:999px;padding:10px 16px;font-weight:900;box-shadow:0 12px 28px rgba(15,23,42,.24)}
       @media(max-width:640px){.nf-title{font-size:24px}.nf-body{padding:18px}.nf-actions{display:grid}.nf-btn{width:100%}}
@@ -1015,10 +1015,12 @@
     const config = result.data || {};
     if (config.enabled === false) return renderError("廣告贈點尚未啟用。");
     const right = config.right || {};
+    const left = config.left || {};
     const items = marqueeItems(config);
     renderShell(`<section class="nf-card nf-marquee-card"><div class="nf-body">
       <div class="nf-marquee-square">${marqueeSliderHtml(items)}</div>
       <div class="nf-marquee-buttons">
+        <button class="nf-btn" data-marquee-action="checkin" ${left.enabled === false ? "disabled" : ""}>${esc(left.label || "簽到贈點")}</button>
         <button class="nf-btn primary" data-marquee-action="points" ${right.enabled === false ? "disabled" : ""}>${esc(right.label || "查詢點數")}</button>
       </div>
       <div class="nf-ok" data-marquee-result hidden></div>
@@ -1076,6 +1078,29 @@
         const action = button.dataset.marqueeAction;
         const label = button.textContent;
         button.disabled = true;
+        if (action === "checkin") {
+          const firstItem = marqueeItems(config).find((item) => item.enabled !== false) || {};
+          const actionResponse = await fetch(`${api}/api/marquee/reward`, {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({
+              lineUserId: uid,
+              imageId: firstItem.id || "system-checkin",
+              imageUrl: firstItem.imageUrl || "",
+              linkUrl: "",
+              action: "checkin"
+            })
+          });
+          const actionResult = await actionResponse.json().catch(() => ({}));
+          if (!actionResponse.ok || !actionResult.success) {
+            resultNode.hidden = false;
+            resultNode.textContent = actionResult.message || "簽到贈點失敗";
+            return;
+          }
+          resultNode.hidden = false;
+          resultNode.textContent = `已贈點，餘額 ${actionResult.balanceAfter ?? actionResult.balance ?? "-"}`;
+          return;
+        }
         button.textContent = "送出中...";
         const endpoint = "/api/marquee/points";
         const actionResponse = await fetch(`${api}${endpoint}`, {

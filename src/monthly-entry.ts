@@ -1902,6 +1902,17 @@ async function rewardMarqueePoint(request: Request, env: Env) {
   if (!lineUserId) return json({ success: false, message: "Missing LINE UID" }, 400);
   const config = await readMarqueeConfig(env);
   if (config.enabled === false) return json({ success: false, message: "廣告贈點尚未啟用" }, 403);
+  if (clean(input.action) === "checkin") {
+    if (config.left?.enabled === false) return json({ success: false, message: "簽到贈點尚未啟用" }, 403);
+    const points = Math.max(1, Math.round(Number(config.left?.points || 1)));
+    const eventContent = clean(config.left?.eventContent || "廣告贈點系統簽到") || "廣告贈點系統簽到";
+    const referenceId = `marquee:${taipeiDateKey()}:button:left`;
+    const result = await updateLocalPoints(env, lineUserId, points, eventContent, {
+      source: "marquee_button_checkin",
+      referenceId
+    }) as Record<string, unknown>;
+    return json({ success: true, ...result, referenceId, points });
+  }
   const imageId = firstClean(input.imageId, input.itemId, input.id);
   const imageUrl = firstClean(input.imageUrl, input.url);
   const items = Array.isArray(config.imageItems) ? config.imageItems : [];
