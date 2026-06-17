@@ -785,7 +785,7 @@ function normalizeMarqueeConfig(config: MarqueeConfig | undefined): MarqueeConfi
     imageUrl: imageUrls[0] || "",
     imageUrls,
     imageItems,
-    left: normalizeMarqueeButton(config?.left, "左側簽到", `${title} 左側簽到`),
+    left: normalizeMarqueeButton(config?.left, "系統簽到", `${title} 系統簽到`),
     right,
     updatedAt: config?.updatedAt
   };

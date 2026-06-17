@@ -1032,7 +1032,7 @@
     renderShell(`<section class="nf-card nf-marquee-card"><div class="nf-body">
       <div class="nf-marquee-square">${marqueeSliderHtml(items)}</div>
       <div class="nf-marquee-buttons">
-        <button class="nf-btn" data-marquee-action="checkin" ${left.enabled === false ? "disabled" : ""}>${esc((left.label || "系統簽到").replace("簽到贈點", "系統簽到"))}</button>
+        <button class="nf-btn" data-marquee-action="checkin" ${left.enabled === false ? "disabled" : ""}>${esc((left.label || "系統簽到").replace("簽到贈點", "系統簽到").replace("左側簽到", "系統簽到"))}</button>
         <button class="nf-btn primary" data-marquee-action="points" ${right.enabled === false ? "disabled" : ""}>${esc(right.label || "查詢點數")}</button>
       </div>
       <div class="nf-ok" data-marquee-result hidden></div>
