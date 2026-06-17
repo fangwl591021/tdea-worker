@@ -3257,6 +3257,18 @@ function registerUrlForPage(page: MonthlyPage) {
   return current || (target ? `${publicLiffUrl}?register=${encodeURIComponent(target)}` : workerBaseUrl);
 }
 
+function appendQueryParam(url: string, key: string, value: string) {
+  const raw = clean(url);
+  if (!raw) return "";
+  const separator = raw.includes("?") ? "&" : "?";
+  return `${raw}${separator}${encodeURIComponent(key)}=${encodeURIComponent(value)}`;
+}
+
+function shareUrlForPage(page: MonthlyPage, config: MonthlyConfig) {
+  const target = firstClean(page.activityNo, page.activityId, page.id);
+  return appendQueryParam(detailUrlForPage(page, config), "share", target || "1");
+}
+
 function buildMonthlyFlex(config: MonthlyConfig) {
   const normalized = normalizeConfig(config);
   if (!(normalized.pages || []).length) return { type: "text", text: "TDEA 每月活動目前沒有上架活動。" };
@@ -3266,7 +3278,7 @@ function buildMonthlyFlex(config: MonthlyConfig) {
 function buildMonthlyBubble(page: MonthlyPage, config: MonthlyConfig) {
   const detailUri = detailUrlForPage(page, config);
   const formUri = registerUrlForPage(page) || detailUri;
-  const shareUri = page.shareUrl || detailUri;
+  const shareUri = shareUrlForPage(page, config);
   return {
     type: "bubble",
     size: "kilo",
@@ -3281,6 +3293,14 @@ function buildMonthlyBubble(page: MonthlyPage, config: MonthlyConfig) {
   };
 }
 
+async function monthlyActivityShareApi(request: Request, env: Env) {
+  const url = new URL(request.url);
+  const id = firstClean(url.searchParams.get("id"), url.searchParams.get("monthlyDetail"), url.searchParams.get("activityNo"), url.searchParams.get("activityId"));
+  const config = await readMonthlyReplyConfig(env);
+  const page = (config.pages || []).find((item) => String(item.id) === id || String(item.activityNo) === id || String(item.activityId) === id);
+  if (!page) return json({ success: false, message: "Activity not found" }, 404);
+  return json({ success: true, message: { type: "flex", altText: page.detailTitle || page.activityName || config.altText || "TDEA 每月活動", contents: buildMonthlyBubble(page, config) } });
+}
 function vendorCardLabel(label: string) {
   const text = clean(label);
   return text.length > 10 ? text.slice(0, 10) : text;
@@ -5517,6 +5537,7 @@ export default {
 	    if (request.method === "GET" && url.pathname === "/api/monthly-activity") return json({ success: true, data: await readEffectiveMonthly(env) });
 	    if ((request.method === "PUT" || request.method === "POST") && url.pathname === "/api/monthly-activity") { const guard = await requireAdmin(request, env); if (guard) return guard; if (!env.ASSETS_BUCKET) return json({ success: false, message: "R2 bucket is not configured" }, 503); const config = await request.json().catch(() => ({})) as MonthlyConfig; const validation = validateMonthlyConfigForPublish(config); if (validation) return json({ success: false, message: validation }, 400); await writeMonthly(env, config); const effective = await refreshMonthlySnapshot(env); return json({ success: true, data: effective, flex: buildMonthlyFlex(effective) }); }
 	    if (request.method === "GET" && url.pathname === "/api/monthly-activity/flex") { const config = await readMonthlyReplyConfig(env); return json({ success: true, flex: buildMonthlyFlex(config), data: config }); }
+	    if (request.method === "GET" && url.pathname === "/api/monthly-activity/share") return monthlyActivityShareApi(request, env);
 	    if (request.method === "GET" && url.pathname === "/api/line-webhook/status") return lineWebhookStatusApi(request, env);
 	    if (request.method === "GET" && url.pathname === "/api/line-webhook/logs") return lineWebhookLogsApi(request, env);
 	    if (url.pathname === "/api/activities" || url.pathname === "/api/activities/archived" || /^\/api\/activities\/[^/]+(?:\/restore)?$/.test(url.pathname)) return activityRecordsApi(request, env, url);

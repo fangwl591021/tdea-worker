@@ -2,7 +2,8 @@
   const api = "https://tdeawork.fangwl591021.workers.dev";
   const params = mergedParams();
   const closeMode = params.get("close") === "1" || params.get("submitted") === "1";
-  const detailId = params.get("monthlyDetail") || params.get("monthlyDetailId") || params.get("activityNo") || params.get("id");
+  const shareMode = params.has("share") || params.has("monthlyShare");
+  const detailId = params.get("monthlyShare") || params.get("monthlyDetail") || params.get("monthlyDetailId") || params.get("activityNo") || params.get("id") || params.get("share");
   if (!detailId && !closeMode) return;
 
   const esc = (value) => String(value ?? "").replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;").replaceAll("'", "&#039;");
@@ -133,7 +134,7 @@
       .liff-meta{display:inline-flex;margin:0 0 12px;padding:5px 10px;border-radius:999px;background:#eafff1;color:#027a48;font-size:13px;font-weight:800}
       .liff-text{white-space:pre-wrap;line-height:1.7;color:#344054;font-size:16px}
       .liff-btn{display:block;margin-top:18px;padding:13px 16px;border-radius:10px;background:#06c755;color:#fff;text-align:center;text-decoration:none;font-weight:800}
-      .liff-empty{padding:28px;text-align:center;color:#667085}
+      .liff-empty{padding:28px;text-align:center;color:#667085}.liff-share-panel{display:grid;gap:14px;text-align:center}.liff-share-panel h1{margin:0;font-size:24px}.liff-share-panel p{margin:0;color:#667085;line-height:1.7}.liff-secondary{display:block;padding:12px 14px;border:1px solid #d0d5dd;border-radius:10px;color:#344054;text-decoration:none;font-weight:800}
       .liff-done{padding:34px 24px;text-align:center}
       .liff-done h1{margin:0 0 10px;font-size:24px}
       .liff-done p{margin:0;color:#667085;line-height:1.7}
@@ -142,6 +143,43 @@
     document.head.appendChild(el);
   }
 
+  function loadLiffSdk() {
+    return new Promise((resolve, reject) => {
+      if (window.liff) return resolve(window.liff);
+      const script = document.createElement("script");
+      script.src = "https://static.line-scdn.net/liff/edge/2/sdk.js";
+      script.onload = () => window.liff ? resolve(window.liff) : reject(new Error("LIFF SDK 載入失敗"));
+      script.onerror = () => reject(new Error("LIFF SDK 載入失敗"));
+      document.head.appendChild(script);
+    });
+  }
+
+  async function initLiff() {
+    const sdk = await loadLiffSdk();
+    await sdk.init({ liffId: "2005868456-2jmxqyFU" });
+    if (!sdk.isLoggedIn()) {
+      sdk.login({ redirectUri: location.href });
+      return null;
+    }
+    return sdk;
+  }
+
+  async function shareActivity(page) {
+    shell(`<main class="liff-detail"><section class="liff-card liff-share-panel"><h1>分享活動</h1><p>正在開啟 LINE 通訊錄...</p></section></main>`);
+    try {
+      const sdk = await initLiff();
+      if (!sdk) return;
+      if (!sdk.isApiAvailable?.("shareTargetPicker")) throw new Error("目前環境不支援 LINE 通訊錄分享，請在 LINE App 內開啟。");
+      const id = page.activityNo || page.activityId || page.id || detailId;
+      const result = await fetch(`${api}/api/monthly-activity/share?id=${encodeURIComponent(id)}`, { cache: "no-store" }).then((res) => res.json());
+      if (!result.success || !result.message) throw new Error(result.message || "分享內容產生失敗");
+      const shareResult = await sdk.shareTargetPicker([result.message], { isMultiple: true });
+      const sent = shareResult && shareResult.status === "success";
+      shell(`<main class="liff-detail"><section class="liff-card liff-share-panel"><h1>${sent ? "已送出分享" : "已取消分享"}</h1><p>${sent ? "LINE 已接收這次分享；基於 LINE 隱私限制，系統不會知道實際分享給哪些人。" : "你尚未選擇分享對象。"}</p><a class="liff-btn" href="${esc(page.formUrl || '#')}">點我報名</a><a class="liff-secondary" href="${esc(location.href.replace(/([?&])share=[^&]*/,'$1').replace(/[?&]$/,''))}">回活動說明</a></section></main>`);
+    } catch (error) {
+      shell(`<main class="liff-detail"><section class="liff-card liff-share-panel"><h1>無法開啟分享</h1><p>${esc(error?.message || "分享失敗")}</p><a class="liff-secondary" href="${esc(location.href.replace(/([?&])share=[^&]*/,'$1').replace(/[?&]$/,''))}">回活動說明</a></section></main>`);
+    }
+  }
   function closeWindowSoon() {
     const fallback = () => setTimeout(() => { try { window.close(); } catch (_) {} }, 500);
     const done = () => {
@@ -232,6 +270,7 @@
       const detailText = meaningfulText(page.detailText) || await fallbackDetailFromForm(page);
       const images = pageImages(page);
       document.title = page.detailTitle || "\u8a73\u7d30\u8aaa\u660e";
+      if (shareMode) { await shareActivity(page); return; }
       shell(`<main class="liff-detail"><section class="liff-card">${images.length ? `<section class="liff-gallery"><div class="liff-gallery-head"><strong>\u6d3b\u52d5\u5716\u96c6</strong><span>${images.length} \u5f35</span></div>${slider(images)}</section>` : ""}${page.activityNo ? `<div class="liff-meta">${esc(page.activityNo)}</div>` : ""}<h1>${esc(page.detailTitle || "\u8a73\u7d30\u8aaa\u660e")}</h1><div class="liff-text">${esc(detailText || "\u5c1a\u672a\u586b\u5beb\u8a73\u7d30\u8aaa\u660e\u3002")}</div>${page.formUrl ? `<a class="liff-btn" href="${esc(page.formUrl)}">\u524d\u5f80\u5831\u540d</a>` : ""}</section></main>`);
       bindSlider();
     } catch (_) {

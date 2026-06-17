@@ -385,7 +385,7 @@
     return current || (target ? `${publicLiffUrl}?register=${encodeURIComponent(target)}` : "");
   }
 
-  function shareUrlForPage(page) { return trim(page.shareUrl) || detailUrlForPage(page); }
+  function shareUrlForPage(page) { const uri = detailUrlForPage(page); return uri + (uri.includes("?") ? "&" : "?") + "share=" + encodeURIComponent(page.activityNo || page.activityId || page.id || "1"); }
 
   function activityPayloadForPage(page, activity) {
     const imageUrl = firstUrl(posterUrlFor(activity), page.imageUrl);
