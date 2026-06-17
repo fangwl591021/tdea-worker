@@ -2238,30 +2238,12 @@ async function listPointLedgerApi(request: Request, env: Env) {
   return json({ success: true, data: pointLogsFromMotherList(list), raw: result });
 }
 
-function publicNativeForm(form: NativeForm) {
-  const registrationMode = nativeRegistrationMode(form.settings || {});
-  return {
-    id: form.id,
-    provider: form.provider,
-    activity: form.activity,
-    settings: { sessionsEnabled: form.sessions.length > 1, registrationMode, lineLoginEnabled: nativeLoginEnabled(form) },
-    fields: form.fields,
-    sessions: form.sessions.filter((session) => clean(session.status || "open") !== "closed"),
-    formUrl: form.formUrl
-  };
-}
 
-async function createNativeForm(request: Request, env: Env) {
-  const guard = await requireAdmin(request, env);
-  if (guard) return guard;
-  if (!env.ASSETS_BUCKET) return json({ success: false, message: "R2 bucket is not configured" }, 503);
-  const input = await request.json().catch(() => ({})) as Record<string, unknown>;
-  const activity = asRecord(input.activity);
-  const settings = asRecord(input.settings);
-  const formId = firstClean(activity.id, activity.activityNo, `native-${crypto.randomUUID()}`);
+function buildNativeFormRecord(formId: string, activityInput: Record<string, unknown>, settingsInput: Record<string, unknown>, existing?: NativeForm | null): NativeForm {
   const now = new Date().toISOString();
-  const existing = await readNativeForm(env, formId);
-  const form: NativeForm = {
+  const activity = { ...asRecord(existing?.activity), ...activityInput };
+  const settings = { ...asRecord(existing?.settings), ...settingsInput };
+  return {
     id: formId,
     provider: "native_form",
     activity: {
@@ -2284,14 +2266,51 @@ async function createNativeForm(request: Request, env: Env) {
     settings,
     fields: normalizeNativeFields(settings),
     sessions: normalizeNativeSessions(settings, activity),
-    formUrl: nativeFormUrl(formId),
+    formUrl: existing?.formUrl || nativeFormUrl(formId),
     createdAt: existing?.createdAt || now,
     updatedAt: now
   };
+}
+function publicNativeForm(form: NativeForm) {
+  const registrationMode = nativeRegistrationMode(form.settings || {});
+  return {
+    id: form.id,
+    provider: form.provider,
+    activity: form.activity,
+    settings: { sessionsEnabled: form.sessions.length > 1, registrationMode, lineLoginEnabled: nativeLoginEnabled(form) },
+    fields: form.fields,
+    sessions: form.sessions.filter((session) => clean(session.status || "open") !== "closed"),
+    formUrl: form.formUrl
+  };
+}
+
+async function createNativeForm(request: Request, env: Env) {
+  const guard = await requireAdmin(request, env);
+  if (guard) return guard;
+  if (!env.ASSETS_BUCKET) return json({ success: false, message: "R2 bucket is not configured" }, 503);
+  const input = await request.json().catch(() => ({})) as Record<string, unknown>;
+  const activity = asRecord(input.activity);
+  const settings = asRecord(input.settings);
+  const formId = firstClean(activity.id, activity.activityNo, `native-${crypto.randomUUID()}`);
+  const existing = await readNativeForm(env, formId);
+  const form = buildNativeFormRecord(formId, activity, settings, existing);
   await writeNativeForm(env, form);
   return json({ success: true, provider: "native_form", formId, nativeFormId: formId, formUrl: form.formUrl, nativeFormUrl: form.formUrl, data: { form: publicNativeForm(form) } }, 201);
 }
 
+
+async function updateNativeForm(request: Request, env: Env, formId: string) {
+  const guard = await requireAdmin(request, env);
+  if (guard) return guard;
+  if (!env.ASSETS_BUCKET) return json({ success: false, message: "R2 bucket is not configured" }, 503);
+  const input = await request.json().catch(() => ({})) as Record<string, unknown>;
+  const existing = await readNativeForm(env, formId);
+  const activity = { ...asRecord(existing?.activity), ...asRecord(input.activity), id: formId };
+  const settings = { ...asRecord(existing?.settings), ...asRecord(input.settings) };
+  const form = buildNativeFormRecord(formId, activity, settings, existing);
+  await writeNativeForm(env, form);
+  return json({ success: true, provider: "native_form", formId, nativeFormId: formId, formUrl: form.formUrl, nativeFormUrl: form.formUrl, data: { form: publicNativeForm(form) } }, existing ? 200 : 201);
+}
 async function getNativeForm(request: Request, env: Env, formId: string) {
   const form = await readNativeForm(env, formId);
   if (!form) return json({ success: false, message: "找不到報名表" }, 404);
@@ -5359,6 +5378,7 @@ export default {
 	    const nativeLoginMemberMatch = url.pathname.match(/^\/api\/native-forms\/([^/]+)\/login-member$/);
 	    if (nativeLoginMemberMatch && request.method === "GET") return getNativeLoginMember(request, env, decodeURIComponent(nativeLoginMemberMatch[1]));
 	    const nativeFormMatch = url.pathname.match(/^\/api\/native-forms\/([^/]+)$/);
+	    if (nativeFormMatch && (request.method === "PUT" || request.method === "PATCH")) return updateNativeForm(request, env, decodeURIComponent(nativeFormMatch[1]));
 	    if (nativeFormMatch && request.method === "GET") return getNativeForm(request, env, decodeURIComponent(nativeFormMatch[1]));
 	    if (nativeFormMatch && request.method === "POST") return submitNativeForm(request, env, decodeURIComponent(nativeFormMatch[1]));
 	    if (request.method === "GET" && url.pathname === "/api/native-registrations/query") return queryNativeRegistration(request, env);

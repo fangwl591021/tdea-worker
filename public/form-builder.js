@@ -69,6 +69,56 @@
     };
   }
 
+  function formRowId(form) {
+    return String(form.elements?.id?.value || "").trim();
+  }
+
+  function looksLikeNativeFormUrl(url) {
+    return /liff\.line\.me/i.test(String(url || "")) || /[?&](register|monthlyDetail)=/i.test(String(url || ""));
+  }
+
+  function targetActivity(data, form) {
+    const rows = Array.isArray(data.activities) ? data.activities : [];
+    const id = formRowId(form);
+    const name = String(form.elements?.name?.value || "").trim();
+    if (id) {
+      const byId = rows.find(activity => String(activity.id || "") === id || String(activity.activityNo || "") === id);
+      if (byId) return byId;
+    }
+    if (name) {
+      const byName = rows.find(activity => String(activity.name || "").trim() === name);
+      if (byName) return byName;
+    }
+    return form.id === "activity-form" ? rows[0] || null : null;
+  }
+
+  function formSettingsFor(data, activity = {}) {
+    const settings = data.formSettings || {};
+    return settings[activity.id] || settings[activity.activityNo] || {};
+  }
+
+  function setFormValue(form, name, value) {
+    const field = form.elements?.[name];
+    if (!field || value === undefined || value === null) return;
+    field.value = Array.isArray(value) ? value.join("\n") : String(value || "");
+  }
+
+  function hydrateRegistrationSettings(form, block) {
+    const data = load();
+    const activity = targetActivity(data, form) || {};
+    const settings = formSettingsFor(data, activity);
+    setFormValue(form, "posterUrl", settings.posterUrl || activity.posterUrl || activity.imageUrl || "");
+    setFormValue(form, "galleryUrls", settings.galleryUrls || activity.galleryUrls || "");
+    setFormValue(form, "formUrl", settings.formUrl || activity.formUrl || activity.nativeFormUrl || "");
+    setFormValue(form, "youtubeUrl", settings.youtubeUrl || activity.youtubeUrl || "");
+    setFormValue(form, "registrationMode", settings.registrationMode || activity.registrationMode || "form");
+    setFormValue(form, "requireImageUpload", settings.requireImageUpload || "N");
+    setFormValue(form, "genderField", settings.genderField || "required");
+    setFormValue(form, "memberField", settings.memberField || "required");
+    setFormValue(form, "mealField", settings.mealField || "required");
+    (Array.isArray(settings.sessions) ? settings.sessions : []).forEach(session => addSession(block, session));
+    (Array.isArray(settings.customFields) ? settings.customFields : []).forEach(field => addCustomField(block, field));
+  }
   async function uploadPoster(file, activityId) {
     if (!hasAdminIdentity()) throw new Error("請先登入管理者");
 
@@ -90,7 +140,10 @@
   }
 
   function enhanceCreatorForm() {
-    const form = document.querySelector("#activity-form");
+    document.querySelectorAll("#activity-form,#drawer-activity").forEach(enhanceActivityRegistrationForm);
+  }
+
+  function enhanceActivityRegistrationForm(form) {
     if (!form || form.dataset.formBuilderReady) return;
     form.dataset.formBuilderReady = "true";
 
@@ -184,6 +237,15 @@
       </div>
       <div class="form-upload-status" aria-live="polite"></div>`;
 
+    if (form.id === "drawer-activity") {
+      block.dataset.drawerRegistrationOnly = "true";
+      ["posterFile", "posterUrl", "galleryUrls", "formUrl", "youtubeUrl", "registrationMode"].forEach(name => {
+        block.querySelector(`[name="${name}"]`)?.closest(".field")?.remove();
+      });
+      const title = block.querySelector(".form-builder-title");
+      if (title) title.textContent = "報名欄位設定";
+    }
+
     const customTitle = block.querySelector(".custom-fields-head strong");
     if (customTitle) customTitle.textContent = "自訂題目";
     const addCustomButton = block.querySelector("[data-add-custom-field]");
@@ -191,8 +253,9 @@
     const customHint = block.querySelector(".custom-fields-block .form-builder-hint");
     if (customHint) customHint.textContent = "新增報名題目；單選、複選、下拉選單可逐列新增選項。";
 
+    hydrateRegistrationSettings(form, block);
     submit?.insertAdjacentElement("beforebegin", block);
-    submit.textContent = "建立活動與報名設定";
+    if (form.id === "activity-form") submit.textContent = "建立活動與報名設定";
 	    block.querySelector("[data-add-custom-field]")?.addEventListener("click", () => addCustomField(block));
 	    block.querySelector("[data-add-session]")?.addEventListener("click", () => addSession(block));
 	  }
@@ -371,7 +434,7 @@
 
   document.addEventListener("submit", event => {
     const form = event.target;
-    if (!(form instanceof HTMLFormElement) || form.id !== "activity-form") return;
+    if (!(form instanceof HTMLFormElement) || !["activity-form", "drawer-activity"].includes(form.id)) return;
 
     const posterFile = form.posterFile?.files?.[0] || null;
     const status = form.querySelector(".form-upload-status");
@@ -415,16 +478,18 @@
     }
     settings.fields.push({ key: "note", label: "備註", type: "paragraph", required: false });
     settings.fields.push(...customFields);
+    form.__tdeaRegistrationSettings = settings;
 
     setTimeout(async () => {
       const data = await loadRemoteActivitiesIntoLocal();
       data.formSettings ||= {};
-      const latest = data.activities?.[0];
+      const latest = targetActivity(data, form);
       if (!latest) return;
 
       data.formSettings[latest.id] = settings;
       if (latest.activityNo) data.formSettings[latest.activityNo] = settings;
-      latest.formMode = "google_form";
+      if (settings.formUrl && !looksLikeNativeFormUrl(settings.formUrl)) latest.formMode = "google_form";
+      else latest.formMode = latest.formMode || "native_form";
       latest.posterUrl = settings.posterUrl;
       latest.galleryUrls = settings.galleryUrls;
       latest.youtubeUrl = settings.youtubeUrl;
@@ -432,9 +497,12 @@
         latest.formUrl = settings.formUrl;
         latest.googleFormUrl = settings.formUrl;
       }
+      if (typeof window.tdeaSyncNativeFormForActivity === "function" && (latest.formMode === "native_form" || latest.nativeFormId || looksLikeNativeFormUrl(latest.formUrl) || !settings.formUrl)) {
+        try { await window.tdeaSyncNativeFormForActivity(latest, settings); } catch (_) {}
+      }
       save(data);
 
-      if (!posterFile) return;
+      if (!posterFile || form.id !== "activity-form") return;
       try {
         if (status) status.textContent = "活動圖片上傳中...";
         const uploaded = await uploadPoster(posterFile, latest.id);

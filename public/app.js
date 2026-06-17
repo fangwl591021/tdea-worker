@@ -819,28 +819,54 @@
     };
   }
 
-  async function ensureNativeFormForActivity(activity, email) {
-    if (!hasAdminIdentity() || activity.formUrl || activity.nativeFormUrl) return false;
-    const settings = nativeFormSettingsFor(activity);
-    const response = await fetch(`${api}/api/native-forms/create`, {
-      method: "POST",
+  function storedFormSettingsForActivity(activity = {}) {
+    const settings = state.data.formSettings || {};
+    return settings[activity.id] || settings[activity.activityNo] || {};
+  }
+
+  function nativeFormIdentifier(activity = {}) {
+    return String(activity.nativeFormId || activity.formId || activity.id || activity.activityNo || "").trim();
+  }
+
+  function looksLikeNativeFormUrl(url) {
+    return /liff\.line\.me/i.test(String(url || "")) || /[?&](register|monthlyDetail)=/i.test(String(url || ""));
+  }
+
+  function activityHasNativeForm(activity = {}) {
+    return activity.formMode === "native_form" || Boolean(activity.nativeFormId) || looksLikeNativeFormUrl(activity.nativeFormUrl || activity.formUrl);
+  }
+
+  async function ensureNativeFormForActivity(activity, email, settingsOverride = null, options = {}) {
+    if (!hasAdminIdentity() || !activity) return false;
+    const storedSettings = storedFormSettingsForActivity(activity);
+    const overrideSettings = settingsOverride && typeof settingsOverride === "object" ? settingsOverride : {};
+    const settings = { ...nativeFormSettingsFor(activity), ...storedSettings, ...overrideSettings };
+    const currentFormId = nativeFormIdentifier(activity);
+    const shouldUpdate = Boolean(currentFormId && (activityHasNativeForm(activity) || options.update));
+    if ((activity.formUrl || activity.nativeFormUrl) && !shouldUpdate && !options.force) return false;
+    const endpoint = shouldUpdate ? `${api}/api/native-forms/${encodeURIComponent(currentFormId)}` : `${api}/api/native-forms/create`;
+    const response = await fetch(endpoint, {
+      method: shouldUpdate ? "PUT" : "POST",
       headers: adminHeaders({ "content-type": "application/json" }),
       body: JSON.stringify({ activity, settings })
     });
     const result = await response.json().catch(() => ({}));
     if (!response.ok || !result.success) return false;
-    const formUrl = result.formUrl || result.nativeFormUrl || result.data?.formUrl || result.data?.nativeFormUrl || "";
-    if (!formUrl) return false;
+    const formUrl = result.formUrl || result.nativeFormUrl || result.data?.formUrl || result.data?.nativeFormUrl || result.data?.form?.formUrl || "";
+    const formId = result.formId || result.nativeFormId || result.data?.formId || result.data?.nativeFormId || result.data?.form?.id || currentFormId || activity.id;
+    if (!formUrl || !formId) return false;
     activity.formMode = "native_form";
-    activity.formId = result.formId || result.nativeFormId || activity.id;
-    activity.nativeFormId = result.nativeFormId || result.formId || activity.formId;
+    activity.formId = formId;
+    activity.nativeFormId = formId;
     activity.formUrl = formUrl;
     activity.nativeFormUrl = formUrl;
     state.data.formSettings ||= {};
-    state.data.formSettings[activity.id] = { ...settings, templateMode: activity.templateMode || settings.templateMode || "", formMode: "native_form", formId: activity.formId, nativeFormId: activity.nativeFormId, formUrl, nativeFormUrl: formUrl, detailText: activity.detailText || "", posterUrl: activity.posterUrl || activity.imageUrl || "", galleryUrls: cleanUrlList(activity.galleryUrls) };
+    state.data.formSettings[activity.id] = { ...settings, templateMode: activity.templateMode || settings.templateMode || "", formMode: "native_form", formId, nativeFormId: formId, formUrl, nativeFormUrl: formUrl, detailText: activity.detailText || settings.detailText || "", posterUrl: activity.posterUrl || activity.imageUrl || settings.posterUrl || "", imageUrl: activity.imageUrl || activity.posterUrl || settings.imageUrl || "", galleryUrls: cleanUrlList(activity.galleryUrls || settings.galleryUrls) };
     if (activity.activityNo) state.data.formSettings[activity.activityNo] = state.data.formSettings[activity.id];
     return true;
   }
+
+  window.tdeaSyncNativeFormForActivity = async (activity, settings) => ensureNativeFormForActivity(activity, "", settings, { update: true });
 
   async function uploadActivityPoster(file, activityId, email) {
     if (!file || !file.size || !hasAdminIdentity()) return null;
@@ -1599,7 +1625,8 @@
           }
         }
         try {
-          await ensureNativeFormForActivity(activity, email);
+          const registrationSettings = form.__tdeaRegistrationSettings || null;
+          await ensureNativeFormForActivity(activity, email, registrationSettings, { update: true });
         } catch (error) {
           toast(error?.message || "報名表處理失敗");
           resetActivityUploadState(form);
@@ -1754,7 +1781,28 @@
       if (url) location.href = url;
       else toast("這個活動尚未建立報名表，請到編輯活動產生。");
     });
-    const af = document.querySelector("#activity-form"); if (af) af.onsubmit = async e => { e.preventDefault(); setSubmitState(af, "儲存中..."); const d = Object.fromEntries(new FormData(af)); const templateMode = d.templateMode || "custom"; const registrationMode = d.registrationMode || (templateMode === "mode1_vendor_visit" ? "member_login" : "form"); const item = { id: uid(), name: d.name.trim(), templateMode, type: d.type, typeLabel: formTypeLabel(d), courseTime: d.courseTime, deadline: d.deadline, capacity: Number(d.capacity || 0), checkinPoints: Number(d.checkinPoints || 0), feePoints: Number(d.feePoints || 0), paymentAmount: Number(d.paymentAmount || 0), remittanceInfo: d.remittanceInfo || "", registrationMode, detailText: d.detailText || "", galleryUrls: cleanUrlList(d.galleryUrls || ""), reg: 0, check: 0, status: d.status, formUrl: "" }; try { const saved = await saveActivityRemote(item); state.data.activities.unshift(saved || item); save(); await finishSubmitState(af); } catch (err) { toast(err?.message || "活動建立失敗"); resetSubmitState(af); } };
+    const af = document.querySelector("#activity-form");
+    if (af) af.onsubmit = async e => {
+      e.preventDefault();
+      setSubmitState(af, "儲存中...");
+      const d = Object.fromEntries(new FormData(af));
+      const templateMode = d.templateMode || "custom";
+      const registrationMode = d.registrationMode || (templateMode === "mode1_vendor_visit" ? "member_login" : "form");
+      const item = { id: uid(), name: d.name.trim(), templateMode, type: d.type, typeLabel: formTypeLabel(d), courseTime: d.courseTime, deadline: d.deadline, capacity: Number(d.capacity || 0), checkinPoints: Number(d.checkinPoints || 0), feePoints: Number(d.feePoints || 0), paymentAmount: Number(d.paymentAmount || 0), remittanceInfo: d.remittanceInfo || "", registrationMode, detailText: d.detailText || "", galleryUrls: cleanUrlList(d.galleryUrls || ""), reg: 0, check: 0, status: d.status, formUrl: "" };
+      try {
+        const saved = await saveActivityRemote(item);
+        const activity = saved || item;
+        state.data.activities.unshift(activity);
+        const registrationSettings = af.__tdeaRegistrationSettings || null;
+        await ensureNativeFormForActivity(activity, "", registrationSettings, { force: true });
+        await saveActivityRemote(activity).catch(() => null);
+        save();
+        await finishSubmitState(af);
+      } catch (err) {
+        toast(err?.message || "活動建立失敗");
+        resetSubmitState(af);
+      }
+    };
     const ea = document.querySelector("#drawer-activity"); if (ea) ea.onsubmit = async e => { e.preventDefault(); setSubmitState(ea, "儲存中..."); const d = Object.fromEntries(new FormData(ea)); const x = state.data.activities.find(r => r.id === d.id); if (x) { Object.assign(x, { name: d.name, templateMode: d.templateMode || x.templateMode || "custom", type: d.type, typeLabel: formTypeLabel(d), courseTime: d.courseTime, deadline: d.deadline, capacity: Number(d.capacity || 0), checkinPoints: Number(d.checkinPoints || 0), feePoints: Number(d.feePoints || 0), paymentAmount: Number(d.paymentAmount || 0), remittanceInfo: d.remittanceInfo || "", registrationMode: d.registrationMode || "form", reg: Number(d.reg || 0), check: Number(d.check || 0), status: d.status, formUrl: d.formUrl, galleryUrls: cleanUrlList(d.galleryUrls) }); try { const saved = await saveActivityRemote(x); Object.assign(x, saved || {}); } catch (err) { toast(err?.message || "活動儲存失敗"); resetSubmitState(ea); return; } } save(); await finishSubmitState(ea); };
     const mf = document.querySelector("#drawer-member"); if (mf) mf.onsubmit = e => { e.preventDefault(); const type = mf.dataset.type; const d = Object.fromEntries(new FormData(mf)); const rows = state.data[type]; const old = rows.find(r => r.id === d.id); const loginAccess = d.loginAccess === "Y"; const item = { ...d, id: d.id || uid(), loginAccess, allowLogin: loginAccess, canLogin: loginAccess }; old ? Object.assign(old, item) : rows.unshift(item); state.drawer = ""; save(); syncRosterMemberToWorker(type, item); syncAdminAccessForMember(type, item); render(); toast("名冊已儲存"); };
     const im = document.querySelector("#import-form"); if (im) im.onsubmit = e => { e.preventDefault(); const d = Object.fromEntries(new FormData(im)); const count = importRows(im.dataset.type, d.csv || ""); state.drawer = ""; render(); toast(`已導入 ${count} 筆資料`); };
