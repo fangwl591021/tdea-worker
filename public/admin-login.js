@@ -17,7 +17,7 @@
     "marquee"
   ];
   const scriptVersions = [
-    "app.js?v=crm-point-scroll1",
+    "app.js?v=gallery-clear1",
     "line-zone.js?v=line-order1",
     "lottery.js?v=lottery4",
     "activity-types.js?v=types4",

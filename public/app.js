@@ -1431,7 +1431,7 @@
       <div class="field"><label>活動主圖</label><input type="file" accept="image/*" data-activity-poster-file><div class="muted">上傳後會寫入報名頁與每月活動主圖。</div></div>
       <div class="field"><label>圖片網址</label><input name="posterUrl" value="${esc(activity.posterUrl || activity.imageUrl || "")}" placeholder="上傳後自動填入，也可貼圖片網址"></div>
       <div class="field"><label>活動圖集 / 說明頁輪播圖</label><input type="file" accept="image/*" multiple data-activity-gallery-file><div class="muted">可一次選多張；活動說明頁會用這些圖片做輪播，每月活動會自動帶入張數。</div></div>
-      <div class="field"><label>圖集網址</label><textarea name="galleryUrls" placeholder="每行一張圖片網址；也可直接貼上既有圖片 URL">${esc(cleanUrlList(activity.galleryUrls).join("\n"))}</textarea></div>
+      <div class="field"><label>圖集網址</label><textarea name="galleryUrls" placeholder="每行一張圖片網址；也可直接貼上既有圖片 URL">${esc(cleanUrlList(activity.galleryUrls).join("\n"))}</textarea><div class="actions" style="justify-content:flex-start;margin-top:8px"><button class="btn danger" type="button" data-clear-activity-gallery>清除圖集</button></div></div>
       <div class="field"><label>報名頁網址</label><input name="nativeFormUrl" value="${esc(activity.nativeFormUrl || "")}" placeholder="系統會自動產生"></div>`;
     insertBefore?.insertAdjacentElement("beforebegin", wrap);
     groupActivityMediaFields(wrap);
@@ -1447,6 +1447,13 @@
         status.textContent = count ? `已選擇 ${count} 張圖片，按下儲存後會開始上傳。` : "";
       });
     }
+    wrap.querySelector("[data-clear-activity-gallery]")?.addEventListener("click", () => {
+      if (!confirm("確定清除活動圖集？\n\n清除後需按「儲存」才會寫入。")) return;
+      const galleryInput = wrap.querySelector("[name='galleryUrls']");
+      if (galleryInput) galleryInput.value = "";
+      if (galleryFileInput) galleryFileInput.value = "";
+      setActivityUploadStatus(form, "圖集已清空，按下儲存後生效。");
+    });
   }
 
   function deleteMember(token) {
@@ -1557,7 +1564,7 @@
           detailText: d.detailText || activity.detailText || "",
           posterUrl: d.posterUrl || activity.posterUrl || "",
           imageUrl: d.posterUrl || activity.imageUrl || "",
-          galleryUrls: cleanUrlList(d.galleryUrls || activity.galleryUrls)
+          galleryUrls: cleanUrlList(d.galleryUrls)
         });
         const email = localStorage.getItem("tdea-admin-email") || sessionStorage.getItem("tdea-admin-email") || "";
         if (file) {
@@ -1749,7 +1756,7 @@
       else toast("這個活動尚未建立報名表，請到編輯活動產生。");
     });
     const af = document.querySelector("#activity-form"); if (af) af.onsubmit = async e => { e.preventDefault(); setSubmitState(af, "儲存中..."); const d = Object.fromEntries(new FormData(af)); const templateMode = d.templateMode || "custom"; const registrationMode = d.registrationMode || (templateMode === "mode1_vendor_visit" ? "member_login" : "form"); const item = { id: uid(), name: d.name.trim(), templateMode, type: d.type, typeLabel: formTypeLabel(d), courseTime: d.courseTime, deadline: d.deadline, capacity: Number(d.capacity || 0), checkinPoints: Number(d.checkinPoints || 0), feePoints: Number(d.feePoints || 0), paymentAmount: Number(d.paymentAmount || 0), remittanceInfo: d.remittanceInfo || "", registrationMode, detailText: d.detailText || "", galleryUrls: cleanUrlList(d.galleryUrls || ""), reg: 0, check: 0, status: d.status, formUrl: "" }; try { const saved = await saveActivityRemote(item); state.data.activities.unshift(saved || item); save(); await finishSubmitState(af); } catch (err) { toast(err?.message || "活動建立失敗"); resetSubmitState(af); } };
-    const ea = document.querySelector("#drawer-activity"); if (ea) ea.onsubmit = async e => { e.preventDefault(); setSubmitState(ea, "儲存中..."); const d = Object.fromEntries(new FormData(ea)); const x = state.data.activities.find(r => r.id === d.id); if (x) { Object.assign(x, { name: d.name, templateMode: d.templateMode || x.templateMode || "custom", type: d.type, typeLabel: formTypeLabel(d), courseTime: d.courseTime, deadline: d.deadline, capacity: Number(d.capacity || 0), checkinPoints: Number(d.checkinPoints || 0), feePoints: Number(d.feePoints || 0), paymentAmount: Number(d.paymentAmount || 0), remittanceInfo: d.remittanceInfo || "", registrationMode: d.registrationMode || "form", reg: Number(d.reg || 0), check: Number(d.check || 0), status: d.status, formUrl: d.formUrl, galleryUrls: cleanUrlList(d.galleryUrls || x.galleryUrls) }); try { const saved = await saveActivityRemote(x); Object.assign(x, saved || {}); } catch (err) { toast(err?.message || "活動儲存失敗"); resetSubmitState(ea); return; } } save(); await finishSubmitState(ea); };
+    const ea = document.querySelector("#drawer-activity"); if (ea) ea.onsubmit = async e => { e.preventDefault(); setSubmitState(ea, "儲存中..."); const d = Object.fromEntries(new FormData(ea)); const x = state.data.activities.find(r => r.id === d.id); if (x) { Object.assign(x, { name: d.name, templateMode: d.templateMode || x.templateMode || "custom", type: d.type, typeLabel: formTypeLabel(d), courseTime: d.courseTime, deadline: d.deadline, capacity: Number(d.capacity || 0), checkinPoints: Number(d.checkinPoints || 0), feePoints: Number(d.feePoints || 0), paymentAmount: Number(d.paymentAmount || 0), remittanceInfo: d.remittanceInfo || "", registrationMode: d.registrationMode || "form", reg: Number(d.reg || 0), check: Number(d.check || 0), status: d.status, formUrl: d.formUrl, galleryUrls: cleanUrlList(d.galleryUrls) }); try { const saved = await saveActivityRemote(x); Object.assign(x, saved || {}); } catch (err) { toast(err?.message || "活動儲存失敗"); resetSubmitState(ea); return; } } save(); await finishSubmitState(ea); };
     const mf = document.querySelector("#drawer-member"); if (mf) mf.onsubmit = e => { e.preventDefault(); const type = mf.dataset.type; const d = Object.fromEntries(new FormData(mf)); const rows = state.data[type]; const old = rows.find(r => r.id === d.id); const loginAccess = d.loginAccess === "Y"; const item = { ...d, id: d.id || uid(), loginAccess, allowLogin: loginAccess, canLogin: loginAccess }; old ? Object.assign(old, item) : rows.unshift(item); state.drawer = ""; save(); syncRosterMemberToWorker(type, item); syncAdminAccessForMember(type, item); render(); toast("名冊已儲存"); };
     const im = document.querySelector("#import-form"); if (im) im.onsubmit = e => { e.preventDefault(); const d = Object.fromEntries(new FormData(im)); const count = importRows(im.dataset.type, d.csv || ""); state.drawer = ""; render(); toast(`已導入 ${count} 筆資料`); };
     const loadRoster = document.querySelector("[data-load-roster]"); if (loadRoster) loadRoster.onclick = () => loadRosterSeed(true);
