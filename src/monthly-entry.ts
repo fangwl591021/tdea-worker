@@ -64,6 +64,7 @@ const defaultCalendarId = "7d66f2a96f192dda6cca2b04e60a6e549c7adf74f57721845d5b7
 const googleMemberSheetCsvUrl = "https://docs.google.com/spreadsheets/d/1KzXzRsAesrF0vlKh2TLUKW-ltpWrxASWt7acWV7ic8w/export?format=csv&gid=858404675";
 const workerBaseUrl = "https://tdeawork.fangwl591021.workers.dev";
 const fixedKeyword = "TDEA每月活動";
+const monthlyActivityAliases = ["活動報名", "TDEA活動", "TDEA報名", "TDEA課程"];
 const vendorCardKeyword = "TDEA廠商列表";
 const marqueeKeyword = "TDEA廣告贈點";
 const queryKeyword = "TDEA活動查詢";
@@ -95,7 +96,9 @@ const esc = (value: unknown) => String(value ?? "").replace(/[&<>'"]/g, (ch) => 
 const normalizeKeyword = (value: string) => value.trim().replace(/[\s\u200B-\u200D\uFEFF]+/g, "").toUpperCase();
 const isMonthlyActivityKeyword = (value: string) => {
   const normalized = normalizeKeyword(value);
-  return normalized === normalizeKeyword(fixedKeyword) || (normalized.includes("TDEA") && normalized.includes("每月活動"));
+  return normalized === normalizeKeyword(fixedKeyword)
+    || monthlyActivityAliases.some((keyword) => normalized === normalizeKeyword(keyword))
+    || (normalized.includes("TDEA") && normalized.includes("每月活動"));
 };
 
 function staticAdminEmails(env: Env) {

@@ -1152,7 +1152,7 @@
   function keywordRows() {
     const builtIn = [
       { keyword: "TDEA建立活動", aliases: "TDEA新增活動、TDEA活動上稿、TDEA製作活動", purpose: "在 LINE 對話中建立活動草稿", reply: "逐步詢問活動名稱、類型、時間、截止、名額、點數、報名方式與狀態；完成後可在後台匯入 LINE 草稿", entry: "", owner: "LINE 對話上稿", status: "啟用中" },
-      { keyword: "TDEA每月活動", aliases: "無", purpose: "推送每月活動橫式多頁 FLEX", reply: "回覆每月活動 carousel，詳細說明走 LIFF，報名按鈕走自建報名表", entry: `${liffBase}?monthlyDetail={活動編號}`, owner: "每月活動", status: "啟用中" },
+      { keyword: "TDEA每月活動", aliases: "活動報名、TDEA活動、TDEA報名、TDEA課程", purpose: "推送每月活動橫式多頁 FLEX", reply: "回覆每月活動 carousel，詳細說明走 LIFF，報名按鈕走自建報名表", entry: `${liffBase}?monthlyDetail={活動編號}`, owner: "每月活動", status: "啟用中" },
       { keyword: "TDEA廠商列表", aliases: "TDEA廠商名片、TDEA合作廠商", purpose: "推送可點擊的廠商名片 FLEX 選單", reply: "回覆廠商 logo 九宮格；點擊後送出對應廠商名稱", entry: "", owner: "廠商名片", status: "啟用中" },
       { keyword: "TDEA活動查詢", aliases: "無", purpose: "讓會員查詢或取消自己的活動報名", reply: "開啟 LIFF「我的活動報名」，以 LINE Login 查詢", entry: `${nativeLiffBase}?query=1`, owner: "報名系統", status: "啟用中" },
       { keyword: "TDEA會員QR", aliases: "無", purpose: "會員開啟自己的扣點 QR，給合作店家掃描", reply: "開啟 LIFF「會員 QR」頁面", entry: `${nativeLiffBase}?memberQr=1`, owner: "點數折抵", status: "啟用中" },
@@ -1160,7 +1160,6 @@
       { keyword: "TDEA點數", aliases: "TDEA查點、TDEA點數查詢、TDEA紅利", purpose: "查詢發話者自己的母站點數", reply: "以 LINE userId 查母站點數 API，回覆餘額與最近紀錄", entry: "", owner: "母站點數", status: "啟用中" },
       { keyword: "TDEA點數+UID", aliases: "例：TDEA點數+Ub68b9724664b889e790c789ece72f717", purpose: "管理測試或客服查指定 LINE UID 點數", reply: "以指定 UID 查母站點數 API", entry: "", owner: "母站點數", status: "啟用中" },
       { keyword: "TDEA會員專區", aliases: "TDEA會員、TDEA會員中心、TDEA專區", purpose: "顯示會員入口選單", reply: "回覆會員專區 FLEX，含活動與點數入口", entry: liffBase, owner: "內建關鍵字", status: "啟用中" },
-      { keyword: "TDEA活動", aliases: "TDEA報名、TDEA課程", purpose: "活動資訊入口", reply: "回覆活動資訊 FLEX；每月活動請用 TDEA每月活動", entry: liffBase, owner: "內建關鍵字", status: "啟用中" },
       { keyword: "TDEA說明", aliases: "TDEAHELP、TDEA幫助", purpose: "查看可用關鍵字說明", reply: "回覆文字版使用說明", entry: "", owner: "內建關鍵字", status: "啟用中" }
     ];
     const flexRules = Array.isArray(state.data.flexRules) ? state.data.flexRules : [];
