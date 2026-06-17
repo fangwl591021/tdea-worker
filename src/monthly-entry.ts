@@ -1265,6 +1265,135 @@ async function listRegistrations(request: Request, env: Env) {
   return json({ success: true, key: keys[0] || "", data: [] });
 }
 
+function registrationExportValue(value: unknown) {
+  return clean(answerValue(value));
+}
+
+function registrationExportStatus(entry: RegistrationEntry) {
+  const status = clean(entry.status || "active");
+  if (status === "cancelled") return "已取消";
+  return "有效";
+}
+
+function registrationExportPaymentStatus(entry: RegistrationEntry) {
+  const payment = normalizeRegistrationPayment(entry);
+  if (payment.amount <= 0 || payment.status === "free") return "免費";
+  if (payment.status === "paid") return "已確認";
+  if (payment.status === "reported") return "已回報待核對";
+  if (payment.status === "cancelled") return "已取消";
+  if (payment.status === "refunded") return "已退款";
+  return "未付款";
+}
+
+function registrationExportSource(value: unknown) {
+  const source = clean(value);
+  if (source === "line_login" || source === "line_member_claim") return "LINE 快速報名";
+  if (source === "form") return "完整表單";
+  return source;
+}
+
+function registrationExportFileName(value: string) {
+  const safe = clean(value).replace(/[\\/:*?"<>|]+/g, "-").replace(/\s+/g, " ").slice(0, 90);
+  return safe || "TDEA-報名名單.xls";
+}
+
+function registrationExcelCell(value: unknown) {
+  return `<td style="mso-number-format:'\\@';white-space:pre-wrap">${esc(value).replace(/\r?\n/g, "<br>")}</td>`;
+}
+
+function registrationExcelHeader(value: unknown) {
+  return `<th style="background:#eef2f7;mso-number-format:'\\@'">${esc(value)}</th>`;
+}
+
+async function exportRegistrationsExcel(request: Request, env: Env) {
+  const guard = await requireAdmin(request, env);
+  if (guard) return guard;
+  if (!env.ASSETS_BUCKET) return json({ success: false, message: "R2 bucket is not configured" }, 503);
+  const url = new URL(request.url);
+  const activityId = clean(url.searchParams.get("activityId") || url.searchParams.get("id"));
+  const queryKeys = (url.searchParams.get("keys") || url.searchParams.get("key") || "")
+    .split(",")
+    .map((key) => key.trim())
+    .filter(Boolean);
+  const activity = activityId ? await readActivityRecord(env, activityId) : null;
+  const activityFormId = activity ? firstClean(activity.nativeFormId, activity.formId, activity.googleFormId, activity.opnformFormId) : "";
+  const activityKeys = activity ? registrationKeys(activity, activityFormId) : [];
+  const keys = [...new Set([...queryKeys, activityId, ...activityKeys].map(clean).filter(Boolean))];
+  let chosenKey = "";
+  let rows: RegistrationEntry[] = [];
+  for (const key of keys) {
+    const list = dedupeRegistrations(await readRegistrationList(env, key));
+    if (list.length) {
+      chosenKey = key;
+      rows = list;
+      break;
+    }
+  }
+  const fallbackActivity = rows.find((row) => row.activity)?.activity || {};
+  const sourceActivity = activity || fallbackActivity;
+  const formId = firstClean(activityFormId, rows[0]?.formId, chosenKey);
+  const form = formId ? await readNativeForm(env, formId).catch(() => null) : null;
+  const fieldLabels = new Map<string, string>();
+  for (const field of form?.fields || []) fieldLabels.set(field.key, firstClean(field.label, field.key));
+  const baseHeaders = [
+    "報名狀態",
+    "報名時間",
+    "更新時間",
+    "取消時間",
+    "查詢碼",
+    "LINE UID",
+    "報名來源",
+    "會員編號",
+    "會員姓名",
+    "場次",
+    "付款狀態",
+    "付款金額",
+    "匯款末五碼",
+    "付款回報時間",
+    "付款確認時間",
+    "核銷狀態",
+    "核銷時間"
+  ];
+  const answerKeys = [...new Set(rows.flatMap((row) => Object.keys(row.answers || {})))]
+    .filter((key) => !["registrationSource", "memberNo", "memberName", "LINE_user_id", "lineUserId", "line_user_id", "uid", "UID"].includes(key));
+  const headersForAnswers = answerKeys.map((key) => fieldLabels.get(key) || key);
+  const title = firstClean(sourceActivity.name, sourceActivity.activityName, sourceActivity.title, form?.activity?.name, activityId, chosenKey, "TDEA 活動");
+  const created = new Date().toISOString().slice(0, 10);
+  const fileName = registrationExportFileName(`${title}-報名名單-${created}.xls`);
+  const bodyRows = rows.map((entry) => {
+    const answers = normalizeAnswersRecord(entry.answers || {});
+    const payment = normalizeRegistrationPayment(entry);
+    const baseValues = [
+      registrationExportStatus(entry),
+      entry.submittedAt || "",
+      entry.updatedAt || "",
+      entry.cancelledAt || "",
+      entry.queryCode || "",
+      firstClean(entry.lineUserId, answers.LINE_user_id, answers.lineUserId, answers.line_user_id, answers.uid, answers.UID),
+      registrationExportSource(answers.registrationSource),
+      firstClean(answers.memberNo, answers["會員編號"]),
+      firstClean(answers.memberName, answers.name, answers["姓名"]),
+      entry.sessionId || "",
+      registrationExportPaymentStatus(entry),
+      payment.amount ? String(payment.amount) : "",
+      payment.remittanceLast5 || "",
+      payment.reportedAt || "",
+      payment.verifiedAt || payment.paidAt || "",
+      entry.checkedInAt ? "已核銷" : "未核銷",
+      entry.checkedInAt || ""
+    ];
+    return `<tr>${[...baseValues, ...answerKeys.map((key) => registrationExportValue(answers[key]))].map(registrationExcelCell).join("")}</tr>`;
+  }).join("");
+  const html = `<!doctype html><html><head><meta charset="utf-8"><title>${esc(title)} 報名名單</title></head><body><table border="1"><caption>${esc(title)} 報名名單</caption><thead><tr>${[...baseHeaders, ...headersForAnswers].map(registrationExcelHeader).join("")}</tr></thead><tbody>${bodyRows || `<tr><td colspan="${baseHeaders.length + headersForAnswers.length}">目前沒有報名資料</td></tr>`}</tbody></table></body></html>`;
+  return new Response(html, {
+    headers: {
+      ...headers,
+      "content-type": "application/vnd.ms-excel; charset=utf-8",
+      "content-disposition": `attachment; filename="registration-export.xls"; filename*=UTF-8''${encodeURIComponent(fileName)}`,
+      "cache-control": "no-store"
+    }
+  });
+}
 async function storeManagedSubmission(env: Env, submission: ManagedSubmission) {
   if (!env.ASSETS_BUCKET) return json({ success: false, message: "R2 bucket is not configured" }, 503);
   const activity = submission.activity || {};
@@ -5452,6 +5581,7 @@ export default {
     if (request.method === "POST" && url.pathname === "/api/google-forms/sync") return syncGoogleFormResponses(request, env);
     if (request.method === "GET" && url.pathname === "/api/registrations/summary") return json({ success: true, data: await readRegistrationSummary(env) });
     if (request.method === "GET" && url.pathname === "/api/registrations/list") return listRegistrations(request, env);
+    if (request.method === "GET" && url.pathname === "/api/registrations/export") return exportRegistrationsExcel(request, env);
     const detailMatch = url.pathname.match(/^\/monthly-detail\/([^/]+)$/);
     if (request.method === "GET" && detailMatch) return monthlyDetail(env, decodeURIComponent(detailMatch[1]));
     if (request.method === "POST" && url.pathname === "/line-webhook") { const rawBody = await request.text(); const monthly = await handleMonthlyWebhook(request, env, rawBody, ctx); if (monthly) return monthly; if (clean(env.FORWARD_WEBHOOK_URL)) return forwardToMotherWebhook(request, env, rawBody); return baseEntry.fetch(rebuildRequest(request, rawBody), env, ctx); }

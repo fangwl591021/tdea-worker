@@ -1096,7 +1096,7 @@
   }
   function stat(label, value, tone = "") { return `<div class="stat ${tone ? `stat-${tone}` : ""}"><span>${label}</span><strong>${n(value)}</strong></div>`; }
   function activityTable(rows) {
-    return `<div class="table-wrap"><table><thead><tr><th>活動名稱</th><th>類型</th><th>課程時間</th><th>報名</th><th>簽到</th><th>狀態</th><th>操作</th></tr></thead><tbody>${rows.map(x => `<tr><td><strong>${esc(x.name)}</strong></td><td>${esc(activityTypeLabel(x))}</td><td>${esc(x.courseTime || "-")}</td><td>${n(x.reg)}</td><td>${n(x.check)}</td><td><span class="badge ${x.status === "上架" ? "live" : "off"}">${esc(x.status)}</span></td><td><button class="link" data-drawer="activity:${x.id}">編輯</button><span class="muted"> / </span><button class="link" data-registration-list="${x.id}">名單</button><span class="muted"> / </span><button class="link" data-toggle="${x.id}">${x.status === "上架" ? "下架" : "上架"}</button><span class="muted"> / </span><button class="link danger-link" data-delete-activity="${x.id}">封存</button></td></tr>`).join("")}</tbody></table></div>`;
+    return `<div class="table-wrap"><table><thead><tr><th>活動名稱</th><th>類型</th><th>課程時間</th><th>報名</th><th>簽到</th><th>狀態</th><th>操作</th></tr></thead><tbody>${rows.map(x => `<tr><td><strong>${esc(x.name)}</strong></td><td>${esc(activityTypeLabel(x))}</td><td>${esc(x.courseTime || "-")}</td><td>${n(x.reg)}</td><td>${n(x.check)}</td><td><span class="badge ${x.status === "上架" ? "live" : "off"}">${esc(x.status)}</span></td><td><button class="link" data-drawer="activity:${x.id}">編輯</button><span class="muted"> / </span><button class="link" data-registration-list="${x.id}">名單</button><span class="muted"> / </span><button class="link" data-export-registrations="${x.id}">Excel</button><span class="muted"> / </span><button class="link" data-toggle="${x.id}">${x.status === "上架" ? "下架" : "上架"}</button><span class="muted"> / </span><button class="link danger-link" data-delete-activity="${x.id}">封存</button></td></tr>`).join("")}</tbody></table></div>`;
   }
 
   function archivedActivityPanel() {
@@ -1237,8 +1237,8 @@
   function registrationList(rowId) {
     const activity = state.data.activities.find(r => r.id === rowId) || {};
     const rows = state.registrationLists[rowId];
-    if (!rows) return `<section class="panel"><div class="panel-head"><h2 class="panel-title">${esc(activity.name || "活動")} 報名名單</h2><button class="btn" data-refresh-registration-list="${esc(rowId)}">重新載入</button></div>${empty("正在載入報名名單...")}</section>`;
-    if (!rows.length) return `<section class="panel"><div class="panel-head"><h2 class="panel-title">${esc(activity.name || "活動")} 報名名單</h2><button class="btn" data-refresh-registration-list="${esc(rowId)}">重新載入</button></div>${empty("目前 Worker 沒有收到這個活動的報名資料")}</section>`;
+    if (!rows) return `<section class="panel"><div class="panel-head"><h2 class="panel-title">${esc(activity.name || "活動")} 報名名單</h2><div class="actions"><button class="btn" data-export-registrations="${esc(rowId)}">Excel</button><button class="btn" data-refresh-registration-list="${esc(rowId)}">重新載入</button></div></div>${empty("正在載入報名名單...")}</section>`;
+    if (!rows.length) return `<section class="panel"><div class="panel-head"><h2 class="panel-title">${esc(activity.name || "活動")} 報名名單</h2><div class="actions"><button class="btn" data-export-registrations="${esc(rowId)}">Excel</button><button class="btn" data-refresh-registration-list="${esc(rowId)}">重新載入</button></div></div>${empty("目前 Worker 沒有收到這個活動的報名資料")}</section>`;
     const systemFields = new Set(["LINE_user_id", "lineUserId", "line_user_id", "uid", "UID", "memberName", "registrationSource"]);
     const baseFields = [
       ["送出時間", row => formatTime(row.submittedAt)],
@@ -1274,7 +1274,7 @@
     };
     const customHeaders = [...new Set(rows.flatMap(row => Object.keys(row.answers || {})))]
       .filter(key => !systemFields.has(key) && !baseFields.some(([label]) => label === key) && !["name", "姓名", "memberNo", "會員編號", "phone", "mobile", "手機", "電話", "email", "Email", "電子郵件", "memberType", "isMember", "是否為會員"].includes(key));
-    return `<section class="panel"><div class="panel-head"><h2 class="panel-title">${esc(activity.name || "活動")} 報名名單</h2><button class="btn" data-refresh-registration-list="${esc(rowId)}">重新載入</button></div><div class="table-wrap"><table><thead><tr>${baseFields.map(([label]) => `<th>${esc(label)}</th>`).join("")}<th>付款狀態</th><th>金額</th><th>末五碼</th><th>帳務操作</th>${customHeaders.map(h => `<th>${esc(h)}</th>`).join("")}</tr></thead><tbody>${rows.map(row => `<tr>${baseFields.map(([, getter]) => `<td>${esc(getter(row))}</td>`).join("")}${paymentCells(row)}${customHeaders.map(h => `<td>${esc(valueText(row.answers?.[h]))}</td>`).join("")}</tr>`).join("")}</tbody></table></div></section>`;
+    return `<section class="panel"><div class="panel-head"><h2 class="panel-title">${esc(activity.name || "活動")} 報名名單</h2><div class="actions"><button class="btn" data-export-registrations="${esc(rowId)}">Excel</button><button class="btn" data-refresh-registration-list="${esc(rowId)}">重新載入</button></div></div><div class="table-wrap"><table><thead><tr>${baseFields.map(([label]) => `<th>${esc(label)}</th>`).join("")}<th>付款狀態</th><th>金額</th><th>末五碼</th><th>帳務操作</th>${customHeaders.map(h => `<th>${esc(h)}</th>`).join("")}</tr></thead><tbody>${rows.map(row => `<tr>${baseFields.map(([, getter]) => `<td>${esc(getter(row))}</td>`).join("")}${paymentCells(row)}${customHeaders.map(h => `<td>${esc(valueText(row.answers?.[h]))}</td>`).join("")}</tr>`).join("")}</tbody></table></div></section>`;
   }
   function answerPick(answers, keys) {
     const source = answers || {};
@@ -1762,6 +1762,7 @@
       toast(input.checked ? "已允許登入權限" : "已取消登入權限");
     });
     document.querySelectorAll("[data-registration-list]").forEach(b => b.onclick = () => openRegistrationList(b.dataset.registrationList));
+    document.querySelectorAll("[data-export-registrations]").forEach(b => b.onclick = () => downloadRegistrationExcel(b.dataset.exportRegistrations, b));
     document.querySelectorAll("[data-refresh-registration-list]").forEach(b => b.onclick = () => loadRegistrationList(b.dataset.refreshRegistrationList, true));
     document.querySelectorAll("[data-payment-registration]").forEach(b => b.onclick = () => updateRegistrationPayment(b.dataset.paymentRegistration, b.dataset.paymentStatus));
     document.querySelectorAll("[data-load-member-applications]").forEach(b => b.onclick = () => loadMemberApplications(true));
@@ -2086,6 +2087,59 @@
       if (showMessage) toast("名單載入失敗");
     }
     render();
+  }
+
+  function registrationDownloadName(disposition, fallback = "TDEA-報名名單.xls") {
+    const star = String(disposition || "").match(/filename\*=UTF-8''([^;]+)/i);
+    if (star) {
+      try { return decodeURIComponent(star[1]); } catch (_) {}
+    }
+    const plain = String(disposition || "").match(/filename="?([^";]+)"?/i);
+    return plain ? plain[1] : fallback;
+  }
+
+  async function downloadRegistrationExcel(rowId, button) {
+    if (!hasAdminIdentity()) return toast("請先登入管理員");
+    const activity = state.data.activities.find(r => r.id === rowId);
+    if (!activity) return toast("找不到活動");
+    const originalText = button?.textContent || "Excel";
+    if (button) {
+      button.disabled = true;
+      button.textContent = "下載中";
+    }
+    try {
+      await ensureMonthlyRegistrationMap(true);
+      const params = new URLSearchParams();
+      params.set("activityId", rowId || "");
+      params.set("keys", registrationCandidates(activity).join(","));
+      const response = await fetch(`${api}/api/registrations/export?${params.toString()}`, {
+        headers: adminHeaders(),
+        cache: "no-store"
+      });
+      const contentType = response.headers.get("content-type") || "";
+      if (!response.ok || contentType.includes("application/json")) {
+        const result = await response.json().catch(() => ({}));
+        throw new Error(result.message || "Excel 下載失敗");
+      }
+      const blob = await response.blob();
+      const fileName = registrationDownloadName(response.headers.get("content-disposition"), `${activity.name || "TDEA"}-報名名單.xls`);
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = fileName;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+      toast("Excel 已下載");
+    } catch (err) {
+      toast(err?.message || "Excel 下載失敗");
+    } finally {
+      if (button) {
+        button.disabled = false;
+        button.textContent = originalText;
+      }
+    }
   }
   async function updateRegistrationPayment(registrationId, status) {
     if (!hasAdminIdentity()) return toast("請先登入管理中心");
