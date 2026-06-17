@@ -163,12 +163,10 @@
 
   function galleryUrlsFor(activity) {
     if (!activity) return [];
-    const settingsRows = allFormSettingsFor(activity);
     return uniqueUrls([
       activity.galleryUrls,
       activity.galleryUrl,
-      activity.gallery,
-      settingsRows.map((settings) => [settings.galleryUrls, settings.galleryUrl, settings.gallery])
+      activity.gallery
     ]);
   }
 
@@ -249,8 +247,7 @@
 
   function posterUrlFor(activity) {
     if (!activity) return "";
-    const settings = formSettingsFor(activity);
-    return firstUrl(activity.posterUrl, activity.imageUrl, activity.coverUrl, settings.posterUrl, settings.imageUrl, settings.coverUrl);
+    return firstUrl(activity.posterUrl, activity.imageUrl, activity.coverUrl);
   }
 
   function fallbackDetailText(activity) {
@@ -391,7 +388,7 @@
   function shareUrlForPage(page) { return trim(page.shareUrl) || detailUrlForPage(page); }
 
   function activityPayloadForPage(page, activity) {
-    const imageUrl = firstUrl(page.imageUrl, posterUrlFor(activity));
+    const imageUrl = firstUrl(posterUrlFor(activity), page.imageUrl);
     return {
       ...activity,
       detailText: firstText(page.detailText, detailTextFor(activity)),

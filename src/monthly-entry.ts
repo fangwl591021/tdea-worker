@@ -2891,7 +2891,7 @@ function normalizeConfig(config: MonthlyConfig): MonthlyConfig {
   const pages = Array.isArray(config.pages) ? config.pages : [];
   const cleanUrls = (value: unknown) => {
     const seen = new Set<string>();
-    const values = Array.isArray(value) ? value : String(value || "").split(/[\n,]+/);
+    const values = (Array.isArray(value) ? value : [value]).flatMap((item) => String(item || "").split(/[\n,]+/));
     return values
       .map((item) => String(item || "").trim())
       .filter((item) => /^https?:\/\//i.test(item))
@@ -2966,7 +2966,7 @@ function isManualMonthlyPage(page: MonthlyPage) {
 
 function monthlyUrlList(value: unknown) {
   const seen = new Set<string>();
-  const values = Array.isArray(value) ? value : String(value || "").split(/[\n,]+/);
+  const values = (Array.isArray(value) ? value : [value]).flatMap((item) => String(item || "").split(/[\n,]+/));
   return values
     .map((item) => clean(item))
     .filter((item) => /^https?:\/\//i.test(item))
@@ -3021,17 +3021,18 @@ async function readEffectiveMonthly(env: Env): Promise<MonthlyConfig> {
     const base = merged.get(key);
     if (!base) return;
     merged.set(key, {
-      ...(base || {}),
       ...page,
-      activityId: page.activityId || base?.activityId,
-      activityNo: page.activityNo || base?.activityNo,
-      activityName: page.activityName || base?.activityName,
-      detailTitle: page.detailTitle || base?.detailTitle,
-      detailText: page.detailText || base?.detailText,
-      detailUrl: page.detailUrl || base?.detailUrl,
-      formUrl: page.formUrl || base?.formUrl,
-      imageUrl: page.imageUrl || base?.imageUrl,
-      galleryUrls: page.galleryUrls?.length ? page.galleryUrls : base?.galleryUrls,
+      ...base,
+      manual: false,
+      id: base.id || page.id,
+      activityId: base.activityId || page.activityId,
+      activityNo: base.activityNo || page.activityNo,
+      activityName: base.activityName || page.activityName,
+      detailTitle: base.detailTitle || page.detailTitle,
+      detailText: base.detailText || page.detailText,
+      detailUrl: base.detailUrl || page.detailUrl,
+      formUrl: base.formUrl || page.formUrl,
+      shareUrl: page.shareUrl || base.shareUrl,
       order: Number.isFinite(Number(page.order)) ? page.order : index
     });
   });
@@ -5396,4 +5397,3 @@ export default {
     return baseEntry.fetch(request, env, ctx);
   }
 };
-
