@@ -345,19 +345,24 @@
     const qrUrl = checkinUrl ? `https://api.qrserver.com/v1/create-qr-code/?size=220x220&data=${encodeURIComponent(checkinUrl)}` : "";
     const payment = data.payment || {};
     const paymentDue = Number(payment.amount || 0) > 0 && payment.status !== "paid";
+    const queryCode = data.queryCode || "";
+    const queryUrl = `?query=1&code=${encodeURIComponent(queryCode)}`;
+    const editUrl = `${queryUrl}&edit=1`;
+    const title = data.duplicate ? "已找到既有報名" : "報名成功";
+    const notice = data.duplicate ? "你已完成這場活動報名，可在這裡修改資料或取消報名。" : "已完成報名，後續仍可使用查詢碼修改資料或取消報名。";
     renderShell(`<section class="nf-card"><div class="nf-body">
-      <h1 class="nf-title">報名成功</h1>
-      <div class="nf-ok">已完成報名。查詢碼：${esc(data.queryCode || "")}</div>
+      <h1 class="nf-title">${esc(title)}</h1>
+      <div class="nf-ok">${esc(notice)}查詢碼：${esc(queryCode)}</div>
       ${paymentDue ? `<div class="nf-alert">此活動需匯款 NT$ ${esc(Number(payment.amount || 0).toLocaleString())}，請完成匯款後到查詢頁回報末五碼。</div>` : ""}
       ${qrUrl ? `<img class="nf-qr" src="${qrUrl}" alt="核銷 QR Code">` : ""}
       <div class="nf-actions">
-        <a class="nf-btn" href="?query=1&code=${encodeURIComponent(data.queryCode || "")}">查詢或取消報名</a>
-        <button class="nf-btn primary" data-close-window>完成</button>
+        <a class="nf-btn primary" href="${editUrl}">修改報名資料</a>
+        <a class="nf-btn" href="${queryUrl}">查詢 / 取消報名</a>
+        <button class="nf-btn" data-close-window>完成</button>
       </div>
     </div></section>`);
-    setTimeout(() => alert("報名成功"), 50);
+    setTimeout(() => alert(data.duplicate ? "已找到既有報名" : "報名成功"), 50);
     app.querySelector("[data-close-window]")?.addEventListener("click", closeWindow);
-    if (!paymentDue) setTimeout(closeWindow, 1800);
   }
 
   function closeWindow() {
@@ -738,6 +743,7 @@
       bindEditRegistration(box, () => runCodeQuery(code));
       bindCancel(box, () => runCodeQuery(code));
       bindPaymentReport(box, () => runCodeQuery(code));
+      if (params.get("edit") === "1") setTimeout(() => box.querySelector("[data-edit-registration]")?.click(), 0);
     }
 
     async function runLoginQuery() {
