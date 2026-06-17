@@ -3251,10 +3251,8 @@ function registerUrlForPage(page: MonthlyPage) {
   const target = String(page.activityNo || page.activityId || page.id || "").trim();
   const current = String(page.formUrl || "").trim();
   if (page.manual === true && !current) return "";
-  if (target && (!current || (/liff\.line\.me/i.test(current) && /[?&]register=/.test(current)))) {
-    return `${publicLiffUrl}?register=${encodeURIComponent(target)}`;
-  }
-  return current || (target ? `${publicLiffUrl}?register=${encodeURIComponent(target)}` : workerBaseUrl);
+  if (current) return current;
+  return target ? `${nativeLiffUrl}?register=${encodeURIComponent(target)}` : workerBaseUrl;
 }
 
 function appendQueryParam(url: string, key: string, value: string) {

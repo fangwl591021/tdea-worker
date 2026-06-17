@@ -6,6 +6,7 @@
   const fixedKeyword = "TDEA每月活動";
   const defaultLiffBase = "https://liff.line.me/2005868456-2jmxqyFU?monthlyDetail={id}";
   const publicLiffUrl = "https://liff.line.me/2005868456-2jmxqyFU";
+  const nativeLiffUrl = "https://liff.line.me/2005868456-cfANNVou";
   const defaultImageUrl = "https://fangwl591021.github.io/tdea-worker/public/assets/kooler-free-course.png";
   const dataKey = "tdea-manager-v3";
   let active = false;
@@ -379,10 +380,8 @@
     const target = trim(hydrated.activityNo) || trim(hydrated.activityId) || trim(hydrated.id);
     const current = trim(hydrated.formUrl);
     if (hydrated.manual && !current) return "";
-    if (target && (!current || (/liff\.line\.me/i.test(current) && /[?&]register=/.test(current)))) {
-      return `${publicLiffUrl}?register=${encodeURIComponent(target)}`;
-    }
-    return current || (target ? `${publicLiffUrl}?register=${encodeURIComponent(target)}` : "");
+    if (current) return current;
+    return target ? `${nativeLiffUrl}?register=${encodeURIComponent(target)}` : "";
   }
 
   function shareUrlForPage(page) { const uri = detailUrlForPage(page); return uri + (uri.includes("?") ? "&" : "?") + "share=" + encodeURIComponent(page.activityNo || page.activityId || page.id || "1"); }

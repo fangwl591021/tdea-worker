@@ -9,7 +9,7 @@
   const calendarMode = params.has("calendar");
   const marqueeMode = params.has("marquee");
   const app = document.querySelector("#app");
-  const liffId = (checkinToken || redeemToken || memberQrMode || calendarMode || marqueeMode) ? "2005868456-cfANNVou" : "2005868456-2jmxqyFU";
+  const liffId = (formId || checkinToken || redeemToken || memberQrMode || calendarMode || marqueeMode) ? "2005868456-cfANNVou" : "2005868456-2jmxqyFU";
   const nativeLiffUrl = "https://liff.line.me/2005868456-cfANNVou";
   const calendarId = "7d66f2a96f192dda6cca2b04e60a6e549c7adf74f57721845d5b7e03f8b7ca89@group.calendar.google.com";
   let liffReady = null;
@@ -389,7 +389,8 @@
     const fields = Array.isArray(form.fields) ? form.fields : [];
     const image = activity.posterUrl || activity.imageUrl || "";
     const mode = registrationMode(form);
-    const showFullForm = mode === "form";
+    let effectiveMode = mode;
+    let showFullForm = mode === "form";
     let autoLoginNotice = "";
 
     if (formId) {
@@ -412,8 +413,10 @@
         } else if (mode === "member_login") {
           return renderError(memberResult.message || "此 LINE 帳號尚未綁定會員或廠商會員資料。");
         }
-      } else if (mode === "member_login") {
-        return renderError("無法取得 LINE UID，請從 LINE LIFF 開啟報名頁。");
+      } else if (mode === "member_login" || mode === "mixed") {
+        effectiveMode = "form";
+        showFullForm = true;
+        autoLoginNotice = "未取得 LINE UID，已切換為完整表單報名。";
       }
     }
 
@@ -424,12 +427,12 @@
         <div class="nf-meta">${activity.courseTime ? `<span class="nf-pill">${esc(activity.courseTime)}</span>` : ""}${activity.deadline ? `<span class="nf-pill">截止 ${esc(activity.deadline)}</span>` : ""}</div>
         ${activity.detailText ? `<div class="nf-detail">${esc(activity.detailText)}</div>` : ""}
         ${autoLoginNotice ? `<div class="nf-alert">${esc(autoLoginNotice)}</div>` : ""}
-        ${loginRegisterPanel(mode, sessions, fields)}
+        ${loginRegisterPanel(effectiveMode, sessions, fields)}
         ${showFullForm ? `<form class="nf-form" data-native-register novalidate>
           ${sessionFieldHtml(sessions)}
           ${fields.map(fieldHtml).join("")}
           <div class="nf-actions"><button class="nf-btn primary" type="submit">送出報名</button><a class="nf-btn" href="?query=1">報名查詢/取消</a></div>
-        </form>` : mode === "mixed" ? `<details class="nf-form">
+        </form>` : effectiveMode === "mixed" ? `<details class="nf-form">
           <summary class="nf-btn">非會員或無法快速報名，改填完整表單</summary>
           <form class="nf-form" data-native-register novalidate>
             ${sessionFieldHtml(sessions)}
@@ -493,11 +496,6 @@
       const uid = await loadLiff({ login: true });
       const answers = collectAnswers(registerForm, fields);
       if (uid) answers.LINE_user_id = uid;
-      if (!uid && claimIsMember(answers)) {
-        submit.disabled = false;
-        submit.textContent = "送出報名";
-        return alert("無法取得 LINE UID，請從 LINE LIFF 開啟報名頁，或先完成會員報到。");
-      }
       const sessionId = registerForm.elements.sessionId?.value || "default";
       const claimError = missingMemberClaimIdentity(answers);
       if (claimError) {

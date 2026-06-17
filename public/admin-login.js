@@ -33,7 +33,7 @@
     "push-manager.js?v=push6",
     "calendar-manager.js?v=calendar3",
     "monthly-activity.js?v=monthly-source1",
-    "native-form.js?v=registration-edit2",
+    "native-form.js?v=registration-liff1",
     "liff-detail.js?v=liff-detail11",
     "personal-message.js?v=pm4",
     "keyword-extra.js?v=kw2",
@@ -151,7 +151,7 @@
     const params = searchParams();
     if (params.has("monthlyDetail") || params.has("monthlyShare") || params.has("close")) return ["liff-detail.js?v=liff-detail11"];
     if (params.has("personalMessages")) return ["personal-message.js?v=pm4"];
-    return ["native-form.js?v=registration-edit2"];
+    return ["native-form.js?v=registration-liff1"];
   }
 
   function loadScript(src) {
