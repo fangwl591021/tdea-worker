@@ -3587,6 +3587,43 @@ async function forwardToMotherWebhook(request: Request, env: Env, rawBody: strin
   });
 }
 
+async function forwardToMotherWebhookWithLog(request: Request, env: Env, rawBody: string) {
+  const startedAt = Date.now();
+  let texts: string[] = [];
+  let eventCount = 0;
+  try {
+    const payload = JSON.parse(rawBody);
+    const events = extractLineEvents(payload);
+    eventCount = events.length;
+    texts = events.map((event) => clean(extractTriggerText(event))).filter(Boolean).slice(0, 5);
+  } catch (_) {}
+  try {
+    const response = await forwardToMotherWebhook(request, env, rawBody);
+    await appendLineWebhookLog(env, {
+      at: new Date().toISOString(),
+      mode: "mother-forward",
+      result: response.ok ? "ok" : "bad-status",
+      status: response.status,
+      durationMs: Date.now() - startedAt,
+      hasSignature: Boolean(clean(request.headers.get("x-line-signature"))),
+      texts,
+      eventCount
+    });
+    return response;
+  } catch (error) {
+    await appendLineWebhookLog(env, {
+      at: new Date().toISOString(),
+      mode: "mother-forward",
+      result: "error",
+      durationMs: Date.now() - startedAt,
+      hasSignature: Boolean(clean(request.headers.get("x-line-signature"))),
+      texts,
+      eventCount,
+      error: error instanceof Error ? error.message : String(error)
+    });
+    throw error;
+  }
+}
 function lineActivityDraftKey(lineUserId: string) {
   return `line-activity/draft-${encodeURIComponent(lineUserId)}.json`;
 }
@@ -4240,7 +4277,7 @@ async function handleLineActivityMakerEvent(event: LineEvent, env: Env, ctx?: Ex
   try {
     if ((!text && !isImage) || !lineUserId) return null;
     const starts = isLineActivityStart(text);
-    let draft = starts ? null : await readLineActivityDraft(env, lineUserId) || await readLatestLineActivityDraft(env);
+    let draft = starts ? null : await readLineActivityDraft(env, lineUserId);
     queueLineActivityDebug(ctx, env, { stage: "event", text, lineUserId, starts, hasDraft: Boolean(draft), step: draft?.step || "" });
     if (!starts && !draft) return null;
     if (!canUseLineActivityMaker(lineUserId, env)) {
@@ -4341,7 +4378,7 @@ async function handleLineActivityMaker(request: Request, env: Env, rawBody: stri
   const relevant = [] as LineEvent[];
   for (const event of candidates) {
     const text = clean(extractTriggerText(event));
-    if (isLineActivityStart(text) || isLineImageMessage(event) || await readLineActivityDraft(env, lineUserIdFromEvent(event)) || await readLatestLineActivityDraft(env)) relevant.push(event);
+    if (isLineActivityStart(text) || isLineImageMessage(event) || await readLineActivityDraft(env, lineUserIdFromEvent(event))) relevant.push(event);
   }
   if (!relevant.length) return null;
   const signature = request.headers.get("x-line-signature");
@@ -4352,7 +4389,7 @@ async function handleLineActivityMaker(request: Request, env: Env, rawBody: stri
     const text = clean(extractTriggerText(event));
     const lineUserId = lineUserIdFromEvent(event);
     const starts = isLineActivityStart(text);
-    const draft = !starts ? await readLineActivityDraft(env, lineUserId) || await readLatestLineActivityDraft(env) : null;
+    const draft = !starts ? await readLineActivityDraft(env, lineUserId) : null;
     if (!starts && draft && event.source?.userId) {
       handled += 1;
       if (clean(env.OPENAI_API_KEY) && shouldUseLineActivityAi(text, draft) && event.replyToken) messages.push({ event, message: { type: "text", text: "?渡?銝哨?蝔????渡?蝯?..." } });
@@ -5633,7 +5670,7 @@ export default {
     if (request.method === "GET" && url.pathname === "/api/registrations/export") return exportRegistrationsExcel(request, env);
     const detailMatch = url.pathname.match(/^\/monthly-detail\/([^/]+)$/);
     if (request.method === "GET" && detailMatch) return monthlyDetail(env, decodeURIComponent(detailMatch[1]));
-    if (request.method === "POST" && url.pathname === "/line-webhook") { const rawBody = await request.text(); const monthly = await handleMonthlyWebhook(request, env, rawBody, ctx); if (monthly) return monthly; if (clean(env.FORWARD_WEBHOOK_URL)) { ctx.waitUntil(forwardToMotherWebhook(request, env, rawBody).catch((error) => appendLineWebhookLog(env, { at: new Date().toISOString(), mode: "mother-forward", result: "error", error: error instanceof Error ? error.message : String(error) }))); return json({ success: true, forwarded: true, async: true }); } return baseEntry.fetch(rebuildRequest(request, rawBody), env, ctx); }
+    if (request.method === "POST" && url.pathname === "/line-webhook") { const rawBody = await request.text(); const monthly = await handleMonthlyWebhook(request, env, rawBody, ctx); if (monthly) return monthly; if (clean(env.FORWARD_WEBHOOK_URL)) { ctx.waitUntil(forwardToMotherWebhookWithLog(request, env, rawBody)); return json({ success: true, forwarded: true, async: true }); } return baseEntry.fetch(rebuildRequest(request, rawBody), env, ctx); }
     return baseEntry.fetch(request, env, ctx);
   }
 };
