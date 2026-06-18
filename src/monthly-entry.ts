@@ -44,6 +44,7 @@ const monthlyKey = "flex/monthly-activity.json";
 const monthlySnapshotKey = "flex/monthly-activity-effective.json";
 const managerDataKey = "manager/state.json";
 const activityIndexKey = "activities/index.json";
+const activitySnapshotKey = "activities/snapshot.json";
 const activityMigrationKey = "activities/migration-v1.json";
 const activityRecordPrefix = "activities/records/";
 const vendorCardKey = "flex/vendor-card-menu.json";
@@ -564,6 +565,7 @@ async function migrateLegacyActivities(env: Env, rawData?: Record<string, unknow
   await env.ASSETS_BUCKET.put(activityMigrationKey, JSON.stringify({ migratedAt: new Date().toISOString(), count: ids.length }, null, 2), {
     httpMetadata: { contentType: "application/json; charset=utf-8", cacheControl: "no-store" }
   });
+  await rebuildActivitySnapshot(env).catch(() => null);
   return ids;
 }
 
@@ -571,19 +573,42 @@ function isArchivedActivityRecord(record: Record<string, unknown>) {
   return record.archived === true || record.deleted === true || clean(record.deletedAt) !== "" || clean(record.status) === "已封存";
 }
 
-async function listActivityRecords(env: Env, rawData?: Record<string, unknown> | null, options: { includeArchived?: boolean } = {}) {
+async function readActivitySnapshot(env: Env) {
+  if (!env.ASSETS_BUCKET) return null;
+  const object = await env.ASSETS_BUCKET.get(activitySnapshotKey);
+  if (!object) return null;
+  const data = await object.json().catch(() => null) as Record<string, unknown> | null;
+  return Array.isArray(data?.activities) ? data.activities as Record<string, unknown>[] : null;
+}
+
+async function writeActivitySnapshot(env: Env, records: Record<string, unknown>[]) {
+  if (!env.ASSETS_BUCKET) return false;
+  await env.ASSETS_BUCKET.put(activitySnapshotKey, JSON.stringify({ updatedAt: new Date().toISOString(), count: records.length, activities: records }, null, 2), {
+    httpMetadata: { contentType: "application/json; charset=utf-8", cacheControl: "no-store" }
+  });
+  return true;
+}
+
+async function rebuildActivitySnapshot(env: Env) {
+  if (!env.ASSETS_BUCKET) return [];
+  const ids = await readActivityIndex(env);
+  const records: Record<string, unknown>[] = [];
+  for (const id of ids) {
+    const record = await readActivityRecord(env, id);
+    if (record) records.push(record);
+  }
+  await writeActivitySnapshot(env, records);
+  return records;
+}
+
+async function listActivityRecords(env: Env, rawData?: Record<string, unknown> | null, options: { includeArchived?: boolean; forceRebuild?: boolean } = {}) {
   if (!env.ASSETS_BUCKET) {
     const raw = rawData ?? await readManagerDataRaw(env);
     const rows = Array.isArray(raw?.activities) ? raw.activities as Record<string, unknown>[] : [];
     return options.includeArchived ? rows : rows.filter((record) => !isArchivedActivityRecord(record));
   }
-  const ids = await readActivityIndex(env);
-  const records: Record<string, unknown>[] = [];
-  for (const id of ids) {
-    const record = await readActivityRecord(env, id);
-    if (record && (options.includeArchived || !isArchivedActivityRecord(record))) records.push(record);
-  }
-  return records;
+  const rows = options.forceRebuild ? await rebuildActivitySnapshot(env) : (await readActivitySnapshot(env) || await rebuildActivitySnapshot(env));
+  return options.includeArchived ? rows : rows.filter((record) => !isArchivedActivityRecord(record));
 }
 
 async function deleteActivityRecord(env: Env, id: string, actor: string) {
@@ -647,8 +672,9 @@ async function activityRecordsApi(request: Request, env: Env, url: URL) {
     const body = await request.json().catch(() => ({})) as Record<string, unknown>;
     if (!body || typeof body !== "object") return json({ success: false, message: "Invalid activity payload" }, 400);
     const record = await upsertActivityRecord(env, body, activityActorFromRequest(request));
+    const rows = await listActivityRecords(env, null, { forceRebuild: true });
     await refreshMonthlySnapshot(env).catch(() => null);
-    return json({ success: true, data: record, activities: await listActivityRecords(env) });
+    return json({ success: true, data: record, activities: rows });
   }
   if (itemMatch && request.method === "PUT") {
     const guard = await requireAdmin(request, env);
@@ -657,22 +683,25 @@ async function activityRecordsApi(request: Request, env: Env, url: URL) {
     const body = await request.json().catch(() => ({})) as Record<string, unknown>;
     if (!body || typeof body !== "object") return json({ success: false, message: "Invalid activity payload" }, 400);
     const record = await upsertActivityRecord(env, { ...body, id }, activityActorFromRequest(request));
+    const rows = await listActivityRecords(env, null, { forceRebuild: true });
     await refreshMonthlySnapshot(env).catch(() => null);
-    return json({ success: true, data: record, activities: await listActivityRecords(env) });
+    return json({ success: true, data: record, activities: rows });
   }
   if (itemMatch && request.method === "DELETE") {
     const guard = await requireAdmin(request, env);
     if (guard) return guard;
     const ok = await deleteActivityRecord(env, decodeURIComponent(itemMatch[1]), activityActorFromRequest(request));
+    const rows = await listActivityRecords(env, null, { forceRebuild: true });
     if (ok) await refreshMonthlySnapshot(env).catch(() => null);
-    return json({ success: ok, activities: await listActivityRecords(env) }, ok ? 200 : 404);
+    return json({ success: ok, activities: rows }, ok ? 200 : 404);
   }
   if (restoreMatch && request.method === "POST") {
     const guard = await requireAdmin(request, env);
     if (guard) return guard;
     const record = await restoreActivityRecord(env, decodeURIComponent(restoreMatch[1]), activityActorFromRequest(request));
+    const rows = await listActivityRecords(env, null, { forceRebuild: true });
     if (record) await refreshMonthlySnapshot(env).catch(() => null);
-    return json({ success: Boolean(record), data: record, activities: await listActivityRecords(env) }, record ? 200 : 404);
+    return json({ success: Boolean(record), data: record, activities: rows }, record ? 200 : 404);
   }
   return json({ success: false, message: "Not found" }, 404);
 }
@@ -698,6 +727,7 @@ async function writeManagerData(env: Env, input: Record<string, unknown>, actor 
   for (const item of incomingActivities) {
     if (item && typeof item === "object") await upsertActivityRecord(env, item as Record<string, unknown>, actor);
   }
+  if (incomingActivities.length) await rebuildActivitySnapshot(env).catch(() => null);
   const managerInput = { ...input };
   delete managerInput.activities;
   const previous = await readManagerDataRaw(env);
