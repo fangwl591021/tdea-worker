@@ -1,15 +1,12 @@
 (() => {
   const key = "tdea-manager-v3";
   const esc = (value) => String(value ?? "").replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;").replaceAll("'", "&#039;");
-  const nativeSetItem = localStorage.setItem.bind(localStorage);
+  // Activity detail is now saved through app.js -> /api/activities. Do not patch localStorage.
 
   function load() {
     try { return JSON.parse(localStorage.getItem(key) || "{}"); } catch (_) { return {}; }
   }
 
-  function save(data) {
-    nativeSetItem(key, JSON.stringify(data));
-  }
 
   function ensureData(data) {
     data.activities ||= [];
@@ -58,15 +55,6 @@
     return data;
   }
 
-  localStorage.setItem = function patchedSetItem(name, value) {
-    if (name !== key) return nativeSetItem(name, value);
-    try {
-      const data = mergeVisibleDetail(JSON.parse(value));
-      return nativeSetItem(name, JSON.stringify(data));
-    } catch (_) {
-      return nativeSetItem(name, value);
-    }
-  };
 
   function ensureStyle() {
     if (document.querySelector("#activity-detail-style")) return;
@@ -93,12 +81,7 @@
     (formUrlField || submit)?.insertAdjacentElement("beforebegin", field);
   }
 
-  function persistCurrentDetail() {
-    const form = activeActivityForm();
-    if (!form?.querySelector("textarea[name='detailText']")) return;
-    const data = mergeVisibleDetail(ensureData(load()));
-    save(data);
-  }
+  function persistCurrentDetail() {}
 
   function annotatePreviewCards() {
     const data = ensureData(load());

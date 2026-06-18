@@ -18,13 +18,13 @@
     "marquee"
   ];
   const scriptVersions = [
-    "app.js?v=registration-export2",
+    "app.js?v=registration-export3",
     "line-zone.js?v=line-order1",
     "lottery.js?v=lottery4",
     "activity-types.js?v=types4",
-    "form-builder.js?v=form12",
-    "google-form-engine.js?v=gform15",
-    "activity-detail.js?v=activity-detail6",
+    "form-builder.js?v=form13",
+    "google-form-engine.js?v=gform16",
+    "activity-detail.js?v=activity-detail7",
     "uid-column.js?v=uid21",
     "login-access.js?v=login6",
     "flex-manager.js?v=flex4",

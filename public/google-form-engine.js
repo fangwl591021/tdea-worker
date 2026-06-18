@@ -10,8 +10,18 @@
     try { return JSON.parse(localStorage.getItem(dataKey) || "{}"); } catch (_) { return {}; }
   }
 
-  function save(data) {
-    localStorage.setItem(dataKey, JSON.stringify(data));
+  async function saveActivityRemote(activity) {
+    if (!activity?.id || !hasAdminIdentity()) return null;
+    const response = await fetch(`${apiBase}/api/activities/${encodeURIComponent(activity.id)}`, {
+      method: "PUT",
+      headers: adminHeaders({ "content-type": "application/json" }),
+      body: JSON.stringify(activity)
+    });
+    const result = await response.json().catch(() => ({}));
+    if (!response.ok || result.success === false) {
+      throw new Error(result.message || `HTTP ${response.status}`);
+    }
+    return result.data?.activity || result.activity || activity;
   }
 
   function adminEmail() {
@@ -197,7 +207,6 @@
     activity.googleSheetUrl = normalized.sheetUrl || activity.googleSheetUrl || "";
     activity.opnformFormUrl = normalized.opnformFormUrl || activity.opnformFormUrl || "";
     activity.opnformFormId = normalized.opnformFormId || activity.opnformFormId || "";
-    save(data);
     return activity;
   }
 
@@ -258,7 +267,8 @@
         return null;
       }
 
-      persistFormUrl(form, formUrl, result);
+      const activity = persistFormUrl(form, formUrl, result);
+      if (activity) await saveActivityRemote(activity);
       setStatus(form, options.auto ? "活動已建立，報名表已自動產生。" : "報名表已產生並寫回活動資料。", "ok");
       return formUrl;
     } catch (_) {
@@ -297,7 +307,8 @@
         return null;
       }
 
-      persistFormUrl(form, formUrl, result);
+      const activity = persistFormUrl(form, formUrl, result);
+      if (activity) await saveActivityRemote(activity);
       const providerName = result.provider === "native_form" ? "自建" : (result.provider === "opnform" ? "OpnForm" : "Google");
       setStatus(form, options.auto ? `活動已建立，${providerName} 報名表已產生。` : `${providerName} 報名表已產生並寫入活動。`, "ok");
       return formUrl;
@@ -392,15 +403,20 @@
 
     if (form.id === "activity-form") {
       const url = trim(form.formUrl?.value);
-      setTimeout(() => {
-        if (url) persistFormUrl(form, url);
-        else generateForm(form, { auto: true });
+      setTimeout(async () => {
+        if (url) {
+          const activity = persistFormUrl(form, url);
+          if (activity) await saveActivityRemote(activity).catch(() => null);
+        } else generateForm(form, { auto: true });
       }, 80);
     }
 
     if (form.id === "drawer-activity") {
       const url = trim(form.formUrl?.value);
-      if (url) setTimeout(() => persistFormUrl(form, url), 0);
+      if (url) setTimeout(async () => {
+        const activity = persistFormUrl(form, url);
+        if (activity) await saveActivityRemote(activity).catch(() => null);
+      }, 0);
     }
   }, true);
 

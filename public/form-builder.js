@@ -6,10 +6,6 @@
     try { return JSON.parse(localStorage.getItem(key) || "{}"); } catch (_) { return {}; }
   }
 
-  function save(data) {
-    localStorage.setItem(key, JSON.stringify(data));
-  }
-
   function cleanUrlList(value) {
     const seen = new Set();
     const flatten = input => Array.isArray(input) ? input.flatMap(flatten) : String(input || "").split(/[\n,]+/);
@@ -29,10 +25,7 @@
       const result = await response.json().catch(() => ({}));
       const activities = Array.isArray(result?.data?.activities) ? result.data.activities : Array.isArray(result?.activities) ? result.activities : [];
       if (!result.success || !Array.isArray(activities)) return load();
-      const data = load();
-      data.activities = activities.filter((item) => item && (item.name || item.activityNo || item.id));
-      save(data);
-      return data;
+      return { ...load(), activities: activities.filter((item) => item && (item.name || item.activityNo || item.id)) };
     } catch (_) {
       return load();
     }
@@ -500,20 +493,13 @@
       if (typeof window.tdeaSyncNativeFormForActivity === "function" && (latest.formMode === "native_form" || latest.nativeFormId || looksLikeNativeFormUrl(latest.formUrl) || !settings.formUrl)) {
         try { await window.tdeaSyncNativeFormForActivity(latest, settings); } catch (_) {}
       }
-      save(data);
-
       if (!posterFile || form.id !== "activity-form") return;
       try {
         if (status) status.textContent = "活動圖片上傳中...";
         const uploaded = await uploadPoster(posterFile, latest.id);
-        const nextData = load();
-        const nextActivity = nextData.activities?.find(activity => activity.id === latest.id);
-        nextData.formSettings ||= {};
-        nextData.formSettings[latest.id] ||= settings;
-        nextData.formSettings[latest.id].posterUrl = uploaded.url;
-        nextData.formSettings[latest.id].posterR2Key = uploaded.key;
-        if (nextActivity) nextActivity.posterUrl = uploaded.url;
-        save(nextData);
+        settings.posterUrl = uploaded.url;
+        settings.posterR2Key = uploaded.key;
+        latest.posterUrl = uploaded.url;
         if (form.posterUrl) form.posterUrl.value = uploaded.url;
         if (status) status.textContent = "活動圖片已上傳到 R2。";
       } catch (error) {

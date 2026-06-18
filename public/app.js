@@ -102,7 +102,7 @@
   }
   function persistLocalSnapshot() {
     try {
-      const snapshot = { ...(state.data || emptyManagerData()), activities: [] };
+      const snapshot = { ...(state.data || emptyManagerData()), activities: [], formSettings: {} };
       localStorage.setItem(key, JSON.stringify(snapshot));
     } catch (_) {}
   }
@@ -863,6 +863,7 @@
     activity.nativeFormUrl = formUrl;
     state.data.formSettings ||= {};
     state.data.formSettings[activity.id] = { ...settings, templateMode: activity.templateMode || settings.templateMode || "", formMode: "native_form", formId, nativeFormId: formId, formUrl, nativeFormUrl: formUrl, detailText: activity.detailText || settings.detailText || "", posterUrl: activity.posterUrl || activity.imageUrl || settings.posterUrl || "", imageUrl: activity.imageUrl || activity.posterUrl || settings.imageUrl || "", galleryUrls: cleanUrlList(activity.galleryUrls || settings.galleryUrls) };
+    activity.formSettings = { ...state.data.formSettings[activity.id] };
     if (activity.activityNo) state.data.formSettings[activity.activityNo] = state.data.formSettings[activity.id];
     return true;
   }
@@ -1645,6 +1646,7 @@
           nativeFormId: activity.nativeFormId || "",
           formMode: activity.formMode || ""
         });
+        activity.formSettings = { ...state.data.formSettings[activity.id] };
         if (activity.activityNo) state.data.formSettings[activity.activityNo] = state.data.formSettings[activity.id];
         try {
           const saved = await saveActivityRemote(activity);
