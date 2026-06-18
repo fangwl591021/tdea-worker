@@ -8,7 +8,6 @@
   const publicLiffUrl = "https://liff.line.me/2005868456-2jmxqyFU";
   const nativeLiffUrl = "https://liff.line.me/2005868456-cfANNVou";
   const defaultImageUrl = "https://fangwl591021.github.io/tdea-worker/public/assets/kooler-free-course.png";
-  const dataKey = "tdea-manager-v3";
   let active = false;
   let config = null;
   let selected = 0;
@@ -57,13 +56,8 @@
   function previewCollapsed() { return localStorage.getItem(previewCollapseKey) === "Y"; }
   function setPreviewCollapsed(value) { localStorage.setItem(previewCollapseKey, value ? "Y" : "N"); }
 
-  function localData() {
-    try { return JSON.parse(localStorage.getItem(dataKey) || "{}"); } catch (_) { return {}; }
-  }
-
   function activities() {
-    const rows = remoteActivities.length ? remoteActivities : localData().activities;
-    return Array.isArray(rows) ? rows.filter((item) => item && (item.name || item.activityNo || item.id) && !isArchivedActivity(item)) : [];
+    return remoteActivities.filter((item) => item && (item.name || item.activityNo || item.id) && !isArchivedActivity(item));
   }
 
   async function loadRemoteActivities() {
@@ -73,9 +67,6 @@
       const rows = Array.isArray(result?.data?.activities) ? result.data.activities : Array.isArray(result?.activities) ? result.activities : [];
       if (!result.success || !Array.isArray(rows)) return remoteActivities;
       remoteActivities = rows.filter((item) => item && (item.name || item.activityNo || item.id));
-      const data = localData();
-      data.activities = remoteActivities;
-      saveLocalData(data);
     } catch (_) {}
     return remoteActivities;
   }
@@ -120,17 +111,13 @@
   }
 
   function formSettingsFor(activity) {
-    const data = localData();
-    const settings = data.formSettings || {};
-    return settings[activity?.id] || settings[activity?.activityNo] || settings[activity?.name] || {};
+    const direct = activity?.formSettings || activity?.registrationSettings || activity?.form || {};
+    return direct && typeof direct === "object" && !Array.isArray(direct) ? { ...direct } : {};
   }
 
   function allFormSettingsFor(activity) {
-    const data = localData();
-    const settings = data.formSettings || {};
-    return [activity?.id, activity?.activityNo, activity?.name]
-      .map((key) => settings[String(key || "").trim()])
-      .filter((item) => item && typeof item === "object");
+    return [activity?.formSettings, activity?.registrationSettings, activity?.form]
+      .filter((item) => item && typeof item === "object" && !Array.isArray(item));
   }
 
   function firstText(...values) {
@@ -594,15 +581,10 @@
   }
 
   function persistGeneratedFormUrl(activity, formUrl, meta = {}) {
-    const data = localData();
-    data.formSettings ||= {};
-    const row = Array.isArray(data.activities)
-      ? data.activities.find((item) => String(item.id || "") === String(activity.id || "") || String(item.activityNo || "") === String(activity.activityNo || "") || String(item.name || "") === String(activity.name || ""))
-      : null;
-    const target = row || activity;
+    const target = activity;
     const normalized = generatedProviderMeta(formUrl, meta);
     target.formMode = normalized.provider;
-    target.registrationMode = activity.registrationMode || target.registrationMode || data.formSettings[target.id]?.registrationMode || "form";
+    target.registrationMode = activity.registrationMode || target.registrationMode || "form";
     target.formUrl = formUrl;
     target.formId = normalized.formId || target.formId || "";
     target.nativeFormUrl = normalized.nativeFormUrl || target.nativeFormUrl || "";
@@ -613,18 +595,22 @@
     target.googleSheetUrl = normalized.sheetUrl || target.googleSheetUrl || "";
     target.opnformFormUrl = normalized.opnformFormUrl || target.opnformFormUrl || "";
     target.opnformFormId = normalized.opnformFormId || target.opnformFormId || "";
-    data.formSettings[target.id] ||= {};
-    Object.assign(data.formSettings[target.id], formSettingsFor(activity), { registrationMode: target.registrationMode, formUrl, formMode: target.formMode, formId: target.formId, nativeFormUrl: target.nativeFormUrl, nativeFormId: target.nativeFormId, googleFormUrl: target.googleFormUrl, googleFormId: target.googleFormId, opnformFormUrl: target.opnformFormUrl, opnformFormId: target.opnformFormId, editUrl: target.googleFormEditUrl, sheetUrl: target.googleSheetUrl });
-    if (target.activityNo) {
-      data.formSettings[target.activityNo] ||= {};
-      Object.assign(data.formSettings[target.activityNo], data.formSettings[target.id]);
-    }
-    saveLocalData(data);
+    target.formSettings = {
+      ...formSettingsFor(activity),
+      registrationMode: target.registrationMode,
+      formUrl,
+      formMode: target.formMode,
+      formId: target.formId,
+      nativeFormUrl: target.nativeFormUrl,
+      nativeFormId: target.nativeFormId,
+      googleFormUrl: target.googleFormUrl,
+      googleFormId: target.googleFormId,
+      opnformFormUrl: target.opnformFormUrl,
+      opnformFormId: target.opnformFormId,
+      editUrl: target.googleFormEditUrl,
+      sheetUrl: target.googleSheetUrl
+    };
     return target;
-  }
-
-  function saveLocalData(data) {
-    localStorage.setItem(dataKey, JSON.stringify(data));
   }
 
   async function generateFormForActivity(activity) {

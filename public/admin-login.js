@@ -18,7 +18,7 @@
     "marquee"
   ];
   const scriptVersions = [
-    "app.js?v=registration-export1",
+    "app.js?v=registration-export2",
     "line-zone.js?v=line-order1",
     "lottery.js?v=lottery4",
     "activity-types.js?v=types4",
@@ -32,7 +32,7 @@
     "marquee-manager.js?v=ad-points-row-upload1",
     "push-manager.js?v=push6",
     "calendar-manager.js?v=calendar3",
-    "monthly-activity.js?v=monthly-source1",
+    "monthly-activity.js?v=monthly-source2",
     "native-form.js?v=registration-liff1",
     "liff-detail.js?v=liff-detail12",
     "personal-message.js?v=pm4",

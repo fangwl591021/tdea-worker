@@ -5532,7 +5532,7 @@ export default {
 	    if (request.method === "GET" && url.pathname === "/api/personal-messages/admin") return listPersonalMessagesAdminApi(request, env);
 	    if (request.method === "POST" && url.pathname === "/api/personal-messages") return createPersonalMessageApi(request, env);
 	    if (request.method === "POST" && url.pathname === "/api/personal-messages/upload") return uploadPersonalMessageFileApi(request, env);
-	    if (request.method === "GET" && url.pathname === "/api/monthly-activity") return json({ success: true, data: await readEffectiveMonthly(env) });
+	    if (request.method === "GET" && url.pathname === "/api/monthly-activity") return json({ success: true, data: await readMonthlyReplyConfig(env) });
 	    if ((request.method === "PUT" || request.method === "POST") && url.pathname === "/api/monthly-activity") { const guard = await requireAdmin(request, env); if (guard) return guard; if (!env.ASSETS_BUCKET) return json({ success: false, message: "R2 bucket is not configured" }, 503); const config = await request.json().catch(() => ({})) as MonthlyConfig; const validation = validateMonthlyConfigForPublish(config); if (validation) return json({ success: false, message: validation }, 400); await writeMonthly(env, config); const effective = await refreshMonthlySnapshot(env); return json({ success: true, data: effective, flex: buildMonthlyFlex(effective) }); }
 	    if (request.method === "GET" && url.pathname === "/api/monthly-activity/flex") { const config = await readMonthlyReplyConfig(env); return json({ success: true, flex: buildMonthlyFlex(config), data: config }); }
 	    if (request.method === "GET" && url.pathname === "/api/monthly-activity/share") return monthlyActivityShareApi(request, env);
@@ -5603,7 +5603,7 @@ export default {
     if (request.method === "GET" && url.pathname === "/api/registrations/export") return exportRegistrationsExcel(request, env);
     const detailMatch = url.pathname.match(/^\/monthly-detail\/([^/]+)$/);
     if (request.method === "GET" && detailMatch) return monthlyDetail(env, decodeURIComponent(detailMatch[1]));
-    if (request.method === "POST" && url.pathname === "/line-webhook") { const rawBody = await request.text(); const monthly = await handleMonthlyWebhook(request, env, rawBody, ctx); if (monthly) return monthly; if (clean(env.FORWARD_WEBHOOK_URL)) return forwardToMotherWebhook(request, env, rawBody); return baseEntry.fetch(rebuildRequest(request, rawBody), env, ctx); }
+    if (request.method === "POST" && url.pathname === "/line-webhook") { const rawBody = await request.text(); const monthly = await handleMonthlyWebhook(request, env, rawBody, ctx); if (monthly) return monthly; if (clean(env.FORWARD_WEBHOOK_URL)) { ctx.waitUntil(forwardToMotherWebhook(request, env, rawBody).catch((error) => appendLineWebhookLog(env, { at: new Date().toISOString(), mode: "mother-forward", result: "error", error: error instanceof Error ? error.message : String(error) }))); return json({ success: true, forwarded: true, async: true }); } return baseEntry.fetch(rebuildRequest(request, rawBody), env, ctx); }
     return baseEntry.fetch(request, env, ctx);
   }
 };

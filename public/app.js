@@ -102,7 +102,8 @@
   }
   function persistLocalSnapshot() {
     try {
-      localStorage.setItem(key, JSON.stringify(state.data || emptyManagerData()));
+      const snapshot = { ...(state.data || emptyManagerData()), activities: [] };
+      localStorage.setItem(key, JSON.stringify(snapshot));
     } catch (_) {}
   }
   function managerDataHasContent(data) {
