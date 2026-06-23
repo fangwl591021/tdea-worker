@@ -5337,6 +5337,32 @@ async function replyMonthlyActivityEvents(events: LineEvent[], allEvents: LineEv
   else await logTask;
   return json({ success: true, mode: "monthly-activity", matched: [fixedKeyword], forwarded: false, lineReplies });
 }
+async function replyVendorCardEvents(events: LineEvent[], allEvents: LineEvent[], env: Env, ctx?: ExecutionContext) {
+  const config = await readVendorCardConfig(env);
+  const items = config.items || [];
+  const message = config.enabled && items.some((item) => item.enabled !== false && clean(item.imageUrl))
+    ? buildVendorCardFlex(config) as Record<string, unknown>
+    : { type: "text", text: "TDEA 廠商列表目前尚未設定，請稍後再試。" };
+  const lineReplies = await Promise.all(events.map((event) => event.replyToken ? replyToLine(event.replyToken, [message], env) : Promise.resolve({ ok: false, status: 400, message: "Missing replyToken" })));
+  const logTask = appendLineWebhookLog(env, {
+    at: new Date().toISOString(),
+    mode: "vendor-card-menu",
+    result: "replied",
+    hasSignature: true,
+    enabled: config.enabled !== false,
+    itemCount: items.filter((item) => item.enabled !== false && clean(item.imageUrl)).length,
+    texts: allEvents.map((event) => clean(extractTriggerText(event))).filter(Boolean).slice(0, 5),
+    lineReplies: lineReplies.map((item) => ({
+      ok: item.ok,
+      status: item.status,
+      message: "message" in item ? item.message : undefined,
+      body: "body" in item ? String(item.body || "").slice(0, 500) : undefined
+    }))
+  });
+  if (ctx) ctx.waitUntil(logTask);
+  else await logTask;
+  return json({ success: true, mode: "vendor-card-menu", matched: [vendorCardKeyword], forwarded: false, lineReplies });
+}
 
 async function handleMonthlyWebhook(request: Request, env: Env, rawBody: string, ctx?: ExecutionContext) {
   let payload: unknown;
@@ -5415,13 +5441,13 @@ async function handleMonthlyWebhook(request: Request, env: Env, rawBody: string,
     });
     return new Response("Invalid Signature", { status: 403, headers });
   }
+  if (vendorCardEvents.length) return replyVendorCardEvents(vendorCardEvents, allEvents, env, ctx);
   const bareUidBindEvents = uidBindEvents.filter((event) => !parseUidBindKeyword(extractTriggerText(event)).memberNo);
   const gatedEvents = [
     ...queryEvents,
     ...memberQrEvents,
     ...calendarEvents,
     ...personalMessageEvents,
-    ...vendorCardEvents,
     ...marqueeEvents,
     ...pointEvents.map((item) => item.event),
     ...bareUidBindEvents
@@ -5551,15 +5577,6 @@ async function handleMonthlyWebhook(request: Request, env: Env, rawBody: string,
     };
     const lineReplies = await Promise.all(marqueeEvents.map((event) => event.replyToken ? replyToLine(event.replyToken, [marqueeMessage], env) : Promise.resolve({ ok: false, status: 400, message: "Missing replyToken" })));
     return json({ success: true, mode: "marquee", matched: [marqueeKeyword, ...marqueeLegacyKeywords], forwarded: false, lineReplies });
-  }
-  if (vendorCardEvents.length) {
-    const config = await readVendorCardConfig(env);
-    const items = config.items || [];
-    const message = config.enabled && items.some((item) => item.enabled !== false && clean(item.imageUrl))
-      ? buildVendorCardFlex(config) as Record<string, unknown>
-      : { type: "text", text: "TDEA 廠商列表尚未啟用，請稍後再試。" };
-    const lineReplies = await Promise.all(vendorCardEvents.map((event) => event.replyToken ? replyToLine(event.replyToken, [message], env) : Promise.resolve({ ok: false, status: 400, message: "Missing replyToken" })));
-    return json({ success: true, mode: "vendor-card-menu", matched: [vendorCardKeyword], forwarded: false, lineReplies });
   }
   return json({ success: true, mode: "monthly-activity", matched: [fixedKeyword], forwarded: false, lineReplies: [] });
 }

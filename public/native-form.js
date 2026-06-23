@@ -396,7 +396,7 @@
     if (formId) {
       renderLoading("正在比對會員名冊...");
       const uid = await loadLiff({ login: true });
-      if (uid) {
+      if (uid && mode === "member_login") {
         const memberResponse = await fetch(`${api}/api/native-forms/${encodeURIComponent(id)}/login-member?lineUserId=${encodeURIComponent(uid)}`, { cache: "no-store" });
         const memberResult = await memberResponse.json().catch(() => ({}));
         if (memberResponse.ok && memberResult.success) {
@@ -413,7 +413,7 @@
         } else if (mode === "member_login") {
           return renderError(memberResult.message || "此 LINE 帳號尚未綁定會員或廠商會員資料。");
         }
-      } else if (mode === "member_login" || mode === "mixed") {
+      } else if (!uid && (mode === "member_login" || mode === "mixed")) {
         effectiveMode = "form";
         showFullForm = true;
         autoLoginNotice = "未取得 LINE UID，已切換為完整表單報名。";
@@ -1240,4 +1240,3 @@
   else if (calendarMode) showCalendar();
   else if (marqueeMode) showMarquee();
 })();
-
