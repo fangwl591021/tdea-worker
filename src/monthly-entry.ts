@@ -706,10 +706,67 @@ async function activityRecordsApi(request: Request, env: Env, url: URL) {
   return json({ success: false, message: "Not found" }, 404);
 }
 
+
+function managerRosterMemberKeys(row: Record<string, unknown>) {
+  return [row.memberNo, row.rosterMemberNo, row.member_no, row.aiweMemberNo, row.motherMemberNo, row.motherAccount, row.legacyAccount, row.user_login]
+    .map((value) => clean(value).toUpperCase())
+    .filter(Boolean);
+}
+
+function mergeMotherUidIntoManagerRoster(data: Record<string, unknown>, motherRows: Array<Record<string, unknown>>) {
+  const remoteByTypeAndMember = new Map<string, { uid: string; row: Record<string, unknown>; conflict: boolean }>();
+  for (const row of motherRows) {
+    const uid = memberLineUid(row);
+    if (!uid) continue;
+    const type = clean(row.rosterType) === "vendor" ? "vendor" : "association";
+    for (const key of managerRosterMemberKeys(row)) {
+      const mapKey = `${type}:${key}`;
+      const current = remoteByTypeAndMember.get(mapKey);
+      if (current && current.uid.toLowerCase() !== uid.toLowerCase()) remoteByTypeAndMember.set(mapKey, { ...current, conflict: true });
+      else if (!current) remoteByTypeAndMember.set(mapKey, { uid, row, conflict: false });
+    }
+  }
+
+  const report = { association: { written: 0, skipped: 0, conflicts: 0, missing: 0 }, vendor: { written: 0, skipped: 0, conflicts: 0, missing: 0 } };
+  let changed = false;
+  for (const type of ["association", "vendor"] as const) {
+    const rows = Array.isArray(data[type]) ? data[type] as Array<Record<string, unknown>> : [];
+    for (const row of rows) {
+      const keys = managerRosterMemberKeys(row);
+      const currentUid = memberLineUid(row);
+      const remote = keys.map((key) => remoteByTypeAndMember.get(`${type}:${key}`)).find(Boolean);
+      if (!remote) { report[type].missing += 1; continue; }
+      if (remote.conflict) { report[type].conflicts += 1; continue; }
+      if (currentUid && currentUid.toLowerCase() !== remote.uid.toLowerCase()) { report[type].conflicts += 1; continue; }
+      if (currentUid === remote.uid) { report[type].skipped += 1; continue; }
+      setAiweRowLineUid(row, remote.uid);
+      if (!clean(row.aiweMemberNo)) row.aiweMemberNo = firstClean(remote.row.aiweMemberNo, remote.row.rosterMemberNo, remote.row.memberNo, remote.row.user_login);
+      if (!clean(row.phone)) row.phone = firstClean(remote.row.phone, remote.row.mobile, remote.row.tel, remote.row.telephone);
+      if (!clean(row.email) || isSyntheticLineEmail(row.email)) row.email = isSyntheticLineEmail(firstClean(remote.row.email, remote.row.user_email)) ? "" : firstClean(remote.row.email, remote.row.user_email);
+      report[type].written += 1;
+      changed = true;
+    }
+  }
+  if (changed) {
+    data.aiweUidMergedAt = new Date().toISOString();
+    data.aiweUidMergeReport = report;
+  }
+  return { changed, report };
+}
 async function readManagerData(env: Env) {
   const raw = await readManagerDataRaw(env);
   if (!raw) return raw;
-  return { ...raw, activities: await listActivityRecords(env, raw) };
+  const data = { ...raw };
+  const motherRows = await readAiweMembers(env).catch(() => [] as Array<Record<string, unknown>>);
+  const merge = motherRows.length ? mergeMotherUidIntoManagerRoster(data, motherRows) : { changed: false, report: null };
+  if (merge.changed && env.ASSETS_BUCKET) {
+    const persisted = { ...data };
+    delete persisted.activities;
+    await env.ASSETS_BUCKET.put(managerDataKey, JSON.stringify(persisted, null, 2), {
+      httpMetadata: { contentType: "application/json; charset=utf-8", cacheControl: "no-store" }
+    });
+  }
+  return { ...data, activities: await listActivityRecords(env, raw) };
 }
 
 function managerDataHasUsefulContent(input: Record<string, unknown> | null) {
@@ -751,6 +808,8 @@ async function writeManagerData(env: Env, input: Record<string, unknown>, actor 
   delete data.activities;
   if (data.association === undefined) delete data.association;
   if (data.vendor === undefined) delete data.vendor;
+  const motherRows = await readAiweMembers(env).catch(() => [] as Array<Record<string, unknown>>);
+  if (motherRows.length) mergeMotherUidIntoManagerRoster(data, motherRows);
   await env.ASSETS_BUCKET.put(managerDataKey, JSON.stringify(data, null, 2), {
     httpMetadata: { contentType: "application/json; charset=utf-8", cacheControl: "no-store" }
   });
