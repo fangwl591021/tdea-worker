@@ -457,25 +457,33 @@
         loginButton.textContent = "會員/廠商快速報名";
         return alert("無法取得 LINE UID，請從 LINE LIFF 開啟報名頁。");
       }
-      const memberResponse = await fetch(`${api}/api/native-forms/${encodeURIComponent(id)}/login-member?lineUserId=${encodeURIComponent(uid)}`, { cache: "no-store" });
-      const memberResult = await memberResponse.json().catch(() => ({}));
-      if (!memberResponse.ok || !memberResult.success) {
-        loginButton.disabled = false;
-        loginButton.textContent = "會員/廠商快速報名";
-        return alert(memberResult.message || "此 LINE 帳號尚未綁定會員或廠商會員資料。");
-      }
-      const member = memberResult.data || {};
-      const memberArea = app.querySelector("[data-login-member-area]");
-      if (memberArea) memberArea.innerHTML = memberSummary(member);
-      if (!confirm(`確認以 ${member.name || "會員"} 報名？\n會員編號：${member.memberNo || "-"}`)) {
-        loginButton.disabled = false;
-        loginButton.textContent = "會員/廠商快速報名";
-        return;
-      }
       const sessionId = loginBox?.querySelector("[name='sessionId']")?.value || sessions[0]?.id || "default";
       const loginFields = fields.filter((field) => !isLoginAutoMemberField(field));
-      const answers = loginBox ? collectAnswers(loginBox, loginFields) : {};
-      loginButton.textContent = "送出中...";
+      const loginAnswers = loginBox ? collectAnswers(loginBox, loginFields) : {};
+      const fullForm = app.querySelector("[data-native-register]");
+      const claimAnswers = fullForm ? collectAnswers(fullForm, fields) : loginAnswers;
+      const memberResponse = await fetch(`${api}/api/native-forms/${encodeURIComponent(id)}/login-member?lineUserId=${encodeURIComponent(uid)}`, { cache: "no-store" });
+      const memberResult = await memberResponse.json().catch(() => ({}));
+      let member = memberResult.data || null;
+      let answers = loginAnswers;
+      if (!memberResponse.ok || !memberResult.success) {
+        const claimError = missingMemberClaimIdentity(claimAnswers);
+        if (claimError) {
+          loginButton.disabled = false;
+          loginButton.textContent = "會員/廠商快速報名";
+          return alert(memberResult.message || claimError);
+        }
+        answers = claimAnswers;
+      } else {
+        const memberArea = app.querySelector("[data-login-member-area]");
+        if (memberArea) memberArea.innerHTML = memberSummary(member);
+        if (!confirm(`確認以 ${member.name || "會員"} 報名？\n會員編號：${member.memberNo || "-"}`)) {
+          loginButton.disabled = false;
+          loginButton.textContent = "會員/廠商快速報名";
+          return;
+        }
+      }
+      loginButton.textContent = member ? "送出中..." : "綁定並送出中...";
       const { response: submitResponse, result: submitResult } = await submitLoginRegistration(id, { lineUserId: uid, sessionId, answers });
       if (!submitResponse.ok || !submitResult.success) {
         loginButton.disabled = false;
@@ -484,7 +492,6 @@
       }
       renderReceipt(submitResult);
     });
-
     const registerForm = app.querySelector("[data-native-register]");
     registerForm?.addEventListener("submit", async (event) => {
       event.preventDefault();

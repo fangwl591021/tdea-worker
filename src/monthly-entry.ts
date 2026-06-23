@@ -2658,12 +2658,19 @@ async function submitNativeLoginRegistration(request: Request, env: Env, formId:
   const input = await request.json().catch(() => ({})) as Record<string, unknown>;
   const lineUserId = firstClean(input.lineUserId, input.uid, input.LINE_user_id);
   if (!lineUserId) return json({ success: false, message: "請透過 LINE Login 取得會員身份" }, 400);
-  const member = await resolveLineLoginMember(env, lineUserId);
-  if (!member) return json({ success: false, code: "member_not_found", message: "此 LINE 帳號尚未綁定會員或廠商會員資料，請先完成會員報到。" }, 403);
   const sessionId = clean(input.sessionId || "default");
   const session = form.sessions.find((item) => item.id === sessionId);
   if (!session) return json({ success: false, message: "請選擇有效場次" }, 400);
   const userAnswers = normalizeAnswersRecord(asRecord(input.answers));
+  let member = await resolveLineLoginMember(env, lineUserId);
+  if (!member && nativeAnswerClaimsMember(userAnswers)) {
+    try {
+      member = await resolveAndBindNativeRegistrationMember(env, lineUserId, userAnswers);
+    } catch (error) {
+      return json({ success: false, code: "member_bind_failed", message: error instanceof Error ? error.message : "會員資料比對失敗，請確認姓名與會員編號。" }, 400);
+    }
+  }
+  if (!member) return json({ success: false, code: "member_not_found", message: "此 LINE 帳號尚未綁定會員或廠商會員資料，請先補齊姓名與會員編號完成綁定。" }, 403);
   const answers = normalizeAnswersRecord({ ...userAnswers, ...memberAnswers(member) });
   const errors = validateNativeLoginAnswers(form, answers, sessionId);
   if (errors.length) return json({ success: false, message: errors[0], errors }, 400);
