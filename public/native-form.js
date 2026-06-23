@@ -99,12 +99,12 @@
       .nf-marquee-shell{padding:0;background:#fff}
       .nf-card.nf-marquee-card{border-radius:0;max-width:none;border:0;box-shadow:none;background:#fff}
       .nf-card.nf-marquee-card .nf-body{padding:0}
-      .nf-marquee-square{width:100%;aspect-ratio:1/1;margin:0 auto;border-radius:0;overflow:hidden;background:#f8fafc;display:grid;place-items:center;border:0}
-      .nf-marquee-square img{width:100%;height:100%;object-fit:cover}
+      .nf-marquee-square{width:100%;aspect-ratio:210/297;margin:0 auto;border-radius:0;overflow:hidden;background:#fff;display:grid;place-items:center;border:0}
+      .nf-marquee-square img{width:100%;height:100%;object-fit:contain;background:#fff}
       .nf-marquee-slider{position:relative;width:100%;height:100%;overflow:hidden}
       .nf-marquee-track{display:flex;width:100%;height:100%;transition:transform .42s ease}
       .nf-marquee-slide{flex:0 0 100%;width:100%;height:100%;border:0;background:transparent;padding:0;cursor:pointer;display:block}
-      .nf-marquee-slide img{width:100%;height:100%;object-fit:cover}
+      .nf-marquee-slide img{width:100%;height:100%;object-fit:contain;background:#fff}
       .nf-marquee-dots{position:absolute;left:0;right:0;bottom:10px;display:flex;gap:6px;justify-content:center}
       .nf-marquee-dots button{width:8px;height:8px;border:0;border-radius:999px;background:rgba(255,255,255,.65);padding:0}
       .nf-marquee-dots button.active{background:#06c755}

@@ -29,12 +29,12 @@
     "login-access.js?v=login6",
     "flex-manager.js?v=flex4",
     "vendor-card-manager.js?v=vendor-card7",
-    "marquee-manager.js?v=ad-points-row-upload1",
+    "marquee-manager.js?v=ad-points-a4-1",
     "push-manager.js?v=push6",
     "calendar-manager.js?v=calendar3",
     "monthly-activity.js?v=monthly-source2",
-    "native-form.js?v=registration-liff2",
-    "liff-detail.js?v=liff-detail12",
+    "native-form.js?v=registration-liff3",
+    "liff-detail.js?v=liff-detail13",
     "personal-message.js?v=pm4",
     "keyword-extra.js?v=kw2",
     "line-monitor-link.js?v=monitor-hidden2"
@@ -149,9 +149,9 @@
 
   function publicScriptVersions() {
     const params = searchParams();
-    if (params.has("monthlyDetail") || params.has("monthlyShare") || params.has("close")) return ["liff-detail.js?v=liff-detail12"];
+    if (params.has("monthlyDetail") || params.has("monthlyShare") || params.has("close")) return ["liff-detail.js?v=liff-detail13"];
     if (params.has("personalMessages")) return ["personal-message.js?v=pm4"];
-    return ["native-form.js?v=registration-liff2"];
+    return ["native-form.js?v=registration-liff3"];
   }
 
   function loadScript(src) {

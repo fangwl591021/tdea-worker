@@ -128,8 +128,8 @@
       .liff-marquee-head{display:flex;align-items:center;justify-content:space-between;gap:10px;margin:0 0 10px}
       .liff-marquee-head strong{font-size:16px;color:#111827}
       .liff-marquee-head span{font-size:12px;color:#667085;font-weight:800}
-      .liff-marquee .liff-slider{margin:0;border-radius:10px;aspect-ratio:1/1}
-      .liff-marquee .liff-slide{aspect-ratio:1/1}.liff-marquee .liff-slide img{object-fit:cover}
+      .liff-marquee .liff-slider{margin:0;border-radius:10px;aspect-ratio:210/297;background:#fff}
+      .liff-marquee .liff-slide{aspect-ratio:210/297}.liff-marquee .liff-slide img{object-fit:contain;background:#fff}
       .liff-card h1{font-size:24px;line-height:1.35;margin:0 0 12px}
       .liff-meta{display:inline-flex;margin:0 0 12px;padding:5px 10px;border-radius:999px;background:#eafff1;color:#027a48;font-size:13px;font-weight:800}
       .liff-text{white-space:pre-wrap;line-height:1.7;color:#344054;font-size:16px}

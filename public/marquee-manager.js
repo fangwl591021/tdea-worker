@@ -123,10 +123,10 @@
       .marquee-workspace{display:grid;grid-template-columns:minmax(0,1fr) minmax(340px,36%);gap:18px;align-items:start}
       .marquee-form{display:grid;gap:14px;padding:18px}
       .marquee-preview{position:sticky;top:24px}
-      .marquee-square{width:min(100%,420px);aspect-ratio:1/1;margin:18px auto 0;border:1px solid #e4e7ec;border-radius:14px;background:#f8fafc;display:grid;place-items:center;overflow:hidden;position:relative}
+      .marquee-square{width:min(100%,420px);aspect-ratio:210/297;margin:18px auto 0;border:1px solid #e4e7ec;border-radius:14px;background:#fff;display:grid;place-items:center;overflow:hidden;position:relative}
       .marquee-track{display:flex;width:100%;height:100%;transition:transform .42s ease}
       .marquee-slide{flex:0 0 100%;height:100%}
-      .marquee-slide img{width:100%;height:100%;object-fit:cover}
+      .marquee-slide img{width:100%;height:100%;object-fit:contain;background:#fff}
       .marquee-square span{color:#667085;font-weight:800}
       .marquee-button-grid{display:grid;grid-template-columns:1fr 1fr;gap:14px}
       .marquee-button-card{border:1px solid #e4e7ec;border-radius:10px;padding:14px;display:grid;gap:12px;background:#fff}
