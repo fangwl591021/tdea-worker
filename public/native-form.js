@@ -944,8 +944,8 @@
       <div class="nf-detail">${esc(redeemRuleText(data))}\n有效時間：${esc(new Date(data.startsAt || data.createdAt || "").toLocaleString("zh-TW", { hour12: false }))} - ${esc(new Date(data.expiresAt || "").toLocaleString("zh-TW", { hour12: false }))}</div>
       <div class="nf-actions"><button class="nf-btn primary" data-redeem-scan ${active ? "" : "disabled"}>掃描會員 QR</button></div>
       <form class="nf-form" data-redeem-manual>
-        <div class="nf-field"><label>手動輸入行動電話</label><input name="qr" inputmode="tel" placeholder="例如 0912345678"></div>
-        <div class="nf-actions"><button class="nf-btn" type="submit" ${active ? "" : "disabled"}>讀取會員點數</button></div>
+        <div class="nf-field"><label>手動貼上會員 QR / LINE UID</label><input name="qr" inputmode="text" placeholder="貼上會員 QR 內容或 U 開頭 LINE UID；手機只作備援"></div>
+        <div class="nf-actions"><button class="nf-btn" type="submit" ${active ? "" : "disabled"}>讀取會員點數</button></div><div class="nf-help">優先掃描會員個人 QR；掃描器不可用時，可貼上 QR 內容或 LINE UID。</div>
       </form>
       <div data-redeem-member-area></div>
       <div data-redeem-result></div>
@@ -989,7 +989,7 @@
         const payload = Object.fromEntries(new FormData(form));
         const button = form.querySelector("button[type='submit']");
         if (button) button.disabled = true;
-        const confirmResponse = await fetch(`${api}/api/redeem/${encodeURIComponent(token)}/use`, {
+        const confirmResponse = await fetch(`${api}/api/redeem/${encodeURIComponent(token)}`, {
           method: "POST",
           headers: { "content-type": "application/json" },
           body: JSON.stringify(payload)
@@ -1004,13 +1004,13 @@
     };
     app.querySelector("[data-redeem-scan]")?.addEventListener("click", async () => {
       try {
-        if (!window.liff?.scanCodeV2) return alert("目前環境不支援 LIFF 掃描器，請改用手動輸入行動電話。");
+        if (!window.liff?.scanCodeV2) return alert("目前環境不支援 LIFF 掃描器，請改用手動貼上會員 QR 內容或 LINE UID。");
         const scan = await window.liff.scanCodeV2();
         const value = scan?.value || scan?.text || "";
         if (!value) return;
         await readMember(value);
       } catch (error) {
-        alert(error?.message || "掃描失敗，請改用手動輸入。");
+        alert(error?.message || "掃描失敗，請改用手動貼上會員 QR 內容或 LINE UID。");
       }
     });
     app.querySelector("[data-redeem-manual]")?.addEventListener("submit", async (event) => {

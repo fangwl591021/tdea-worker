@@ -5849,7 +5849,7 @@ export default {
 	    if (request.method === "POST" && url.pathname === "/api/native-checkin/confirm") return confirmNativeCheckin(request, env);
 	    if (request.method === "POST" && url.pathname === "/api/redeem/create") return createRedeemRequest(request, env);
 	    if (request.method === "GET" && url.pathname === "/api/redeem/list") return listRedeemRequests(request, env);
-	    const redeemMatch = url.pathname.match(/^\/api\/redeem\/([^/]+)$/);
+	    const redeemMatch = url.pathname.match(/^\/api\/redeem\/([^/]+)(?:\/use)?$/);
 	    if (redeemMatch && request.method === "GET") return getRedeemRequest(request, env, decodeURIComponent(redeemMatch[1]));
 	    if (redeemMatch && request.method === "POST") return confirmRedeemRequest(request, env, decodeURIComponent(redeemMatch[1]));
 	    if (request.method === "POST" && url.pathname === "/api/points/adjust") return adjustMemberPointApi(request, env);
