@@ -2169,11 +2169,21 @@ async function rewardMarqueePoint(request: Request, env: Env) {
     const points = Math.max(1, Math.round(Number(config.left?.points || 1)));
     const eventContent = clean(config.left?.eventContent || "廣告贈點系統簽到") || "廣告贈點系統簽到";
     const referenceId = `marquee:${taipeiDateKey()}:button:left`;
+    const motherBefore = await queryPointBalance(env, lineUserId) as Record<string, unknown>;
+    if (motherBefore.success !== true) {
+      return json({ success: false, message: clean(motherBefore.message) || clean(motherBefore.code) || "母站點數查詢失敗", before: motherBefore }, 502);
+    }
+    const motherLogs = Array.isArray(motherBefore.list) ? motherBefore.list.map(asRecord) : [];
+    const existing = motherLogs.find((log) => firstClean(log.shop_remark, log.event_content, log.event_name).includes(referenceId));
+    if (existing) {
+      return json({ success: true, awarded: false, duplicate: true, points: 0, balance: motherBefore.balance, referenceId, message: "今日已完成系統簽到" });
+    }
     const result = await updateLocalPoints(env, lineUserId, points, eventContent, {
       source: "marquee_button_checkin",
       referenceId
     }) as Record<string, unknown>;
-    return json({ success: true, ...result, referenceId, points });
+    if (result.success !== true) return json({ success: false, message: clean(result.message) || "系統簽到贈點失敗", referenceId, points, result }, 502);
+    return json({ success: true, awarded: true, duplicate: false, ...result, referenceId, points });
   }
   const imageId = firstClean(input.imageId, input.itemId, input.id);
   const imageUrl = firstClean(input.imageUrl, input.url);

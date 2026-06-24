@@ -1195,7 +1195,9 @@
       button.addEventListener("click", async () => {
         const action = button.dataset.marqueeAction;
         const label = button.textContent;
+        const resultNode = app.querySelector("[data-marquee-result]");
         button.disabled = true;
+        button.textContent = "處理中...";
         if (action === "checkin") {
           const firstItem = marqueeItems(config).find((item) => item.enabled !== false) || {};
           const actionResponse = await fetch(`${api}/api/marquee/reward`, {
@@ -1211,15 +1213,22 @@
           });
           const actionResult = await actionResponse.json().catch(() => ({}));
           if (!actionResponse.ok || !actionResult.success) {
-            resultNode.hidden = false;
-            resultNode.textContent = actionResult.message || "系統簽到失敗";
+            if (resultNode) {
+              resultNode.hidden = false;
+              resultNode.textContent = actionResult.message || "系統簽到失敗";
+            }
+            button.disabled = false;
+            button.textContent = label;
             return;
           }
-          resultNode.hidden = false;
-          resultNode.textContent = `系統簽到完成，餘額 ${actionResult.balanceAfter ?? actionResult.balance ?? "-"}`;
+          if (resultNode) {
+            resultNode.hidden = false;
+            resultNode.textContent = actionResult.awarded === false ? (actionResult.message || "今日已完成系統簽到") : `系統簽到完成，贈點 +${actionResult.points || 0}，餘額 ${actionResult.balanceAfter ?? actionResult.balance ?? "-"}`;
+          }
+          button.disabled = false;
+          button.textContent = label;
           return;
         }
-        button.textContent = "送出中...";
         const endpoint = "/api/marquee/points";
         const actionResponse = await fetch(`${api}${endpoint}`, {
           method: "POST",
@@ -1230,12 +1239,10 @@
         button.disabled = false;
         button.textContent = label;
         if (!actionResponse.ok || !actionResult.success) return alert(actionResult.message || "點數查詢失敗");
-        const resultNode = app.querySelector("[data-marquee-result]");
         if (resultNode) {
           resultNode.hidden = false;
           resultNode.innerHTML = marqueePointDetailHtml(actionResult);
         }
-        alert(message);
       });
     });
   }
