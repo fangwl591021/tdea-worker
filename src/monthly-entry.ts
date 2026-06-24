@@ -1,6 +1,6 @@
 import baseEntry from "./roster-sync-entry4";
 
-type Env = { ADMIN_EMAILS?: string; ADMIN_LOGIN_USER?: string; ADMIN_LOGIN_PASSWORD?: string; ASSETS_BUCKET?: R2Bucket; LINE_CHANNEL_SECRET?: string; LINE_CHANNEL_ACCESS_TOKEN?: string; FORWARD_WEBHOOK_URL?: string; GOOGLE_FORMS_SCRIPT_URL?: string; GOOGLE_FORMS_SHARED_SECRET?: string; OPNFORM_API_BASE?: string; OPNFORM_PUBLIC_BASE?: string; OPNFORM_API_TOKEN?: string; OPNFORM_WORKSPACE_ID?: string; OPNFORM_WEBHOOK_SECRET?: string; WETW_POINT_API_KEY?: string; WETW_SHOP_ID?: string; WETW_POINT_TYPE?: string; TDEA_POINT_EXTERNAL_SYNC?: string; TDEA_ADMIN_LINE_USER_IDS?: string; OPENAI_API_KEY?: string; OPENAI_MODEL?: string };
+type Env = { ADMIN_EMAILS?: string; ADMIN_LOGIN_USER?: string; ADMIN_LOGIN_PASSWORD?: string; ASSETS_BUCKET?: R2Bucket; LINE_CHANNEL_SECRET?: string; LINE_CHANNEL_ACCESS_TOKEN?: string; FORWARD_WEBHOOK_URL?: string; GOOGLE_FORMS_SCRIPT_URL?: string; GOOGLE_FORMS_SHARED_SECRET?: string; OPNFORM_API_BASE?: string; OPNFORM_PUBLIC_BASE?: string; OPNFORM_API_TOKEN?: string; OPNFORM_WORKSPACE_ID?: string; OPNFORM_WEBHOOK_SECRET?: string; WETW_POINT_API_KEY?: string; WETW_SHOP_ID?: string; WETW_POINT_TYPE?: string; TDEA_POINT_EXTERNAL_SYNC?: string; TDEA_ADMIN_LINE_USER_IDS?: string; AIWE_WP_USER?: string; AIWE_WP_APP_PASSWORD?: string; OPENAI_API_KEY?: string; OPENAI_MODEL?: string };
 type LineEvent = { type?: string; replyToken?: string; message?: { type?: string; id?: string; text?: string }; postback?: { data?: string }; source?: { type?: string; userId?: string; groupId?: string; roomId?: string } };
 type MonthlyPage = { id?: string; manual?: boolean; activityNo?: string; activityId?: string; activityName?: string; imageUrl?: string; galleryUrls?: string[]; formImageUrl?: string; detailTitle?: string; detailText?: string; detailUrl?: string; formUrl?: string; shareUrl?: string; order?: number };
 type MonthlyConfig = { enabled?: boolean; keyword?: string; month?: string; altText?: string; detailBaseUrl?: string; pages?: MonthlyPage[]; updatedAt?: string };
@@ -1825,7 +1825,7 @@ async function resolveLineLoginMember(env: Env, lineUserId: string): Promise<Lin
     role: rosterType === "vendor" ? "廠商會員" : "協會會員",
     lineUserId: uid,
     company,
-    phone: firstClean(row.phone, row.mobile, row.tel, row.telephone),
+    phone: firstClean(row.phone, row.mobile, row.tel, row.telephone, row.contactPhone, row.billing_phone, row.shipping_phone, row.phone_number, row.mobile_number, row.user_phone, row["手機"], row["手機號碼"], row["行動電話"], row["電話"]),
     email: isSyntheticLineEmail(firstClean(row.email, row.user_email)) ? "" : firstClean(row.email, row.user_email),
     gender: firstClean(row.gender, row.sex),
     raw: row
@@ -4601,12 +4601,120 @@ function publicAiweMember(row: Record<string, unknown>) {
     rosterName: firstClean(row.rosterName, row.name, row.display_name, row.user_nicename, row.companyName),
     companyName: firstClean(row.companyName, row.company, row.organization, row.unit),
     lineUserId: memberLineUid(row),
-    phone: firstClean(row.phone, row.mobile, row.tel, row.telephone),
+    phone: firstClean(row.phone, row.mobile, row.tel, row.telephone, row.contactPhone, row.billing_phone, row.shipping_phone, row.phone_number, row.mobile_number, row.user_phone, row["手機"], row["手機號碼"], row["行動電話"], row["電話"]),
     email: firstClean(row.email, row.user_email),
     qualification: firstClean(row.qualification, row.memberQualification, row.status)
   };
 }
 
+function collectNestedValues(input: unknown, wantedKeys: string[], depth = 0): string[] {
+  if (!input || depth > 4) return [];
+  const wanted = new Set(wantedKeys.map((key) => key.toLowerCase()));
+  const values: string[] = [];
+  if (Array.isArray(input)) {
+    for (const item of input.slice(0, 50)) values.push(...collectNestedValues(item, wantedKeys, depth + 1));
+    return values;
+  }
+  if (typeof input !== "object") return [];
+  for (const [key, value] of Object.entries(input as Record<string, unknown>)) {
+    if (wanted.has(key.toLowerCase())) values.push(clean(value));
+    if (value && typeof value === "object") values.push(...collectNestedValues(value, wantedKeys, depth + 1));
+  }
+  return values.filter(Boolean);
+}
+
+function wpUserField(user: Record<string, unknown>, keys: string[]) {
+  return firstClean(...collectNestedValues(user, keys));
+}
+
+function normalizePhoneFromWpUser(user: Record<string, unknown>) {
+  const direct = wpUserField(user, ["phone", "mobile", "tel", "telephone", "contactPhone", "billing_phone", "shipping_phone", "phone_number", "mobile_number", "user_phone", "手機", "手機號碼", "行動電話", "電話"]);
+  if (direct) return direct;
+  const match = JSON.stringify(user).match(/09\d{8}/);
+  return match ? match[0] : "";
+}
+
+function normalizeWpUserToAiweMember(user: Record<string, unknown>, sourceUrl: string) {
+  const raw = JSON.stringify(user);
+  const displayName = firstClean(user.name, user.display_name, user.nickname, user.user_nicename, user.slug, user.username, user.user_login);
+  const memberNo = firstClean(wpUserField(user, ["memberNo", "member_no", "rosterMemberNo", "aiweMemberNo", "motherMemberNo", "會員編號", "會員代號"]), raw.match(/[A-Z]\d{7}/i)?.[0], displayName.match(/[A-Z]\d{7}/i)?.[0]).toUpperCase();
+  const lineUserId = firstClean(lineUidFromText(raw), user.slug, user.username, user.user_login);
+  const email = firstClean(user.email, user.user_email, wpUserField(user, ["email", "user_email", "電子郵件"]));
+  const companyName = wpUserField(user, ["companyName", "company", "organization", "unit", "公司", "公司名稱", "單位"]);
+  const roles = Array.isArray(user.roles) ? user.roles.map(clean).join(",") : clean(user.roles);
+  return normalizeRosterSyncMember({
+    source: "wp-rest-users",
+    rosterType: roles.includes("vendor") || companyName ? "vendor" : "association",
+    wpUserId: Number(user.id || 0) || undefined,
+    user_login: firstClean(user.user_login, user.slug, user.username),
+    lineUserId,
+    LINE_user_id: lineUserId,
+    email,
+    memberNo,
+    rosterMemberNo: memberNo,
+    name: displayName.replace(/[A-Z]\d{7}/i, "").trim() || displayName,
+    rosterName: displayName.replace(/[A-Z]\d{7}/i, "").trim() || displayName,
+    companyName,
+    phone: normalizePhoneFromWpUser(user),
+    qualification: firstClean(wpUserField(user, ["qualification", "memberQualification", "會員資格"]), "Y"),
+    sourceUrl,
+    importedAt: new Date().toISOString()
+  });
+}
+
+async function fetchMotherWpUsers(env: Env, page: number, perPage: number, search = "") {
+  const user = clean(env.AIWE_WP_USER);
+  const password = clean(env.AIWE_WP_APP_PASSWORD);
+  if (!user || !password) throw new Error("AIWE_WP_USER or AIWE_WP_APP_PASSWORD is not configured");
+  const url = new URL("https://aiwe.cc/index.php/wp-json/wp/v2/users");
+  url.searchParams.set("context", "edit");
+  url.searchParams.set("page", String(page));
+  url.searchParams.set("per_page", String(perPage));
+  if (search) url.searchParams.set("search", search);
+  const response = await fetch(url.href, {
+    headers: {
+      authorization: `Basic ${btoa(`${user}:${password}`)}`,
+      accept: "application/json"
+    }
+  });
+  const body = await response.json().catch(() => null);
+  if (!response.ok) throw new Error(body && typeof body === "object" ? JSON.stringify(body) : `WordPress users HTTP ${response.status}`);
+  if (!Array.isArray(body)) throw new Error("WordPress users API did not return an array");
+  return {
+    rows: body.map(asRecord),
+    total: Number(response.headers.get("x-wp-total") || body.length || 0),
+    totalPages: Number(response.headers.get("x-wp-totalpages") || 1),
+    sourceUrl: url.href
+  };
+}
+
+async function syncAiweMembersFromMotherApi(request: Request, env: Env) {
+  const guard = await requireAdmin(request, env);
+  if (guard) return guard;
+  if (!env.ASSETS_BUCKET) return json({ success: false, message: "R2 bucket is not configured" }, 503);
+  const url = new URL(request.url);
+  const startPage = Math.max(1, Number(url.searchParams.get("start") || 1));
+  const pages = Math.min(20, Math.max(1, Number(url.searchParams.get("pages") || 3)));
+  const perPage = Math.min(100, Math.max(1, Number(url.searchParams.get("per_page") || 100)));
+  const search = clean(url.searchParams.get("search"));
+  const rows = await readAiweMembers(env);
+  const fetched: Array<Record<string, unknown>> = [];
+  let total = 0;
+  let totalPages = 0;
+  for (let offset = 0; offset < pages; offset += 1) {
+    const page = startPage + offset;
+    const result = await fetchMotherWpUsers(env, page, perPage, search);
+    total = result.total || total;
+    totalPages = result.totalPages || totalPages;
+    fetched.push(...result.rows.map((row) => normalizeWpUserToAiweMember(row, result.sourceUrl)));
+    if (!result.rows.length || page >= result.totalPages) break;
+  }
+  const report = upsertAiweMemberRows(rows, fetched);
+  await writeAiweMembers(env, rows);
+  const withUid = fetched.filter((row) => explicitMemberLineUid(row)).length;
+  const withPhone = fetched.filter((row) => phoneDigits(firstClean(row.phone, row.mobile, row.tel, row.telephone, row.contactPhone))).length;
+  return json({ success: true, source: "wp-rest-users", fetched: fetched.length, withUid, withPhone, total, totalPages, ...report, cachedTotal: rows.length });
+}
 function richMenuSnapshot(config: RichMenuConfig): RichMenuSnapshot {
   const normalized = normalizeRichMenuConfig(config);
   const snapshotConfig: Omit<RichMenuConfig, "snapshots" | "deployments"> = {
@@ -4692,7 +4800,7 @@ function normalizeRosterSyncMember(input: Record<string, unknown>, fallbackType 
     rosterName: name,
     name,
     companyName: firstClean(input.companyName, input.company, rosterType === "vendor" ? name : ""),
-    phone: firstClean(input.phone, input.mobile, input.tel),
+    phone: firstClean(input.phone, input.mobile, input.tel, input.telephone, input.contactPhone, input.billing_phone, input.shipping_phone, input.phone_number, input.mobile_number, input.user_phone, input["手機"], input["手機號碼"], input["行動電話"], input["電話"]),
     email: firstClean(input.email, input.user_email),
     qualification: firstClean(input.qualification, input.memberQualification, input.status, "Y"),
     lineUserId: firstClean(input.lineUserId, input.LINE_user_id, input.uid),
@@ -4909,7 +5017,7 @@ function phoneDigits(value: unknown) {
 function rowMatchesPhone(row: Record<string, unknown>, phone: string) {
   const target = phoneDigits(phone);
   if (!target) return false;
-  return [row.phone, row.mobile, row.tel, row.telephone, row.contactPhone].some((value) => {
+  return [row.phone, row.mobile, row.tel, row.telephone, row.contactPhone, row.billing_phone, row.shipping_phone, row.phone_number, row.mobile_number, row.user_phone, row["手機"], row["手機號碼"], row["行動電話"], row["電話"]].some((value) => {
     const current = phoneDigits(value);
     return Boolean(current) && (current === target || current.endsWith(target) || target.endsWith(current));
   });
@@ -5686,6 +5794,7 @@ export default {
 	    if ((request.method === "PUT" || request.method === "POST") && url.pathname === "/api/admin-whitelist") return updateAdminWhitelistApi(request, env);
 	    if (request.method === "GET" && url.pathname === "/api/member-applications") return listMemberApplicationsApi(request, env);
 	    if (request.method === "GET" && url.pathname === "/api/aiwe-members-public") return listAiweMembersPublicApi(request, env);
+	    if ((request.method === "POST" || request.method === "GET") && url.pathname === "/api/aiwe-members/sync") return syncAiweMembersFromMotherApi(request, env);
 	    if (request.method === "POST" && url.pathname === "/api/aiwe-members/import") return importAiweMembersApi(request, env);
 	    if (request.method === "GET" && url.pathname === "/api/google-member-sheet") return fetchGoogleMemberSheet(request, env);
 	    if (request.method === "GET" && url.pathname === "/api/personal-messages") return listPersonalMessagesApi(request, env);

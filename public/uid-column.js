@@ -558,10 +558,25 @@
     return report;
   }
 
+  async function refreshAiweRowsFromMother() {
+    const token = getToken();
+    const headers = hasAdminIdentity() ? adminHeaders({ "content-type": "application/json" }) : { "x-aiwe-token": token, "content-type": "application/json" };
+    if (!token && !hasAdminIdentity()) throw new Error("請先以管理者身份進入後台");
+    const response = await fetch(`${apiBase}/api/aiwe-members/sync`, {
+      method: "POST",
+      headers,
+      cache: "no-store"
+    });
+    const result = await response.json().catch(() => ({}));
+    if (!response.ok || !result.success) throw new Error(result.message || `母站會員同步失敗 HTTP ${response.status}`);
+    uidMapPromise = null;
+    return result;
+  }
   async function syncAiweUid(type) {
     const data = loadData();
     data.association ||= [];
     data.vendor ||= [];
+    const remoteReport = await refreshAiweRowsFromMother();
     const aiweRows = await loadAiweRows();
     const targets = type === "all" ? ["association", "vendor"] : [type];
     const reports = {};
@@ -579,7 +594,7 @@
       const r = reports[target];
       return `${target === "vendor" ? "廠商" : "協會"}：匹配 ${r.matched}，UID 寫入 ${r.written}，資料補齊 ${r.profileWritten}，已存在 ${r.skipped}，衝突 ${r.conflicts}，未找到 ${r.missing}，姓名疑似 ${r.suspicious}`;
     });
-    alert(`母站資料同步完成\n${lines.join("\n")}`);
+    alert(`母站資料同步完成\n母站刷新：抓取 ${remoteReport.fetched || 0}，含 UID ${remoteReport.withUid || 0}，含手機 ${remoteReport.withPhone || 0}\n${lines.join("\n")}`);
   }
 
   function parseCsv(text) {
