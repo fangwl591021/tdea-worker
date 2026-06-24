@@ -1738,7 +1738,7 @@ function nativeFormUrl(formId: string) {
 }
 
 function redeemUrl(token: string) {
-  return `${nativeLiffUrl}?redeemSession=${encodeURIComponent(token)}`;
+  return `${workerBaseUrl}/?redeemSession=${encodeURIComponent(token)}`;
 }
 
 function nativeCheckinUrl(token: string) {
