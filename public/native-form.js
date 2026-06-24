@@ -1004,6 +1004,8 @@
     };
     app.querySelector("[data-redeem-scan]")?.addEventListener("click", async () => {
       try {
+        await loadLiff({ login: true });
+        if (!window.liff?.isLoggedIn?.()) return;
         if (!window.liff?.scanCodeV2) return alert("目前環境不支援 LIFF 掃描器，請改用手動貼上會員 QR 內容或 LINE UID。");
         const scan = await window.liff.scanCodeV2();
         const value = scan?.value || scan?.text || "";
