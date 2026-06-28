@@ -2308,6 +2308,38 @@ async function writeRedeem(env: Env, redeem: RedeemRequest) {
   await env.ASSETS_BUCKET.put(redeemListKey, JSON.stringify(list.slice(0, 500), null, 2), { httpMetadata: { contentType: "application/json; charset=utf-8", cacheControl: "no-store" } });
 }
 
+function redeemMemberInfoFromRows(rows: Array<Record<string, unknown>>, lineUserId: unknown) {
+  const uid = clean(lineUserId).toLowerCase();
+  if (!uid) return {};
+  const row = rows.find((item) => memberLineUid(item).toLowerCase() === uid || explicitMemberLineUid(item).toLowerCase() === uid);
+  if (!row) return {};
+  const member = publicAiweMember(row);
+  return {
+    memberName: firstClean(member.rosterName, member.companyName),
+    memberNo: firstClean(member.memberNo, member.rosterMemberNo),
+    phone: clean(member.phone),
+    rosterType: clean(member.rosterType)
+  };
+}
+
+function enrichRedeemTransactions(redeem: RedeemRequest, memberRows: Array<Record<string, unknown>>) {
+  const transactions = Array.isArray(redeem.transactions) ? redeem.transactions : [];
+  if (!transactions.length || !memberRows.length) return redeem;
+  return {
+    ...redeem,
+    transactions: transactions.map((tx) => {
+      const extra = redeemMemberInfoFromRows(memberRows, tx.lineUserId);
+      if (!Object.keys(extra).length) return tx;
+      return {
+        ...tx,
+        memberName: tx.memberName || clean(extra.memberName),
+        memberNo: tx.memberNo || clean(extra.memberNo),
+        phone: tx.phone || clean(extra.phone),
+        rosterType: tx.rosterType || clean(extra.rosterType)
+      };
+    })
+  };
+}
 function publicRedeem(redeem: RedeemRequest, extra: Record<string, unknown> = {}) {
   const status = ["active", "pending"].includes(redeem.status) && Date.now() > new Date(redeem.expiresAt).getTime() ? "expired" : redeem.status;
   const transactions = Array.isArray(redeem.transactions) ? redeem.transactions : [];
@@ -2380,7 +2412,8 @@ async function listRedeemRequests(request: Request, env: Env) {
   const guard = await requireAdmin(request, env);
   if (guard) return guard;
   const list = await readRedeemList(env);
-  return json({ success: true, data: list.map((item) => publicRedeem(item)) });
+  const memberRows = await readAiweMembers(env).catch(() => [] as Array<Record<string, unknown>>);
+  return json({ success: true, data: list.map((item) => publicRedeem(enrichRedeemTransactions(item, memberRows))) });
 }
 
 async function resolveRedeemMember(env: Env, input: { lineUserId?: unknown; phone?: unknown }) {
