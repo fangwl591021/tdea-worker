@@ -1208,6 +1208,36 @@
     return `<section class="panel"><div class="panel-head"><h2 class="panel-title">LINE 關鍵字清單</h2><span class="muted">${rows.length} 組規則</span></div><div class="table-wrap"><table><thead><tr><th>關鍵字</th><th>別名 / 比對</th><th>用途</th><th>回覆行為</th><th>網址 / 入口</th><th>設定位置</th><th>狀態</th></tr></thead><tbody>${rows.map((row) => `<tr><td><strong>${esc(row.keyword)}</strong></td><td>${esc(row.aliases)}</td><td>${esc(row.purpose)}</td><td>${esc(row.reply)}</td><td style="max-width:360px;white-space:normal;word-break:break-all">${entryCell(row.entry)}</td><td>${esc(row.owner)}</td><td><span class="badge ${row.status === "啟用中" ? "live" : "off"}">${esc(row.status)}</span></td></tr>`).join("")}</tbody></table></div></section><section class="panel" style="margin-top:18px"><div class="panel-head"><h2 class="panel-title">使用原則</h2></div><div style="padding:18px;line-height:1.8;color:#344054">所有新版關鍵字都建議以 <strong>TDEA</strong> 開頭，避免和原本 LINE OA 舊系統互相干擾。沒有命中新版關鍵字的訊息會交給舊 webhook 繼續處理。</div></section>`;
   }
 
+  function redeemTransactionSummary(row) {
+    const txs = Array.isArray(row.transactions) ? row.transactions : [];
+    if (!txs.length) return `<span class="muted">尚無折抵</span>`;
+    const rowsHtml = txs.slice(0, 10).map(tx => `<tr><td>${esc(formatTime(tx.createdAt))}</td><td>${esc(tx.memberName || tx.memberNo || tx.lineUserId || "-")}</td><td>${esc(tx.memberNo || "")}</td><td>${esc(tx.phone || "")}</td><td>${n(Math.abs(Number(tx.points || 0)))}</td><td>${n(tx.balanceAfter)}</td></tr>`).join("");
+    const more = txs.length > 10 ? `<div class="muted" style="padding-top:6px">另有 ${n(txs.length - 10)} 筆，請下載 CSV 查看完整名單。</div>` : "";
+    return `<details><summary>查看 ${n(txs.length)} 筆</summary><div class="table-wrap" style="margin-top:8px;max-width:720px"><table><thead><tr><th>時間</th><th>姓名/UID</th><th>會員編號</th><th>手機</th><th>扣點</th><th>餘額</th></tr></thead><tbody>${rowsHtml}</tbody></table></div>${more}</details>`;
+  }
+
+  function csvValue(value) {
+    const text = String(value ?? "");
+    return /[",\r\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
+  }
+
+  function downloadRedeemTransactions(token) {
+    const row = (state.redeemRecords || []).find(item => item.token === token || item.id === token);
+    if (!row) return toast("找不到折抵授權");
+    const txs = Array.isArray(row.transactions) ? row.transactions : [];
+    const header = ["店家", "授權代碼", "時間", "姓名", "會員編號", "手機", "LINE UID", "扣點", "扣前餘額", "扣後餘額", "備註"];
+    const lines = [header, ...txs.map(tx => [row.vendorName, row.token, formatTime(tx.createdAt), tx.memberName || "", tx.memberNo || "", tx.phone || "", tx.lineUserId || "", Math.abs(Number(tx.points || 0)), tx.balanceBefore ?? "", tx.balanceAfter ?? "", tx.note || row.note || ""])].map(cols => cols.map(csvValue).join(","));
+    const blob = new Blob(["\ufeff" + lines.join("\r\n")], { type: "text/csv;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `${row.vendorName || "TDEA"}-折抵名單.csv`;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+    toast("折抵名單已下載");
+  }
   function redeem() {
     const rows = state.redeemRecords || [];
     const latestUrl = state.latestRedeem?.sessionUrl || state.latestRedeem?.redeemUrl || "";
@@ -1217,7 +1247,7 @@
     const startValue = localDatetime(now);
     const endValue = localDatetime(new Date(now.getTime() + 60 * 60 * 1000));
     const ledger = state.pointLedger || [];
-    return `<div class="split"><section class="panel"><div class="panel-head"><h2 class="panel-title">建立店家限時掃碼網址</h2></div><form class="form-grid" id="redeem-form" style="padding:18px">${field("合作店家", "vendorName", "", "例如：合作店家 A", true)}<div class="grid two">${field("授權開始", "startsAt", startValue, "", true, "datetime-local")}${field("授權結束", "expiresAt", endValue, "", true, "datetime-local")}</div><div class="field"><label>扣點模式</label><select name="mode"><option value="fixed">固定點數</option><option value="manual">店家現場輸入點數</option><option value="rate">依消費金額換算點數</option></select></div><div class="grid two">${field("固定扣抵點數", "points", 0, "固定模式使用；其他模式可留 0", false, "number")}</div><div class="field"><label>授權備註</label><textarea name="note" placeholder="例如：展場合作店家、餐飲折抵、活動攤位"></textarea></div><button class="btn primary" type="submit">產生店家掃碼網址</button></form></section><section class="panel"><div class="panel-head"><h2 class="panel-title">最新店家工作台</h2></div><div style="padding:18px">${latestUrl ? `<div class="grid"><img src="${qr}" alt="店家工作台 QR" style="width:220px;height:220px;border:1px solid #e5e7eb;border-radius:8px"><div class="field"><label>店家掃碼工作台網址</label><input readonly value="${esc(latestUrl)}"></div><button class="btn" data-copy-redeem>複製網址</button><div class="muted">把這個網址或 QR 給店家。店家打開後會出現掃描器，用來掃會員個人 QR 並扣點。</div></div>` : empty("尚未產生店家掃碼網址")}</div></section></div><section class="panel" style="margin-top:18px"><div class="panel-head"><h2 class="panel-title">店家授權紀錄</h2><button class="btn" data-load-redeem>重新載入</button></div>${rows.length ? `<div class="table-wrap"><table><thead><tr><th>店家</th><th>模式</th><th>固定/上限</th><th>有效期間</th><th>狀態</th><th>已扣次數</th><th>工作台</th></tr></thead><tbody>${rows.map(row => { const url = row.sessionUrl || row.redeemUrl || ""; return `<tr><td>${esc(row.vendorName)}</td><td>${esc(modeLabel(row.mode))}</td><td>${n(row.points)} / ${n(row.maxPoints)}</td><td>${esc(formatTime(row.startsAt || row.createdAt))}<br>${esc(formatTime(row.expiresAt))}</td><td><span class="badge ${row.status === "active" || row.status === "pending" ? "live" : "off"}">${esc(statusLabel(row.status))}</span></td><td>${n(row.usageCount || row.transactions?.length || 0)}</td><td><button class="link" data-copy-redeem-url="${esc(url)}">複製</button></td></tr>`; }).join("")}</tbody></table></div>` : empty("尚未載入店家授權紀錄")}</section><section class="panel" style="margin-top:18px"><div class="panel-head"><h2 class="panel-title">母站點數流水</h2><button class="btn" data-load-point-ledger>刷新流水</button></div><div class="muted" style="padding:14px 18px;border-bottom:1px solid #e5e7eb">點數以母站為準；此處只即時讀取母站流水，不再補登或寫入本地點數帳。</div>${ledger.length ? `<div class="table-wrap"><table><thead><tr><th>時間</th><th>UID</th><th>類型</th><th>異動</th><th>餘額</th><th>原因</th></tr></thead><tbody>${ledger.slice(0, 80).map(log => `<tr><td>${esc(formatTime(log.createdAt))}</td><td>${esc(log.lineUserId)}</td><td>${esc(log.type)}</td><td>${n(log.amount)}</td><td>${n(log.balanceAfter)}</td><td>${esc(log.reason)}</td></tr>`).join("")}</tbody></table></div>` : empty("目前母站沒有點數流水")}</section>`;
+    return `<div class="split"><section class="panel"><div class="panel-head"><h2 class="panel-title">建立店家限時掃碼網址</h2></div><form class="form-grid" id="redeem-form" style="padding:18px">${field("合作店家", "vendorName", "", "例如：合作店家 A", true)}<div class="grid two">${field("授權開始", "startsAt", startValue, "", true, "datetime-local")}${field("授權結束", "expiresAt", endValue, "", true, "datetime-local")}</div><div class="field"><label>扣點模式</label><select name="mode" data-redeem-mode><option value="fixed">固定點數</option><option value="manual">現場輸入</option></select></div><div class="grid two" data-redeem-fixed-fields>${field("固定扣抵點數", "points", 1, "固定模式必填，預設 1 點", true, "number")}</div><div class="field"><label>授權備註</label><textarea name="note" placeholder="例如：展場合作店家、餐飲折抵、活動攤位"></textarea></div><button class="btn primary" type="submit">產生店家掃碼網址</button></form></section><section class="panel"><div class="panel-head"><h2 class="panel-title">最新店家工作台</h2></div><div style="padding:18px">${latestUrl ? `<div class="grid"><img src="${qr}" alt="店家工作台 QR" style="width:220px;height:220px;border:1px solid #e5e7eb;border-radius:8px"><div class="field"><label>店家掃碼工作台網址</label><input readonly value="${esc(latestUrl)}"></div><button class="btn" data-copy-redeem>複製網址</button><div class="muted">把這個網址或 QR 給店家。店家打開後會出現掃描器，用來掃會員個人 QR 並扣點。</div></div>` : empty("尚未產生店家掃碼網址")}</div></section></div><section class="panel" style="margin-top:18px"><div class="panel-head"><h2 class="panel-title">店家授權紀錄</h2><button class="btn" data-load-redeem>重新載入</button></div>${rows.length ? `<div class="table-wrap"><table><thead><tr><th>店家</th><th>模式</th><th>固定/上限</th><th>有效期間</th><th>狀態</th><th>已扣次數</th><th>折抵名單</th><th>工作台</th></tr></thead><tbody>${rows.map(row => { const url = row.sessionUrl || row.redeemUrl || ""; return `<tr><td>${esc(row.vendorName)}</td><td>${esc(modeLabel(row.mode))}</td><td>${n(row.points)} / ${n(row.maxPoints)}</td><td>${esc(formatTime(row.startsAt || row.createdAt))}<br>${esc(formatTime(row.expiresAt))}</td><td><span class="badge ${row.status === "active" || row.status === "pending" ? "live" : "off"}">${esc(statusLabel(row.status))}</span></td><td>${n(row.usageCount || row.transactions?.length || 0)}</td><td>${redeemTransactionSummary(row)}</td><td><button class="link" data-copy-redeem-url="${esc(url)}">複製</button> / <button class="link" data-download-redeem-tx="${esc(row.token || row.id)}">下載明細</button></td></tr>`; }).join("")}</tbody></table></div>` : empty("尚未載入店家授權紀錄")}</section><section class="panel" style="margin-top:18px"><div class="panel-head"><h2 class="panel-title">母站點數流水</h2><button class="btn" data-load-point-ledger>刷新流水</button></div><div class="muted" style="padding:14px 18px;border-bottom:1px solid #e5e7eb">點數以母站為準；此處只即時讀取母站流水，不再補登或寫入本地點數帳。</div>${ledger.length ? `<div class="table-wrap"><table><thead><tr><th>時間</th><th>UID</th><th>類型</th><th>異動</th><th>餘額</th><th>原因</th></tr></thead><tbody>${ledger.slice(0, 80).map(log => `<tr><td>${esc(formatTime(log.createdAt))}</td><td>${esc(log.lineUserId)}</td><td>${esc(log.type)}</td><td>${n(log.amount)}</td><td>${n(log.balanceAfter)}</td><td>${esc(log.reason)}</td></tr>`).join("")}</tbody></table></div>` : empty("目前母站沒有點數流水")}</section>`;
   }
 
   function drawer() {
@@ -1773,9 +1803,9 @@
     const refreshKeywords = document.querySelector("[data-refresh-keywords]"); if (refreshKeywords) refreshKeywords.onclick = () => { render(); toast("關鍵字列表已刷新"); };
     const loadRedeem = document.querySelector("[data-load-redeem]"); if (loadRedeem) loadRedeem.onclick = () => loadRedeemRecords(true);
     const loadPointLedgerButton = document.querySelector("[data-load-point-ledger]"); if (loadPointLedgerButton) loadPointLedgerButton.onclick = () => loadPointLedger(true);
-    document.querySelectorAll("[data-copy-redeem-url]").forEach(b => b.onclick = () => { navigator.clipboard.writeText(b.dataset.copyRedeemUrl || ""); toast("工作台網址已複製"); });
+    document.querySelectorAll("[data-copy-redeem-url]").forEach(b => b.onclick = () => { navigator.clipboard.writeText(b.dataset.copyRedeemUrl || ""); toast("工作台網址已複製"); }); document.querySelectorAll("[data-download-redeem-tx]").forEach(b => b.onclick = () => downloadRedeemTransactions(b.dataset.downloadRedeemTx || ""));
     const copyRedeem = document.querySelector("[data-copy-redeem]"); if (copyRedeem) copyRedeem.onclick = () => { navigator.clipboard.writeText(state.latestRedeem?.sessionUrl || state.latestRedeem?.redeemUrl || ""); toast("店家掃碼網址已複製"); };
-    const redeemForm = document.querySelector("#redeem-form"); if (redeemForm) redeemForm.onsubmit = createRedeem;
+    const redeemForm = document.querySelector("#redeem-form"); if (redeemForm) { redeemForm.onsubmit = createRedeem; const syncRedeemMode = () => { const mode = redeemForm.elements.mode?.value || "fixed"; const fixed = redeemForm.querySelector("[data-redeem-fixed-fields]"); const points = redeemForm.elements.points; if (fixed) fixed.style.display = mode === "manual" ? "none" : ""; if (points) { points.required = mode !== "manual"; if (mode === "manual") points.value = ""; else if (!points.value || Number(points.value) <= 0) points.value = "1"; } }; redeemForm.elements.mode?.addEventListener("change", syncRedeemMode); syncRedeemMode(); }
     const syncButton = document.querySelector("[data-sync-registrations]"); if (syncButton) syncButton.onclick = () => syncRegistrations(true);
     const clearTest = document.querySelector("[data-clear-test]"); if (clearTest) clearTest.onclick = clearTestData;
     const importLineDrafts = document.querySelector("[data-import-line-drafts]"); if (importLineDrafts) importLineDrafts.onclick = () => importLineActivityDrafts(true);
@@ -2023,7 +2053,7 @@
     event.preventDefault();
     if (!hasAdminIdentity()) return toast("請先登入管理者");
     const form = event.currentTarget;
-    const data = Object.fromEntries(new FormData(form));
+    const data = Object.fromEntries(new FormData(form)); ["startsAt", "expiresAt"].forEach((key) => { if (data[key]) data[key] = new Date(data[key]).toISOString(); }); data.mode = data.mode === "manual" ? "manual" : "fixed"; if (data.mode === "fixed") data.points = Math.max(1, Number(data.points || 1)); else data.points = 0; delete data.pointRate; delete data.maxPoints;
     const response = await fetch(api + "/api/redeem/create", {
       method: "POST",
       headers: adminHeaders({ "content-type": "application/json" }),

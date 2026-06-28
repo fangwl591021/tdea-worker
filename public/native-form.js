@@ -929,9 +929,64 @@
     </div>`;
   }
 
+  async function openMemberQrScanner(onValue) {
+    const emitValue = (value) => {
+      const text = trim(value);
+      if (text) onValue(text);
+    };
+    if (window.liff?.isLoggedIn?.() && window.liff?.scanCodeV2) {
+      try {
+        const scan = await window.liff.scanCodeV2();
+        emitValue(scan?.value || scan?.text || scan);
+        return;
+      } catch (error) {
+        if (error?.code === "USER_CANCEL") return;
+      }
+    }
+    if ("BarcodeDetector" in window && navigator.mediaDevices?.getUserMedia) {
+      const overlay = document.createElement("div");
+      overlay.style.cssText = "position:fixed;inset:0;background:rgba(15,23,42,.92);z-index:9999;display:grid;place-items:center;padding:18px";
+      overlay.innerHTML = `<div style="width:min(480px,100%);display:grid;gap:12px"><video playsinline muted style="width:100%;border-radius:12px;background:#000"></video><button class="nf-btn" type="button">關閉掃描器</button></div>`;
+      document.body.appendChild(overlay);
+      const video = overlay.querySelector("video");
+      let stream = null;
+      let stopped = false;
+      const close = () => {
+        stopped = true;
+        stream?.getTracks?.().forEach((track) => track.stop());
+        overlay.remove();
+      };
+      overlay.querySelector("button")?.addEventListener("click", close);
+      try {
+        stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } });
+        video.srcObject = stream;
+        await video.play();
+        const detector = new window.BarcodeDetector({ formats: ["qr_code"] });
+        const tick = async () => {
+          if (stopped) return;
+          try {
+            const codes = await detector.detect(video);
+            if (codes?.length) {
+              const value = codes[0].rawValue || codes[0].rawValueText || "";
+              close();
+              emitValue(value);
+              return;
+            }
+          } catch (_) {}
+          requestAnimationFrame(tick);
+        };
+        tick();
+        return;
+      } catch (_) {
+        close();
+      }
+    }
+    const manual = prompt("掃描器無法開啟，請貼上會員 QR 內容或 LINE UID");
+    emitValue(manual);
+  }
   async function showRedeem(token) {
     renderLoading("讀取店家工作台...");
-    await loadLiff({ login: false });
+    await loadLiff({ login: true });
     const response = await fetch(`${api}/api/redeem/${encodeURIComponent(token)}`, { cache: "no-store" });
     const result = await response.json().catch(() => ({}));
     if (!response.ok || !result.success) return renderError(result.message || "店家工作台無效");
@@ -1004,13 +1059,7 @@
     };
     app.querySelector("[data-redeem-scan]")?.addEventListener("click", async () => {
       try {
-        await loadLiff({ login: true });
-        if (!window.liff?.isLoggedIn?.()) return;
-        if (!window.liff?.scanCodeV2) return alert("目前環境不支援 LIFF 掃描器，請改用手動貼上會員 QR 內容或 LINE UID。");
-        const scan = await window.liff.scanCodeV2();
-        const value = scan?.value || scan?.text || "";
-        if (!value) return;
-        await readMember(value);
+        await openMemberQrScanner(readMember);
       } catch (error) {
         alert(error?.message || "掃描失敗，請改用手動貼上會員 QR 內容或 LINE UID。");
       }

@@ -22,7 +22,7 @@ type LineLoginMember = { rosterType: "association" | "vendor"; memberNo: string;
 type PointLog = { logId: string; lineUserId: string; type: "EARN" | "SPEND"; amount: number; points: number; reason: string; balanceAfter: number; createdAt: string; createdTs: number; source?: string; referenceId?: string; externalSync?: unknown; externalBalanceSync?: unknown };
 type PointAccount = { balance: number; logs: PointLog[]; updatedAt?: string; source?: string; syncedAt?: string; externalRaw?: unknown };
 type RedeemMode = "fixed" | "manual" | "rate";
-type RedeemTransaction = { id: string; lineUserId: string; amount?: number; points: number; balanceBefore?: number; balanceAfter?: number; createdAt: string; note?: string; pointResult?: unknown };
+type RedeemTransaction = { id: string; lineUserId: string; memberName?: string; memberNo?: string; phone?: string; rosterType?: string; amount?: number; points: number; balanceBefore?: number; balanceAfter?: number; createdAt: string; note?: string; pointResult?: unknown };
 type RedeemRequest = { id: string; token: string; vendorId?: string; vendorName: string; amount?: number; points: number; maxPoints?: number; pointRate?: number; mode?: RedeemMode; note?: string; status: "active" | "pending" | "used" | "expired" | "closed"; createdAt: string; startsAt?: string; expiresAt: string; usedAt?: string; lineUserId?: string; pointBalance?: number; pointResult?: unknown; transactions?: RedeemTransaction[] };
 type PushTarget = { kind?: string; memberNoPrefix?: string; rosterType?: string; qualification?: string; manualUids?: string };
 type PushLog = { id: string; createdAt: string; mode: string; target: PushTarget; count: number; messageType: string; title?: string; dryRun?: boolean; responses?: unknown[]; error?: string };
@@ -2453,9 +2453,14 @@ async function confirmRedeemRequest(request: Request, env: Env, token: string) {
   const result = await updateLocalPoints(env, lineUserId, -Math.abs(points), reason, { source: "vendor_redeem", referenceId: redeem.id }) as Record<string, unknown>;
   if (result.success !== true) return json({ success: false, message: clean(result.message) || "???憭望?", data: result }, 400);
   const createdAt = new Date().toISOString();
+  const memberInfo = asRecord(resolved.member);
   const transaction: RedeemTransaction = {
     id: `TX-${Date.now()}-${codeToken(4)}`,
     lineUserId,
+    memberName: firstClean(memberInfo.name, memberInfo.memberName),
+    memberNo: firstClean(memberInfo.memberNo, memberInfo.rosterMemberNo),
+    phone: clean(memberInfo.phone),
+    rosterType: clean(memberInfo.rosterType),
     amount,
     points: -Math.abs(points),
     balanceBefore: pointBalance,
