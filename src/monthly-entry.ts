@@ -5738,6 +5738,12 @@ async function handleMonthlyWebhook(request: Request, env: Env, rawBody: string,
     }
     return replyMonthlyActivityEvents(events, allEvents, env, ctx);
   }
+  const memberCheckinEvents = allEvents.filter((event) => isMemberCheckinText(extractTriggerText(event)));
+  if (memberCheckinEvents.length) {
+    const signature = request.headers.get("x-line-signature");
+    if (!await verifyLineSignature(rawBody, signature, env.LINE_CHANNEL_SECRET)) return new Response("Invalid Signature", { status: 403, headers });
+    return handleMemberCheckinEvents(memberCheckinEvents, env);
+  }
   const lineActivityMaker = await handleLineActivityMaker(request, env, rawBody, allEvents, ctx);
   if (lineActivityMaker) return lineActivityMaker;
   const queryEvents = allEvents.filter((event) => normalizeKeyword(extractTriggerText(event)) === normalizeKeyword(queryKeyword));
@@ -5745,7 +5751,6 @@ async function handleMonthlyWebhook(request: Request, env: Env, rawBody: string,
   const calendarEvents = allEvents.filter((event) => normalizeKeyword(extractTriggerText(event)) === normalizeKeyword(calendarKeyword));
   const personalMessageEvents = allEvents.filter((event) => normalizeKeyword(extractTriggerText(event)) === normalizeKeyword(personalMessageKeyword));
   const uidBindEvents = allEvents.filter((event) => parseUidBindKeyword(extractTriggerText(event)).active);
-  const memberCheckinEvents = allEvents.filter((event) => isMemberCheckinText(extractTriggerText(event)));
   const vendorCardEvents = allEvents.filter((event) => normalizeKeyword(extractTriggerText(event)) === normalizeKeyword(vendorCardKeyword));
   const marqueeKeywords = [marqueeKeyword, ...marqueeLegacyKeywords].map(normalizeKeyword);
   const marqueeEvents = allEvents.filter((event) => marqueeKeywords.includes(normalizeKeyword(extractTriggerText(event))));
@@ -5768,7 +5773,6 @@ async function handleMonthlyWebhook(request: Request, env: Env, rawBody: string,
     return new Response("Invalid Signature", { status: 403, headers });
   }
   if (vendorCardEvents.length) return replyVendorCardEvents(vendorCardEvents, allEvents, env, ctx);
-  if (memberCheckinEvents.length) return handleMemberCheckinEvents(memberCheckinEvents, env);
   const bareUidBindEvents = uidBindEvents.filter((event) => !parseUidBindKeyword(extractTriggerText(event)).memberNo);
   const gatedEvents = [
     ...queryEvents,
