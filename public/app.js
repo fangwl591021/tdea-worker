@@ -13,7 +13,7 @@
     vendor: ["廠商 CRM", "維護廠商會員檔案、統編、窗口與備註，可匯入 CSV。"],
     creator: ["創建活動", "建立活動草稿，之後可直接改接 D1。"],
     keywords: ["關鍵字", "整理 LINE OA 觸發關鍵字、用途與回覆行為。"],
-    adminWhitelist: ["白名單", "管理後台、核銷與 LINE 工具使用權限。"],
+    adminWhitelist: ["權限名單", "後台登入、核銷與 LINE 工具使用權限。"],
     redeem: ["點數折抵", "建立限時店家掃碼工作台，店家掃會員 QR 後執行扣點。"]
   };
   purgeLegacyManagerCache();
@@ -388,22 +388,24 @@
     } catch (_) {}
   }
   async function syncAdminAccessForMember(type, item) {
-    if (!item || (type !== "association" && type !== "vendor")) return;
+    if (!item || (type !== "association" && type !== "vendor")) return null;
+    if (!hasAdminIdentity()) throw new Error("請先登入管理員再設定權限");
     const memberNo = rosterMatchKey(item);
-    if (!memberNo) return;
-    try {
-      await fetch(api + "/api/admin-access", {
-        method: "PUT",
-        headers: adminHeaders({ "content-type": "application/json" }),
-        body: JSON.stringify({
-          memberNo,
-          name: item.name || item.companyName || "",
-          email: item.email || "",
-          lineUserId: memberLineUid(item),
-          loginAccess: memberLoginAllowed(item)
-        })
-      });
-    } catch (_) {}
+    if (!memberNo) throw new Error("缺少會員編號，無法設定權限");
+    const response = await fetch(api + "/api/admin-access", {
+      method: "PUT",
+      headers: adminHeaders({ "content-type": "application/json" }),
+      body: JSON.stringify({
+        memberNo,
+        name: item.name || item.companyName || "",
+        email: item.email || "",
+        lineUserId: memberLineUid(item),
+        loginAccess: memberLoginAllowed(item)
+      })
+    });
+    const result = await response.json().catch(() => ({}));
+    if (!response.ok || result.success === false) throw new Error(result.message || "權限更新失敗");
+    return result.data;
   }
   async function loadMemberApplications(force = false) {
     if (state.memberApplications && !force) return state.memberApplications;
@@ -1069,7 +1071,7 @@
     if (state.view === "creator") return `<button class="btn" data-import-line-drafts>匯入 LINE 草稿</button><button class="btn" data-reset>清空表單</button>`;
     if (state.view === "redeem") return `<button class="btn" data-load-redeem>刷新紀錄</button>`;
     if (state.view === "keywords") return `<button class="btn" data-refresh-keywords>刷新列表</button>`;
-    if (state.view === "adminWhitelist") return `<button class="btn" data-load-whitelist>重新載入</button><button class="btn primary" data-save-whitelist>儲存白名單</button>`;
+    if (state.view === "adminWhitelist") return `<button class="btn" data-load-whitelist>重新載入</button><button class="btn primary" data-save-whitelist>儲存權限名單</button>`;
     return `<label class="sync-toggle"><input type="checkbox" data-auto-sync ${autoSyncEnabled() ? "checked" : ""}> 自動同步</label><button class="btn" data-sync-registrations>同步報名</button><button class="btn" data-worker>檢查 Worker</button><button class="btn danger" data-clear-test>清空測試資料</button><button class="btn primary" data-nav="creator">新增活動</button>`;
   }
   function body() {
@@ -1119,10 +1121,10 @@
     const search = `<div class="field" style="min-width:280px;max-width:460px;margin-left:auto"><input data-roster-search="${type}" value="${esc(query)}" placeholder="搜尋${title}：編號、名稱、UID、電話、Email"></div>`;
     const count = `<span class="muted" data-roster-count="${type}">${rows.length} / ${allRows.length} 筆</span>`;
     if (!allRows.length) return `<section class="panel"><div class="panel-head"><h2 class="panel-title">${title}</h2><button class="btn" data-import="${type}">匯入 CSV</button></div>${empty(`目前沒有${title}資料`)}</section>`;
-    const body = `<div class="table-wrap"><table><thead><tr><th>會員編號</th><th>${vendor ? "公司名稱" : "姓名"}</th><th>LINE UID</th><th>點數</th><th>${vendor ? "統編" : "身分"}</th><th>${vendor ? "聯絡窗口" : "性別"}</th><th>資格</th><th>舊允許</th><th>備註</th><th>操作</th></tr></thead><tbody>${allRows.map(x => {
+    const body = `<div class="table-wrap"><table><thead><tr><th>會員編號</th><th>${vendor ? "公司名稱" : "姓名"}</th><th>LINE UID</th><th>點數</th><th>${vendor ? "統編" : "身分"}</th><th>${vendor ? "聯絡窗口" : "性別"}</th><th>資格</th><th>管理權限</th><th>備註</th><th>操作</th></tr></thead><tbody>${allRows.map(x => {
       const searchText = rosterSearchValue(x, vendor);
       const hidden = rosterSearchQuery(type) && !searchText.includes(rosterSearchQuery(type));
-      return `<tr data-roster-row="${type}" data-roster-search-text="${esc(searchText)}" ${hidden ? `style="display:none"` : ""}><td>${esc(x.memberNo)}</td><td><strong>${esc(vendor ? x.companyName : x.name)}</strong></td><td>${esc(shortUid(memberLineUid(x)))}</td><td>${esc(x.pointBalance ?? x.points ?? "")}</td><td>${esc(vendor ? x.taxId : x.identity)}</td><td>${esc(vendor ? x.contact : x.gender)}</td><td><span class="badge ${x.qualification === "Y" ? "live" : "off"}">${esc(x.qualification)}</span></td><td><label class="sync-toggle"><input type="checkbox" data-member-login-toggle="${type}:${x.id}" ${memberLoginAllowed(x) ? "checked" : ""}> 舊資料</label></td><td>${esc(x.note)}</td><td><button class="link" data-drawer="${type}:${x.id}">CRM 檔案</button><span class="muted"> / </span><button class="link danger-link" data-delete-member="${type}:${x.id}">刪除</button></td></tr>`;
+      return `<tr data-roster-row="${type}" data-roster-search-text="${esc(searchText)}" ${hidden ? `style="display:none"` : ""}><td>${esc(x.memberNo)}</td><td><strong>${esc(vendor ? x.companyName : x.name)}</strong></td><td>${esc(shortUid(memberLineUid(x)))}</td><td>${esc(x.pointBalance ?? x.points ?? "")}</td><td>${esc(vendor ? x.taxId : x.identity)}</td><td>${esc(vendor ? x.contact : x.gender)}</td><td><span class="badge ${x.qualification === "Y" ? "live" : "off"}">${esc(x.qualification)}</span></td><td><label class="sync-toggle"><input type="checkbox" data-member-login-toggle="${type}:${x.id}" ${memberLoginAllowed(x) ? "checked" : ""}> 允許登入</label></td><td>${esc(x.note)}</td><td><button class="link" data-drawer="${type}:${x.id}">CRM 檔案</button><span class="muted"> / </span><button class="link danger-link" data-delete-member="${type}:${x.id}">刪除</button></td></tr>`;
     }).join("")}</tbody></table></div>`;
     return `<section class="panel"><div class="panel-head"><h2 class="panel-title">${title}</h2><div class="actions">${search}${count}<button class="btn" data-import="${type}">匯入 CSV</button><button class="btn" data-export>匯出備份</button></div></div>${body}</section>`;
   }
@@ -1130,11 +1132,11 @@
   function adminWhitelist() {
     const rows = state.adminWhitelist || [];
     const meta = state.adminWhitelistMeta || {};
-    const status = meta.whitelistActive ? `<span class="badge live">白名單已啟用</span>` : `<span class="badge off">尚未建立白名單，暫用舊允許名單</span>`;
+    const status = meta.whitelistActive ? `<span class="badge live">權限名單已啟用</span>` : `<span class="badge off">尚未建立權限名單，暫用名冊勾選權限</span>`;
     const staticAdmins = Array.isArray(meta.staticAdmins) && meta.staticAdmins.length ? `<div class="muted">固定管理者 Email：${meta.staticAdmins.map(esc).join("、")}</div>` : "";
     const error = meta.error ? `<div class="alert danger">${esc(meta.error)}</div>` : "";
     const bodyRows = rows.length ? rows.map(whitelistRow).join("") : `<tr><td colspan="8">${empty("目前沒有白名單。可新增一筆，或從舊允許名單帶入。")}</td></tr>`;
-    return `<section class="panel"><div class="panel-head"><div><h2 class="panel-title">系統白名單</h2><div class="muted">此處是後台、核銷與 LINE 工具的正式授權來源；可從協會名冊中已勾選「允許」的會員同步產生。</div></div><div class="actions">${status}<button class="btn" data-load-whitelist>重新載入</button></div></div>${error}${staticAdmins}<div class="table-wrap"><table><thead><tr><th>啟用</th><th>名稱</th><th>會員編號</th><th>LINE UID</th><th>Email</th><th>角色</th><th>備註</th><th>操作</th></tr></thead><tbody id="whitelist-body">${bodyRows}</tbody></table></div><div class="panel-actions"><button class="btn" data-import-association-whitelist>從協會名冊同步</button><button class="btn" data-add-whitelist-row>新增白名單</button><button class="btn" data-import-legacy-access>從舊允許名單帶入</button><button class="btn" data-check-whitelist>檢查目前身份</button><button class="btn primary" data-save-whitelist>儲存白名單</button></div></section>`;
+    return `<section class="panel"><div class="panel-head"><div><h2 class="panel-title">系統權限名單</h2><div class="muted">此處是後台、核銷與 LINE 工具的正式授權來源；可從協會名冊中已勾選「允許」的會員同步產生。</div></div><div class="actions">${status}<button class="btn" data-load-whitelist>重新載入</button></div></div>${error}${staticAdmins}<div class="table-wrap"><table><thead><tr><th>啟用</th><th>名稱</th><th>會員編號</th><th>LINE UID</th><th>Email</th><th>角色</th><th>備註</th><th>操作</th></tr></thead><tbody id="whitelist-body">${bodyRows}</tbody></table></div><div class="panel-actions"><button class="btn" data-import-association-whitelist>從協會名冊同步</button><button class="btn" data-add-whitelist-row>新增權限</button><button class="btn" data-import-legacy-access>從舊允許名單帶入</button><button class="btn" data-check-whitelist>檢查目前身份</button><button class="btn primary" data-save-whitelist>儲存權限名單</button></div></section>`;
   }
 
   function whitelistRow(row = {}) {
@@ -1146,12 +1148,12 @@
     const rows = state.adminWhitelist || [];
     const meta = state.adminWhitelistMeta || {};
     const rosterRows = Array.isArray(meta.rosterWhitelist) ? meta.rosterWhitelist : [];
-    const status = meta.whitelistActive ? `<span class="badge live">白名單已啟用</span>` : `<span class="badge off">尚未建立白名單，暫用舊允許名單</span>`;
+    const status = meta.whitelistActive ? `<span class="badge live">權限名單已啟用</span>` : `<span class="badge off">尚未建立權限名單，暫用名冊勾選權限</span>`;
     const staticAdmins = Array.isArray(meta.staticAdmins) && meta.staticAdmins.length ? `<div class="muted">環境變數 ADMIN_EMAILS 仍可進入：${meta.staticAdmins.map(esc).join("、")}</div>` : "";
     const error = meta.error ? `<div class="alert danger">${esc(meta.error)}</div>` : "";
-    const bodyRows = rows.length ? rows.map(whitelistRowClean).join("") : `<tr><td colspan="8">${empty("目前沒有手動白名單。可新增一筆，或從協會名冊同步。")}</td></tr>`;
+    const bodyRows = rows.length ? rows.map(whitelistRowClean).join("") : `<tr><td colspan="8">${empty("目前沒有手動權限名單。可新增一筆，或直接在會員 CRM 勾選允許登入。")}</td></tr>`;
     const rosterBody = rosterRows.length ? rosterRows.map(row => `<tr><td>${esc(row.label || "")}</td><td>${esc(row.memberNo || "")}</td><td>${esc(shortUid(row.lineUserId || ""))}</td><td>${esc(row.email || "")}</td><td>${esc(row.note || "from association roster")}</td></tr>`).join("") : `<tr><td colspan="5">${empty("協會名冊目前沒有勾選允許的授權者。")}</td></tr>`;
-    return `<section class="panel"><div class="panel-head"><div><h2 class="panel-title">系統白名單</h2><div class="muted">正式授權來源包含：下方手動白名單，以及協會名冊中已勾選「允許」的會員。</div></div><div class="actions">${status}<button class="btn" data-load-whitelist>重新載入</button></div></div>${error}${staticAdmins}<div class="table-wrap"><table><thead><tr><th>啟用</th><th>名稱</th><th>會員編號</th><th>LINE UID</th><th>Email</th><th>角色</th><th>備註</th><th>操作</th></tr></thead><tbody id="whitelist-body">${bodyRows}</tbody></table></div><div class="panel-actions"><button class="btn" data-import-association-whitelist>從協會名冊同步</button><button class="btn" data-add-whitelist-row>新增白名單</button><button class="btn" data-import-legacy-access>從舊允許名單帶入</button><button class="btn" data-check-whitelist>檢查目前身份</button><button class="btn primary" data-save-whitelist>儲存白名單</button></div></section><section class="panel"><div class="panel-head"><div><h2 class="panel-title">協會名冊自動授權</h2><div class="muted">這裡直接從協會名冊讀取，名冊勾選「允許」後即納入後台與核銷授權判斷。</div></div><span class="badge live">${rosterRows.length} 筆</span></div><div class="table-wrap"><table><thead><tr><th>名稱</th><th>會員編號</th><th>LINE UID</th><th>Email</th><th>來源</th></tr></thead><tbody>${rosterBody}</tbody></table></div></section>`;
+    return `<section class="panel"><div class="panel-head"><div><h2 class="panel-title">系統權限名單</h2><div class="muted">正式授權來源包含：會員 CRM/廠商 CRM 名單中已勾選「允許登入」者，以及下方手動權限名單。</div></div><div class="actions">${status}<button class="btn" data-load-whitelist>重新載入</button></div></div>${error}${staticAdmins}<div class="table-wrap"><table><thead><tr><th>啟用</th><th>名稱</th><th>會員編號</th><th>LINE UID</th><th>Email</th><th>角色</th><th>備註</th><th>操作</th></tr></thead><tbody id="whitelist-body">${bodyRows}</tbody></table></div><div class="panel-actions"><button class="btn" data-import-association-whitelist>從協會名冊同步</button><button class="btn" data-add-whitelist-row>新增權限</button><button class="btn" data-import-legacy-access>從舊允許名單帶入</button><button class="btn" data-check-whitelist>檢查目前身份</button><button class="btn primary" data-save-whitelist>儲存權限名單</button></div></section><section class="panel"><div class="panel-head"><div><h2 class="panel-title">名冊勾選授權</h2><div class="muted">這裡顯示目前名冊中已勾選「允許登入」並會被後台登入驗證採用的成員。</div></div><span class="badge live">${rosterRows.length} 筆</span></div><div class="table-wrap"><table><thead><tr><th>名稱</th><th>會員編號</th><th>LINE UID</th><th>Email</th><th>來源</th></tr></thead><tbody>${rosterBody}</tbody></table></div></section>`;
   }
 
   function whitelistRowClean(row = {}) {
@@ -1358,7 +1360,7 @@
     const profileFields = `${field("會員編號", "memberNo", x.memberNo)}${field("LINE UID", "lineUserId", memberLineUid(x), "例如：Ub68b9724664b889e790c789ece72f717")}${field("母站帳號", "aiweMemberNo", firstValue(x.aiweMemberNo, x.motherMemberNo, x.motherAccount, x.legacyAccount), "母站會員帳號")}${field("手機", "phone", firstValue(x.phone, x.mobile, x.tel), "手機")}${field("Email", "email", x.email, "會員 Email", false, "email")}`;
     const vendorFields = `${field("公司名稱", "companyName", x.companyName)}${field("統一編號", "taxId", x.taxId)}${field("負責人", "owner", x.owner)}${field("聯絡窗口", "contact", x.contact)}`;
     const memberFields = `${field("身分", "identity", x.identity)}${field("姓名", "name", x.name)}${select("性別", "gender", ["", "男", "女"], x.gender)}${field("本職", "jobTitle", firstValue(x.jobTitle, x.title, x.position), "本職")}${field("公司/單位", "company", firstValue(x.company, x.companyName, x.unit), "公司/單位")}`;
-    return `<div class="crm-member-profile-layout"><section class="crm-member-card"><div class="crm-member-section-title">基本資料</div><form class="form-grid crm-member-form" id="drawer-member" data-type="${type}">${hidden("id", x.id)}${profileFields}${vendor ? vendorFields : memberFields}${select("會員資格", "qualification", ["Y", "N"], x.qualification || "Y")}<label class="sync-toggle"><input type="checkbox" name="loginAccess" value="Y" ${memberLoginAllowed(x) ? "checked" : ""}> 舊允許資料（正式權限請到 LINE 專區 / 白名單設定）</label><div class="field"><label>備註</label><textarea name="note">${esc(x.note)}</textarea></div><div class="crm-member-savebar"><button class="btn" type="button" data-close>取消</button><button class="btn primary" type="submit">儲存檔案變更</button></div></form></section><aside class="crm-member-side" data-member-side><div data-member-point-slot></div></aside><section class="member-registration-wide" data-member-registration-slot></section></div>`;
+    return `<div class="crm-member-profile-layout"><section class="crm-member-card"><div class="crm-member-section-title">基本資料</div><form class="form-grid crm-member-form" id="drawer-member" data-type="${type}">${hidden("id", x.id)}${profileFields}${vendor ? vendorFields : memberFields}${select("會員資格", "qualification", ["Y", "N"], x.qualification || "Y")}<label class="sync-toggle"><input type="checkbox" name="loginAccess" value="Y" ${memberLoginAllowed(x) ? "checked" : ""}> 允許此會員登入管理中心</label><div class="field"><label>備註</label><textarea name="note">${esc(x.note)}</textarea></div><div class="crm-member-savebar"><button class="btn" type="button" data-close>取消</button><button class="btn primary" type="submit">儲存檔案變更</button></div></form></section><aside class="crm-member-side" data-member-side><div data-member-point-slot></div></aside><section class="member-registration-wide" data-member-registration-slot></section></div>`;
   }
   function importForm(type) {
     const vendor = type === "vendor";
@@ -1728,7 +1730,7 @@
       });
       state.adminWhitelist = [...current, ...fresh];
       render();
-      toast(`已從協會名冊帶入 ${fresh.length} 筆，請確認後儲存白名單`);
+      toast(`已從協會名冊帶入 ${fresh.length} 筆，請確認後儲存權限名單`);
     });
     document.querySelectorAll("[data-import-legacy-access]").forEach(b => b.onclick = async () => {
       await loadAdminWhitelist(true);
@@ -1783,16 +1785,29 @@
     document.querySelectorAll("[data-restore-activity]").forEach(b => b.onclick = () => restoreActivity(b.dataset.restoreActivity));
     document.querySelectorAll("[data-load-archived-activities]").forEach(b => b.onclick = async () => { await loadArchivedActivitiesRemote(); render(); toast("封存活動資料夾已更新"); });
     document.querySelectorAll("[data-delete-member]").forEach(b => b.onclick = () => deleteMember(b.dataset.deleteMember));
-    document.querySelectorAll("[data-member-login-toggle]").forEach(input => input.onchange = () => {
+    document.querySelectorAll("[data-member-login-toggle]").forEach(input => input.onchange = async () => {
       const [type, rowId] = String(input.dataset.memberLoginToggle || "").split(":");
       const row = state.data[type]?.find(item => item.id === rowId);
       if (!row) return;
+      const previous = !input.checked;
+      input.disabled = true;
       row.loginAccess = input.checked;
       row.allowLogin = input.checked;
       row.canLogin = input.checked;
-      save();
-      syncAdminAccessForMember(type, row);
-      toast(input.checked ? "已允許登入權限" : "已取消登入權限");
+      try {
+        await syncAdminAccessForMember(type, row);
+        save();
+        state.adminWhitelist = null;
+        toast(input.checked ? "已允許登入管理中心" : "已取消登入管理中心權限");
+      } catch (err) {
+        input.checked = previous;
+        row.loginAccess = previous;
+        row.allowLogin = previous;
+        row.canLogin = previous;
+        toast(err?.message || "權限更新失敗");
+      } finally {
+        input.disabled = false;
+      }
     });
     document.querySelectorAll("[data-registration-list]").forEach(b => b.onclick = () => openRegistrationList(b.dataset.registrationList));
     document.querySelectorAll("[data-export-registrations]").forEach(b => b.onclick = () => downloadRegistrationExcel(b.dataset.exportRegistrations, b));
@@ -1838,7 +1853,7 @@
       }
     };
     const ea = document.querySelector("#drawer-activity"); if (ea) ea.onsubmit = async e => { e.preventDefault(); setSubmitState(ea, "儲存中..."); const d = Object.fromEntries(new FormData(ea)); const x = state.data.activities.find(r => r.id === d.id); if (x) { Object.assign(x, { name: d.name, templateMode: d.templateMode || x.templateMode || "custom", type: d.type, typeLabel: formTypeLabel(d), courseTime: d.courseTime, deadline: d.deadline, capacity: Number(d.capacity || 0), checkinPoints: Number(d.checkinPoints || 0), feePoints: Number(d.feePoints || 0), paymentAmount: Number(d.paymentAmount || 0), remittanceInfo: d.remittanceInfo || "", registrationMode: d.registrationMode || "form", reg: Number(d.reg || 0), check: Number(d.check || 0), status: d.status, formUrl: d.formUrl, galleryUrls: cleanUrlList(d.galleryUrls) }); try { const saved = await saveActivityRemote(x); Object.assign(x, saved || {}); } catch (err) { toast(err?.message || "活動儲存失敗"); resetSubmitState(ea); return; } } save(); await finishSubmitState(ea); };
-    const mf = document.querySelector("#drawer-member"); if (mf) mf.onsubmit = e => { e.preventDefault(); const type = mf.dataset.type; const d = Object.fromEntries(new FormData(mf)); const rows = state.data[type]; const old = rows.find(r => r.id === d.id); const loginAccess = d.loginAccess === "Y"; const item = { ...d, id: d.id || uid(), loginAccess, allowLogin: loginAccess, canLogin: loginAccess }; old ? Object.assign(old, item) : rows.unshift(item); state.drawer = ""; save(); syncRosterMemberToWorker(type, item); syncAdminAccessForMember(type, item); render(); toast("名冊已儲存"); };
+    const mf = document.querySelector("#drawer-member"); if (mf) mf.onsubmit = async e => { e.preventDefault(); const type = mf.dataset.type; const d = Object.fromEntries(new FormData(mf)); const rows = state.data[type]; const old = rows.find(r => r.id === d.id); const loginAccess = d.loginAccess === "Y"; const item = { ...d, id: d.id || uid(), loginAccess, allowLogin: loginAccess, canLogin: loginAccess }; old ? Object.assign(old, item) : rows.unshift(item); try { await syncRosterMemberToWorker(type, item); await syncAdminAccessForMember(type, item); state.drawer = ""; save(); state.adminWhitelist = null; render(); toast("名冊與管理權限已儲存"); } catch (err) { toast(err?.message || "名冊儲存失敗"); } };
     const im = document.querySelector("#import-form"); if (im) im.onsubmit = e => { e.preventDefault(); const d = Object.fromEntries(new FormData(im)); const count = importRows(im.dataset.type, d.csv || ""); state.drawer = ""; render(); toast(`已導入 ${count} 筆資料`); };
     const loadRoster = document.querySelector("[data-load-roster]"); if (loadRoster) loadRoster.onclick = () => loadRosterSeed(true);
     const worker = document.querySelector("[data-worker]"); if (worker) worker.onclick = async () => { try { const r = await fetch(api + "/api/activities"); const j = await r.json(); toast(j.success ? "Worker API 連線正常" : "Worker API 回應異常"); } catch (_) { toast("Worker API 無法連線"); } };
