@@ -37,7 +37,7 @@ type LineActivityDraft = { id: string; lineUserId: string; step: string; answers
 type AdminAccessRecord = { memberNo: string; email?: string; lineUserId?: string; name?: string; loginAccess: boolean; updatedAt?: string; updatedBy?: string };
 type AdminWhitelistRecord = { id?: string; enabled?: boolean; label?: string; memberNo?: string; email?: string; lineUserId?: string; role?: string; note?: string; createdAt?: string; updatedAt?: string; updatedBy?: string };
 type LineActivityAiResult = { intent?: string; confidence?: number; question?: string; fields?: Record<string, unknown> };
-type MemberOnboardingSession = { lineUserId: string; step: "askMember" | "memberNo" | "phone" | "joinInterest" | "applicantInfo"; answers: Record<string, unknown>; triggerText?: string; createdAt: string; updatedAt: string };
+type MemberOnboardingSession = { lineUserId: string; step: "askMember" | "memberNo" | "name" | "joinInterest" | "applicantInfo"; answers: Record<string, unknown>; triggerText?: string; createdAt: string; updatedAt: string };
 type MemberApplication = { id: string; lineUserId: string; status: "pending" | "handled"; source: "line"; name?: string; phone?: string; triggerText?: string; createdAt: string; updatedAt?: string };
 
 const monthlyKey = "flex/monthly-activity.json";
@@ -4888,17 +4888,16 @@ async function importAiweMembersApi(request: Request, env: Env) {
   return json({ success: true, ...report, total: rows.length });
 }
 
+function isMemberCheckinText(text: string) {
+  return normalizeKeyword(text).startsWith(normalizeKeyword(memberCheckinKeyword));
+}
+
 function parseUidBindKeyword(text: string) {
   const raw = clean(text);
   const normalized = normalizeKeyword(raw);
   if (normalized === uidBindKeyword) return { active: true, memberNo: "" };
-  if (normalized === normalizeKeyword(memberCheckinKeyword)) return { active: true, memberNo: "" };
-  const isUidBind = normalized.startsWith(uidBindKeyword);
-  const isMemberCheckin = normalized.startsWith(normalizeKeyword(memberCheckinKeyword));
-  if (!isUidBind && !isMemberCheckin) return { active: false, memberNo: "" };
-  const suffix = isMemberCheckin
-    ? raw.replace(/^會員報到\s*[+＋:：]?\s*/i, "").trim()
-    : raw.replace(/^UID\s*[+＋:：]?\s*/i, "").trim();
+  if (!normalized.startsWith(uidBindKeyword)) return { active: false, memberNo: "" };
+  const suffix = raw.replace(/^UID\s*[+＋:：]?\s*/i, "").trim();
   return suffix ? { active: true, memberNo: clean(suffix).toUpperCase() } : { active: false, memberNo: "" };
 }
 
@@ -4909,6 +4908,29 @@ function aiweMemberNo(row: Record<string, unknown>) {
 function rowMatchesMemberNo(row: Record<string, unknown>, memberNo: string) {
   const target = clean(memberNo).toUpperCase();
   return Boolean(target) && [row.rosterMemberNo, row.memberNo, row.user_login].some((value) => clean(value).toUpperCase() === target);
+}
+
+function normalizedNameForMatch(value: unknown) {
+  return clean(value).replace(/\s+/g, "").toLowerCase();
+}
+
+function rowMatchesMemberName(row: Record<string, unknown>, name: string) {
+  const target = normalizedNameForMatch(name);
+  if (!target) return false;
+  const member = publicAiweMember(row);
+  return [
+    aiweRowDisplayName(row),
+    member.rosterName,
+    member.companyName,
+    row.rosterName,
+    row.name,
+    row.display_name,
+    row.user_nicename,
+    row.companyName,
+    row.company,
+    row.organization,
+    row.unit
+  ].some((value) => normalizedNameForMatch(value) === target);
 }
 
 function selectAiweBindRows(rows: Array<Record<string, unknown>>, memberNo: string) {
@@ -4932,6 +4954,60 @@ function setAiweRowLineUid(row: Record<string, unknown>, lineUserId: string) {
   row.LINE_user_id = lineUserId;
   row.uid = lineUserId;
   if (isSyntheticLineEmail(row.email)) row.email = "";
+}
+
+async function upsertBoundMemberToManagerCrm(env: Env, sourceRow: Record<string, unknown>, lineUserId: string) {
+  if (!env.ASSETS_BUCKET) return { written: false, reason: "r2-not-configured" };
+  const raw = await readManagerDataRaw(env) || {};
+  const type = clean(sourceRow.rosterType) === "vendor" ? "vendor" : "association";
+  const rows = Array.isArray(raw[type]) ? [...raw[type] as Array<Record<string, unknown>>] : [];
+  const member = publicAiweMember(sourceRow);
+  const memberNo = firstClean(member.rosterMemberNo, member.memberNo, aiweMemberNo(sourceRow)).toUpperCase();
+  const index = rows.findIndex((row) => rowMatchesMemberNo(row, memberNo));
+  const existing = index >= 0 ? rows[index] : {};
+  const name = type === "vendor"
+    ? firstClean(existing.name, existing.companyName, member.companyName, member.rosterName)
+    : firstClean(existing.name, member.rosterName);
+  const next: Record<string, unknown> = {
+    ...existing,
+    id: clean(existing.id) || `crm-${type}-${memberNo || crypto.randomUUID()}`,
+    memberNo: firstClean(existing.memberNo, memberNo),
+    rosterMemberNo: firstClean(existing.rosterMemberNo, memberNo),
+    aiweMemberNo: firstClean(existing.aiweMemberNo, member.memberNo, member.rosterMemberNo, memberNo),
+    lineUserId,
+    LINE_user_id: lineUserId,
+    uid: lineUserId,
+    name,
+    phone: firstClean(existing.phone, member.phone),
+    email: isSyntheticLineEmail(firstClean(existing.email, member.email)) ? "" : firstClean(existing.email, member.email),
+    qualification: firstClean(existing.qualification, member.qualification, "Y"),
+    updatedAt: new Date().toISOString(),
+    syncSource: "member-checkin"
+  };
+  if (type === "vendor") next.companyName = firstClean(existing.companyName, member.companyName, name);
+  else next.company = firstClean(existing.company, member.companyName);
+  if (index >= 0) rows[index] = next;
+  else rows.unshift(next);
+  raw[type] = rows;
+  await writeManagerData(env, raw, "member-checkin");
+  return { written: true, type, memberNo, inserted: index < 0 };
+}
+
+async function verifyAndBindMemberCheckin(env: Env, lineUserId: string, memberNo: string, memberName: string) {
+  const uid = clean(lineUserId);
+  const normalizedMemberNo = clean(memberNo).toUpperCase();
+  const rows = await readAiweMembers(env);
+  const matched = selectAiweBindRows(rows, normalizedMemberNo);
+  if (!matched.length) return { success: false, reason: "member-not-found", memberNo: normalizedMemberNo };
+  const verified = matched.filter((row) => rowMatchesMemberName(row, memberName));
+  if (!verified.length) return { success: false, reason: "name-mismatch", memberNo: normalizedMemberNo };
+  const currentUid = memberLineUid(verified[0]);
+  if (validLineUid(currentUid) && currentUid.toLowerCase() !== uid.toLowerCase()) return { success: false, reason: "uid-conflict", memberNo: normalizedMemberNo };
+  for (const row of verified) setAiweRowLineUid(row, uid);
+  await writeAiweMembers(env, rows);
+  const crm = await upsertBoundMemberToManagerCrm(env, verified[0], uid);
+  const pointSync = await syncBoundMemberPoints(env, uid).catch((error) => ({ success: false, message: error instanceof Error ? error.message : String(error) }));
+  return { success: true, memberNo: normalizedMemberNo, name: aiweRowDisplayName(verified[0]), updated: verified.length, crm, pointSync };
 }
 
 function inferUidBindMemberNo(rows: Array<Record<string, unknown>>, lineUserId: string, env: Env) {
@@ -5120,7 +5196,7 @@ async function startMemberOnboarding(env: Env, event: LineEvent, triggerText: st
   await writeMemberOnboardingSession(env, { lineUserId, step: "memberNo", answers: {}, triggerText, createdAt: now, updatedAt: now });
   return replyToLine(event.replyToken, [{
     type: "text",
-    text: "尚未完成 LINE 綁定。\n若你是 TDEA 會員或廠商會員，請輸入會員編號，下一步會核對行動電話。",
+    text: "尚未完成 LINE 綁定。\n請先輸入會員編號，下一步會核對姓名或公司/單位名稱。",
     quickReply: quickReply(["不是會員", "取消"])
   }], env);
 }
@@ -5156,27 +5232,28 @@ async function handleMemberOnboardingEvent(event: LineEvent, env: Env): Promise<
       return replyToLine(event.replyToken, [{ type: "text", text: "歡迎加入 TDEA。\n請問你是否有加入協會或成為廠商會員的意願？", quickReply: quickReply(["有興趣", "暫時不用"]) }], env) as unknown as Record<string, unknown>;
     }
     session.answers.memberNo = clean(text).toUpperCase();
-    session.step = "phone";
+    session.step = "name";
     await writeMemberOnboardingSession(env, session);
-    return replyToLine(event.replyToken, [{ type: "text", text: "請輸入名冊上的行動電話，用來核對身分。", quickReply: quickReply(["取消"]) }], env) as unknown as Record<string, unknown>;
+    return replyToLine(event.replyToken, [{ type: "text", text: "請輸入會員姓名或公司/單位名稱，用來核對身分。", quickReply: quickReply(["取消"]) }], env) as unknown as Record<string, unknown>;
   }
-  if (session.step === "phone") {
+  if (session.step === "name") {
     const memberNo = clean(session.answers.memberNo).toUpperCase();
-    const rows = await readAiweMembers(env);
-    const matched = selectAiweBindRows(rows, memberNo);
-    const verified = matched.filter((row) => rowMatchesPhone(row, text));
-    if (!matched.length) {
+    const result = await verifyAndBindMemberCheckin(env, lineUserId, memberNo, text);
+    if (!result.success && result.reason === "member-not-found") {
       await deleteMemberOnboardingSession(env, lineUserId);
       return replyToLine(event.replyToken, [{ type: "text", text: `查無會員編號 ${memberNo}，請確認後重新點「會員報到」。` }], env) as unknown as Record<string, unknown>;
     }
-    if (!verified.length) {
-      return replyToLine(event.replyToken, [{ type: "text", text: "會員編號與行動電話不一致，請重新輸入行動電話，或輸入「取消」中止。", quickReply: quickReply(["取消"]) }], env) as unknown as Record<string, unknown>;
+    if (!result.success && result.reason === "name-mismatch") {
+      return replyToLine(event.replyToken, [{ type: "text", text: "會員編號與姓名不一致，請重新輸入姓名或公司/單位名稱，或輸入「取消」中止。", quickReply: quickReply(["取消"]) }], env) as unknown as Record<string, unknown>;
     }
-    for (const row of verified) setAiweRowLineUid(row, lineUserId);
-    await writeAiweMembers(env, rows);
+    if (!result.success && result.reason === "uid-conflict") {
+      await deleteMemberOnboardingSession(env, lineUserId);
+      return replyToLine(event.replyToken, [{ type: "text", text: "此會員編號已綁定其他 LINE 帳號，請聯絡協會後台確認。" }], env) as unknown as Record<string, unknown>;
+    }
     await deleteMemberOnboardingSession(env, lineUserId);
-    const name = aiweRowDisplayName(verified[0]);
-    return replyToLine(event.replyToken, [{ type: "text", text: `身分已確認並完成 LINE 綁定。\n會員編號：${memberNo}\n姓名/單位：${name}\n之後可直接使用活動報名與會員功能。` }], env) as unknown as Record<string, unknown>;
+    const bound = result as { memberNo: string; name: string; updated: number; pointSync?: Record<string, unknown>; crm?: Record<string, unknown> };
+    const pointText = bound.pointSync?.success === true ? `\n目前點數：${numberValue(bound.pointSync.balance)} 點` : "";
+    return replyToLine(event.replyToken, [{ type: "text", text: `身分已確認並完成 LINE 綁定，已寫入子站 CRM。\n會員編號：${bound.memberNo}\n姓名/單位：${bound.name}\n更新筆數：${bound.updated}${pointText}\n之後可直接使用活動報名與會員功能。` }], env) as unknown as Record<string, unknown>;
   }
   if (session.step === "joinInterest") {
     if (intent === "interested") {
@@ -5210,6 +5287,32 @@ async function hasMemberOnboardingSession(events: LineEvent[], env: Env) {
   return false;
 }
 
+async function handleMemberCheckinEvents(events: LineEvent[], env: Env) {
+  const replies = [];
+  const results = [];
+  for (const event of events) {
+    const lineUserId = clean(event.source?.userId);
+    if (!lineUserId || !event.replyToken) {
+      results.push({ success: false, message: "missing-line-user-or-reply-token" });
+      continue;
+    }
+    const member = await resolveLineLoginMember(env, lineUserId);
+    if (!member) {
+      replies.push(await startMemberOnboarding(env, event, extractTriggerText(event)));
+      results.push({ success: false, lineUserId, message: "started-member-checkin" });
+      continue;
+    }
+    const rows = await readAiweMembers(env);
+    const matched = rows.find((row) => memberLineUid(row).toLowerCase() === lineUserId.toLowerCase());
+    const crm = matched ? await upsertBoundMemberToManagerCrm(env, matched, lineUserId) : { written: false, reason: "member-row-not-found" };
+    const pointSync = await syncBoundMemberPoints(env, lineUserId).catch((error) => ({ success: false, message: error instanceof Error ? error.message : String(error) }));
+    const pointText = pointSync.success === true ? `\n目前點數：${numberValue(pointSync.balance)} 點` : "";
+    const message = { type: "text", text: `你已完成會員報到。\n會員編號：${member.memberNo}\n姓名/單位：${member.name}${pointText}\n子站 CRM：${crm.written ? "已更新" : "未更新"}` };
+    replies.push(await replyToLine(event.replyToken, [message], env));
+    results.push({ success: true, lineUserId, memberNo: member.memberNo, crm, pointSync });
+  }
+  return json({ success: true, mode: "member-checkin", results, lineReplies: replies });
+}
 async function handleClosedMemberGate(allEvents: LineEvent[], gatedEvents: LineEvent[], env: Env) {
   for (const event of allEvents) {
     const handled = await handleMemberOnboardingEvent(event, env);
@@ -5642,6 +5745,7 @@ async function handleMonthlyWebhook(request: Request, env: Env, rawBody: string,
   const calendarEvents = allEvents.filter((event) => normalizeKeyword(extractTriggerText(event)) === normalizeKeyword(calendarKeyword));
   const personalMessageEvents = allEvents.filter((event) => normalizeKeyword(extractTriggerText(event)) === normalizeKeyword(personalMessageKeyword));
   const uidBindEvents = allEvents.filter((event) => parseUidBindKeyword(extractTriggerText(event)).active);
+  const memberCheckinEvents = allEvents.filter((event) => isMemberCheckinText(extractTriggerText(event)));
   const vendorCardEvents = allEvents.filter((event) => normalizeKeyword(extractTriggerText(event)) === normalizeKeyword(vendorCardKeyword));
   const marqueeKeywords = [marqueeKeyword, ...marqueeLegacyKeywords].map(normalizeKeyword);
   const marqueeEvents = allEvents.filter((event) => marqueeKeywords.includes(normalizeKeyword(extractTriggerText(event))));
@@ -5649,7 +5753,7 @@ async function handleMonthlyWebhook(request: Request, env: Env, rawBody: string,
     .map((event) => ({ event, query: parseMotherPointKeyword(extractTriggerText(event)) }))
     .filter((match): match is { event: LineEvent; query: { uid: string } } => Boolean(match.query));
   const onboardingActive = await hasMemberOnboardingSession(allEvents, env);
-  if (!queryEvents.length && !memberQrEvents.length && !calendarEvents.length && !personalMessageEvents.length && !uidBindEvents.length && !vendorCardEvents.length && !marqueeEvents.length && !pointEvents.length && !events.length && !onboardingActive) return null;
+  if (!queryEvents.length && !memberQrEvents.length && !calendarEvents.length && !personalMessageEvents.length && !uidBindEvents.length && !memberCheckinEvents.length && !vendorCardEvents.length && !marqueeEvents.length && !pointEvents.length && !events.length && !onboardingActive) return null;
   const signature = request.headers.get("x-line-signature");
   const signatureOk = await verifyLineSignature(rawBody, signature, env.LINE_CHANNEL_SECRET);
   if (!signatureOk) {
@@ -5664,6 +5768,7 @@ async function handleMonthlyWebhook(request: Request, env: Env, rawBody: string,
     return new Response("Invalid Signature", { status: 403, headers });
   }
   if (vendorCardEvents.length) return replyVendorCardEvents(vendorCardEvents, allEvents, env, ctx);
+  if (memberCheckinEvents.length) return handleMemberCheckinEvents(memberCheckinEvents, env);
   const bareUidBindEvents = uidBindEvents.filter((event) => !parseUidBindKeyword(extractTriggerText(event)).memberNo);
   const gatedEvents = [
     ...queryEvents,
