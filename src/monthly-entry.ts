@@ -4927,7 +4927,9 @@ async function importAiweMembersApi(request: Request, env: Env) {
 }
 
 function isMemberCheckinText(text: string) {
-  return normalizeKeyword(text).startsWith(normalizeKeyword(memberCheckinKeyword));
+  const normalized = normalizeKeyword(text);
+  const keyword = normalizeKeyword(memberCheckinKeyword);
+  return normalized === keyword || normalized.startsWith(keyword) || (normalized.includes("會員") && normalized.includes("報到"));
 }
 
 function parseUidBindKeyword(text: string) {
@@ -5330,25 +5332,52 @@ async function handleMemberCheckinEvents(events: LineEvent[], env: Env) {
   const results = [];
   for (const event of events) {
     const lineUserId = clean(event.source?.userId);
-    if (!lineUserId || !event.replyToken) {
-      results.push({ success: false, message: "missing-line-user-or-reply-token" });
+    const text = clean(extractTriggerText(event));
+    if (!event.replyToken) {
+      results.push({ success: false, lineUserId, text, message: "missing-reply-token" });
       continue;
     }
-    const member = await resolveLineLoginMember(env, lineUserId);
+    if (!lineUserId) {
+      const message = { type: "text", text: "系統尚未取得你的 LINE UID，請從 LINE 官方帳號聊天室重新點「會員報到」。" };
+      replies.push(await replyToLine(event.replyToken, [message], env));
+      results.push({ success: false, text, message: "missing-line-user" });
+      continue;
+    }
+    let member: LineLoginMember | null = null;
+    try {
+      member = await resolveLineLoginMember(env, lineUserId);
+    } catch (error) {
+      results.push({ success: false, lineUserId, text, message: "resolve-member-failed", error: error instanceof Error ? error.message : String(error) });
+    }
     if (!member) {
-      replies.push(await startMemberOnboarding(env, event, extractTriggerText(event)));
-      results.push({ success: false, lineUserId, message: "started-member-checkin" });
+      replies.push(await startMemberOnboarding(env, event, text));
+      results.push({ success: false, lineUserId, text, message: "started-member-checkin" });
       continue;
     }
-    const rows = await readAiweMembers(env);
-    const matched = rows.find((row) => memberLineUid(row).toLowerCase() === lineUserId.toLowerCase());
-    const crm = matched ? await upsertBoundMemberToManagerCrm(env, matched, lineUserId) : { written: false, reason: "member-row-not-found" };
-    const pointSync = await syncBoundMemberPoints(env, lineUserId).catch((error) => ({ success: false, message: error instanceof Error ? error.message : String(error) }));
-    const pointText = pointSync.success === true ? `\n目前點數：${numberValue(pointSync.balance)} 點` : "";
-    const message = { type: "text", text: `你已完成會員報到。\n會員編號：${member.memberNo}\n姓名/單位：${member.name}${pointText}\n子站 CRM：${crm.written ? "已更新" : "未更新"}` };
-    replies.push(await replyToLine(event.replyToken, [message], env));
-    results.push({ success: true, lineUserId, memberNo: member.memberNo, crm, pointSync });
+    try {
+      const rows = await readAiweMembers(env);
+      const matched = rows.find((row) => memberLineUid(row).toLowerCase() === lineUserId.toLowerCase());
+      const crm = matched ? await upsertBoundMemberToManagerCrm(env, matched, lineUserId) : { written: false, reason: "member-row-not-found" };
+      const pointSync = await syncBoundMemberPoints(env, lineUserId).catch((error) => ({ success: false, message: error instanceof Error ? error.message : String(error) }));
+      const pointText = pointSync.success === true ? `\n目前點數：${numberValue(pointSync.balance)} 點` : "";
+      const message = { type: "text", text: `你已完成會員報到。\n會員編號：${member.memberNo}\n姓名/單位：${member.name}${pointText}\n子站 CRM：${crm.written ? "已更新" : "未更新"}` };
+      replies.push(await replyToLine(event.replyToken, [message], env));
+      results.push({ success: true, lineUserId, text, memberNo: member.memberNo, crm, pointSync });
+    } catch (error) {
+      const message = { type: "text", text: "會員報到流程暫時無法完成，系統已記錄錯誤，請稍後再試或聯絡協會後台。" };
+      replies.push(await replyToLine(event.replyToken, [message], env));
+      results.push({ success: false, lineUserId, text, message: "member-checkin-failed", error: error instanceof Error ? error.message : String(error) });
+    }
   }
+  await appendLineWebhookLog(env, {
+    at: new Date().toISOString(),
+    mode: "member-checkin",
+    result: results.some((item) => (item as Record<string, unknown>).success === true) ? "handled" : "started-or-failed",
+    texts: events.map((event) => clean(extractTriggerText(event))).filter(Boolean).slice(0, 5),
+    eventCount: events.length,
+    results,
+    lineReplies: replies
+  });
   return json({ success: true, mode: "member-checkin", results, lineReplies: replies });
 }
 async function handleClosedMemberGate(allEvents: LineEvent[], gatedEvents: LineEvent[], env: Env) {
@@ -5731,7 +5760,7 @@ async function handleMonthlyWebhook(request: Request, env: Env, rawBody: string,
   let payload: unknown;
   try { payload = JSON.parse(rawBody); } catch (_) { return null; }
   const allEvents = extractLineEvents(payload);
-  const watchedTexts = allEvents.map((event) => clean(extractTriggerText(event))).filter((text) => /TDEA|每月活動/i.test(text));
+  const watchedTexts = allEvents.map((event) => clean(extractTriggerText(event))).filter((text) => /TDEA|每月活動|會員|報到/i.test(text));
   if (watchedTexts.length && !allEvents.some((event) => isMonthlyActivityKeyword(extractTriggerText(event)))) {
     await appendLineWebhookLog(env, {
       at: new Date().toISOString(),
