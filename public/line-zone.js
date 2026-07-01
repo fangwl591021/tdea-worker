@@ -153,7 +153,7 @@
     if (!window.TDEAApp) return;
     register({
       id: "admin-whitelist",
-      label: "白名單",
+      label: "權限名單",
       order: 35,
       onClick: () => window.TDEAApp.navigate("adminWhitelist"),
       isActive: () => window.TDEAApp.isView("adminWhitelist")

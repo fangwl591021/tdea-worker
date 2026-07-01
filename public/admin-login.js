@@ -19,7 +19,7 @@
   ];
   const scriptVersions = [
     "app.js?v=admin-access-list1",
-    "line-zone.js?v=line-order1",
+    "line-zone.js?v=access-label1",
     "lottery.js?v=lottery4",
     "activity-types.js?v=types4",
     "form-builder.js?v=form13",
