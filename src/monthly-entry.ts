@@ -771,7 +771,7 @@ async function readManagerData(env: Env) {
 
 function managerDataHasUsefulContent(input: Record<string, unknown> | null) {
   if (!input || typeof input !== "object") return false;
-  const hasRows = ["activities", "association", "vendor"].some((key) => Array.isArray(input[key]) && (input[key] as unknown[]).length > 0);
+  const hasRows = ["activities", "association", "vendor", "keywordRules", "flexRules"].some((key) => Array.isArray(input[key]) && (input[key] as unknown[]).length > 0);
   const formSettings = input.formSettings;
   const hasFormSettings = formSettings && typeof formSettings === "object" && !Array.isArray(formSettings) && Object.keys(formSettings).length > 0;
   return hasRows || hasFormSettings || Boolean(input.monthlyActivity);
@@ -3411,6 +3411,44 @@ function shareUrlForPage(page: MonthlyPage, config: MonthlyConfig) {
   return appendQueryParam(detailUrlForPage(page, config), "share", target || "1");
 }
 
+function normalizeCustomKeywordText(value: unknown) {
+  return normalizeKeyword(clean(value));
+}
+
+function customKeywordMatches(rule: Record<string, unknown>, text: string) {
+  if (rule.enabled === false) return false;
+  const keyword = normalizeCustomKeywordText(rule.keyword);
+  const incoming = normalizeCustomKeywordText(text);
+  if (!keyword || !incoming) return false;
+  const aliases = String(rule.aliases || "").split(/[\n,、]+/).map(normalizeCustomKeywordText).filter(Boolean);
+  const terms = [keyword, ...aliases];
+  const mode = clean(rule.matchMode) === "contains" ? "contains" : "exact";
+  return mode === "contains" ? terms.some((term) => incoming.includes(term)) : terms.includes(incoming);
+}
+
+function customKeywordMessage(rule: Record<string, unknown>) {
+  if (clean(rule.replyType) === "flex") {
+    try {
+      const contents = JSON.parse(clean(rule.flexJson));
+      if (contents && typeof contents === "object" && clean(contents.type)) return { type: "flex", altText: clean(rule.altText || rule.title || rule.keyword || "TDEA 訊息"), contents };
+    } catch (_) {}
+  }
+  const lines = [clean(rule.replyText || rule.text || rule.reply), clean(rule.url || rule.entryUrl || rule.link)].filter(Boolean);
+  return { type: "text", text: lines.join("\n") || clean(rule.title || rule.keyword || "已收到訊息") };
+}
+
+async function handleCustomKeywordEvents(events: LineEvent[], env: Env) {
+  const data = await readManagerDataRaw(env) || {};
+  const rules = [...(Array.isArray(data.keywordRules) ? data.keywordRules as Record<string, unknown>[] : []), ...(Array.isArray(data.flexRules) ? data.flexRules as Record<string, unknown>[] : [])];
+  const matches = events
+    .map((event) => ({ event, text: extractTriggerText(event), rule: rules.find((rule) => customKeywordMatches(rule, extractTriggerText(event))) }))
+    .filter((item): item is { event: LineEvent; text: string; rule: Record<string, unknown> } => Boolean(item.rule));
+  if (!matches.length) return null;
+  const lineReplies = await Promise.all(matches.map(({ event, rule }) => event.replyToken
+    ? replyToLine(event.replyToken, [customKeywordMessage(rule)], env)
+    : Promise.resolve({ ok: false, status: 400, message: "Missing replyToken" })));
+  return json({ success: true, mode: "custom-keyword", matched: matches.map((item) => clean(item.rule.keyword)), lineReplies });
+}
 function buildMonthlyFlex(config: MonthlyConfig) {
   const normalized = normalizeConfig(config);
   if (!(normalized.pages || []).length) return { type: "text", text: "TDEA 每月活動目前沒有上架活動。" };
@@ -5743,6 +5781,23 @@ async function handleMonthlyWebhook(request: Request, env: Env, rawBody: string,
     const signature = request.headers.get("x-line-signature");
     if (!await verifyLineSignature(rawBody, signature, env.LINE_CHANNEL_SECRET)) return new Response("Invalid Signature", { status: 403, headers });
     return handleMemberCheckinEvents(memberCheckinEvents, env);
+  }
+  const builtInKeywordTexts = new Set([queryKeyword, memberQrKeyword, calendarKeyword, personalMessageKeyword, vendorCardKeyword, marqueeKeyword, ...marqueeLegacyKeywords].map(normalizeKeyword));
+  const customKeywordEvents = allEvents.filter((event) => {
+    const text = extractTriggerText(event);
+    const normalized = normalizeKeyword(text);
+    return Boolean(clean(text))
+      && !isMonthlyActivityKeyword(text)
+      && !isMemberCheckinText(text)
+      && !builtInKeywordTexts.has(normalized)
+      && !parseUidBindKeyword(text).active
+      && !parseMotherPointKeyword(text);
+  });
+  if (customKeywordEvents.length) {
+    const signatureForCustomKeyword = request.headers.get("x-line-signature");
+    if (!await verifyLineSignature(rawBody, signatureForCustomKeyword, env.LINE_CHANNEL_SECRET)) return new Response("Invalid Signature", { status: 403, headers });
+    const customKeyword = await handleCustomKeywordEvents(customKeywordEvents, env);
+    if (customKeyword) return customKeyword;
   }
   const lineActivityMaker = await handleLineActivityMaker(request, env, rawBody, allEvents, ctx);
   if (lineActivityMaker) return lineActivityMaker;

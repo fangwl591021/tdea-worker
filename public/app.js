@@ -17,7 +17,7 @@
     redeem: ["點數折抵", "建立限時店家掃碼工作台，店家掃會員 QR 後執行扣點。"]
   };
   purgeLegacyManagerCache();
-  const state = { view: "dashboard", drawer: "", data: load(), archivedActivities: [], registrationLists: {}, memberRegistrationLists: {}, memberPointAccounts: {}, memberApplications: null, adminWhitelist: null, adminWhitelistMeta: null, rosterSearch: { association: "", vendor: "" } };
+  const state = { view: "dashboard", drawer: "", keywordEditId: "", data: load(), archivedActivities: [], registrationLists: {}, memberRegistrationLists: {}, memberPointAccounts: {}, memberApplications: null, adminWhitelist: null, adminWhitelistMeta: null, rosterSearch: { association: "", vendor: "" } };
   let motherRosterMapPromise = null;
   let managerDataSaveTimer = null;
   let managerDataLoading = false;
@@ -114,6 +114,8 @@
       (Array.isArray(data.association) && data.association.length) ||
       (Array.isArray(data.vendor) && data.vendor.length) ||
       data.monthlyActivity ||
+      (Array.isArray(data.keywordRules) && data.keywordRules.length) ||
+      (Array.isArray(data.flexRules) && data.flexRules.length) ||
       hasFormSettings
     ));
   }
@@ -551,7 +553,8 @@
       activities: [],
       association: [],
       vendor: [],
-      deletedActivityKeys: []
+      deletedActivityKeys: [],
+      keywordRules: []
     };
   }
 
@@ -1070,7 +1073,7 @@
     if (state.view === "vendor") return `<button class="btn" data-import="vendor">匯入 CSV</button><button class="btn primary" data-drawer="vendor:new">新增廠商會員</button>`;
     if (state.view === "creator") return `<button class="btn" data-import-line-drafts>匯入 LINE 草稿</button><button class="btn" data-reset>清空表單</button>`;
     if (state.view === "redeem") return `<button class="btn" data-load-redeem>刷新紀錄</button>`;
-    if (state.view === "keywords") return `<button class="btn" data-refresh-keywords>刷新列表</button>`;
+    if (state.view === "keywords") return `<button class="btn" data-refresh-keywords>刷新列表</button><button class="btn primary" data-keyword-new>新增關鍵字</button>`;
     if (state.view === "adminWhitelist") return `<button class="btn" data-load-whitelist>重新載入</button><button class="btn primary" data-save-whitelist>儲存權限名單</button>`;
     return `<label class="sync-toggle"><input type="checkbox" data-auto-sync ${autoSyncEnabled() ? "checked" : ""}> 自動同步</label><button class="btn" data-sync-registrations>同步報名</button><button class="btn" data-worker>檢查 Worker</button><button class="btn danger" data-clear-test>清空測試資料</button><button class="btn primary" data-nav="creator">新增活動</button>`;
   }
@@ -1205,11 +1208,48 @@
     return [...builtIn, ...custom];
   }
 
-  function keywords() {
-    const rows = keywordRows();
-    return `<section class="panel"><div class="panel-head"><h2 class="panel-title">LINE 關鍵字清單</h2><span class="muted">${rows.length} 組規則</span></div><div class="table-wrap"><table><thead><tr><th>關鍵字</th><th>別名 / 比對</th><th>用途</th><th>回覆行為</th><th>網址 / 入口</th><th>設定位置</th><th>狀態</th></tr></thead><tbody>${rows.map((row) => `<tr><td><strong>${esc(row.keyword)}</strong></td><td>${esc(row.aliases)}</td><td>${esc(row.purpose)}</td><td>${esc(row.reply)}</td><td style="max-width:360px;white-space:normal;word-break:break-all">${entryCell(row.entry)}</td><td>${esc(row.owner)}</td><td><span class="badge ${row.status === "啟用中" ? "live" : "off"}">${esc(row.status)}</span></td></tr>`).join("")}</tbody></table></div></section><section class="panel" style="margin-top:18px"><div class="panel-head"><h2 class="panel-title">使用原則</h2></div><div style="padding:18px;line-height:1.8;color:#344054">所有新版關鍵字都建議以 <strong>TDEA</strong> 開頭，避免和原本 LINE OA 舊系統互相干擾。沒有命中新版關鍵字的訊息會交給舊 webhook 繼續處理。</div></section>`;
+  function keywordRuleList() {
+    if (!Array.isArray(state.data.keywordRules)) state.data.keywordRules = [];
+    return state.data.keywordRules;
   }
 
+  function blankKeywordRule() {
+    return { id: "", enabled: true, keyword: "", matchMode: "exact", aliases: "", title: "", replyText: "", url: "" };
+  }
+
+  function keywordRuleEditor() {
+    const rows = keywordRuleList();
+    const current = rows.find(row => row.id === state.keywordEditId) || blankKeywordRule();
+    return `<form class="form-card form-grid" id="keyword-rule-form">
+      <input type="hidden" name="id" value="${esc(current.id || "")}">
+      <label class="check-row"><input type="checkbox" name="enabled" value="Y" ${current.enabled === false ? "" : "checked"}> 啟用此關鍵字</label>
+      ${field("關鍵字", "keyword", current.keyword || "", "例如：TDEA活動說明", true)}
+      ${select("比對方式", "matchMode", [["exact","完全符合"],["contains","包含關鍵字"]], current.matchMode || "exact")}
+      <div class="field"><label>別名</label><textarea name="aliases" placeholder="每行一個，或用逗號分隔">${esc(current.aliases || "")}</textarea></div>
+      ${field("管理備註", "title", current.title || "", "例如：課程說明回覆")}
+      <div class="field"><label>回覆內容</label><textarea name="replyText" required placeholder="使用者輸入關鍵字後要回覆的文字">${esc(current.replyText || current.text || current.reply || "")}</textarea></div>
+      ${field("附加網址", "url", current.url || current.entryUrl || current.link || "", "可空白；填入後會接在回覆文字下一行")}
+      <button class="btn primary" type="submit">${current.id ? "儲存關鍵字" : "新增關鍵字"}</button>
+    </form>`;
+  }
+
+  function keywordRuleCards() {
+    const rows = keywordRuleList();
+    if (!rows.length) return `<div class="muted" style="padding:18px">尚未建立自訂關鍵字。</div>`;
+    return `<div class="table-wrap"><table><thead><tr><th>啟用</th><th>關鍵字</th><th>比對</th><th>回覆內容</th><th>網址</th><th>操作</th></tr></thead><tbody>${rows.map(row => `<tr>
+      <td><input type="checkbox" data-keyword-toggle="${esc(row.id)}" ${row.enabled === false ? "" : "checked"}></td>
+      <td><strong>${esc(row.keyword || "(未命名)")}</strong><div class="muted">${esc(row.aliases || "")}</div></td>
+      <td>${row.matchMode === "contains" ? "包含" : "完全符合"}</td>
+      <td style="max-width:360px;white-space:normal">${esc(row.replyText || row.text || row.reply || "")}</td>
+      <td style="max-width:260px;white-space:normal;word-break:break-all">${entryCell(row.url || row.entryUrl || row.link || "")}</td>
+      <td><button class="link" data-keyword-edit="${esc(row.id)}">編輯</button> / <button class="link danger-link" data-keyword-delete="${esc(row.id)}">刪除</button></td>
+    </tr>`).join("")}</tbody></table></div>`;
+  }
+
+  function keywords() {
+    const rows = keywordRows();
+    return `<section class="panel"><div class="panel-head"><h2 class="panel-title">自訂關鍵字專區</h2><span class="muted">${keywordRuleList().length} 組自訂規則</span></div><div style="padding:18px">${keywordRuleEditor()}</div>${keywordRuleCards()}</section><section class="panel" style="margin-top:18px"><div class="panel-head"><h2 class="panel-title">LINE 關鍵字清單</h2><span class="muted">${rows.length} 組規則</span></div><div class="table-wrap"><table><thead><tr><th>關鍵字</th><th>別名 / 比對</th><th>用途</th><th>回覆行為</th><th>網址 / 入口</th><th>設定位置</th><th>狀態</th></tr></thead><tbody>${rows.map((row) => `<tr><td><strong>${esc(row.keyword)}</strong></td><td>${esc(row.aliases)}</td><td>${esc(row.purpose)}</td><td>${esc(row.reply)}</td><td style="max-width:360px;white-space:normal;word-break:break-all">${entryCell(row.entry)}</td><td>${esc(row.owner)}</td><td><span class="badge ${row.status === "啟用中" ? "live" : "off"}">${esc(row.status)}</span></td></tr>`).join("")}</tbody></table></div></section><section class="panel" style="margin-top:18px"><div class="panel-head"><h2 class="panel-title">使用原則</h2></div><div style="padding:18px;line-height:1.8;color:#344054">所有新版關鍵字都建議以 <strong>TDEA</strong> 開頭，避免和原本 LINE OA 舊系統互相干擾。沒有命中新版關鍵字的訊息會交給舊 webhook 繼續處理。</div></section>`;
+  }
   function redeemTransactionSummary(row) {
     const txs = Array.isArray(row.transactions) ? row.transactions : [];
     if (!txs.length) return `<span class="muted">尚無折抵</span>`;
@@ -1816,6 +1856,52 @@
     document.querySelectorAll("[data-load-member-applications]").forEach(b => b.onclick = () => loadMemberApplications(true));
     const autoSync = document.querySelector("[data-auto-sync]"); if (autoSync) autoSync.onchange = () => { setAutoSyncEnabled(autoSync.checked); toast(autoSync.checked ? "已開啟自動同步" : "已關閉自動同步"); };
     const refreshKeywords = document.querySelector("[data-refresh-keywords]"); if (refreshKeywords) refreshKeywords.onclick = () => { render(); toast("關鍵字列表已刷新"); };
+    const keywordNew = document.querySelector("[data-keyword-new]"); if (keywordNew) keywordNew.onclick = () => { state.keywordEditId = ""; render(); };
+    document.querySelectorAll("[data-keyword-edit]").forEach(b => b.onclick = () => { state.keywordEditId = b.dataset.keywordEdit || ""; render(); });
+    document.querySelectorAll("[data-keyword-delete]").forEach(b => b.onclick = () => {
+      if (!confirm("確定刪除此關鍵字？")) return;
+      const id = b.dataset.keywordDelete || "";
+      state.data.keywordRules = keywordRuleList().filter(row => row.id !== id);
+      if (state.keywordEditId === id) state.keywordEditId = "";
+      save();
+      render();
+      toast("關鍵字已刪除");
+    });
+    document.querySelectorAll("[data-keyword-toggle]").forEach(input => input.onchange = () => {
+      const row = keywordRuleList().find(item => item.id === input.dataset.keywordToggle);
+      if (!row) return;
+      row.enabled = input.checked;
+      row.updatedAt = new Date().toISOString();
+      save();
+      toast(input.checked ? "關鍵字已啟用" : "關鍵字已停用");
+    });
+    const keywordForm = document.querySelector("#keyword-rule-form");
+    if (keywordForm) keywordForm.onsubmit = e => {
+      e.preventDefault();
+      const d = Object.fromEntries(new FormData(keywordForm));
+      const keyword = cleanValue(d.keyword);
+      const replyText = cleanValue(d.replyText);
+      if (!keyword || !replyText) return toast("請輸入關鍵字與回覆內容");
+      const item = {
+        id: cleanValue(d.id) || uid(),
+        enabled: d.enabled === "Y",
+        keyword,
+        matchMode: d.matchMode === "contains" ? "contains" : "exact",
+        aliases: cleanValue(d.aliases),
+        title: cleanValue(d.title),
+        replyText,
+        url: cleanValue(d.url),
+        updatedAt: new Date().toISOString()
+      };
+      const rows = keywordRuleList();
+      const index = rows.findIndex(row => row.id === item.id);
+      if (index >= 0) rows[index] = item; else rows.unshift(item);
+      state.data.keywordRules = rows;
+      state.keywordEditId = item.id;
+      save();
+      render();
+      toast("關鍵字已儲存");
+    };
     const loadRedeem = document.querySelector("[data-load-redeem]"); if (loadRedeem) loadRedeem.onclick = () => loadRedeemRecords(true);
     const loadPointLedgerButton = document.querySelector("[data-load-point-ledger]"); if (loadPointLedgerButton) loadPointLedgerButton.onclick = () => loadPointLedger(true);
     document.querySelectorAll("[data-copy-redeem-url]").forEach(b => b.onclick = () => { navigator.clipboard.writeText(b.dataset.copyRedeemUrl || ""); toast("工作台網址已複製"); }); document.querySelectorAll("[data-download-redeem-tx]").forEach(b => b.onclick = () => downloadRedeemTransactions(b.dataset.downloadRedeemTx || ""));
