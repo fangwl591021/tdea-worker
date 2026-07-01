@@ -4941,6 +4941,16 @@ function parseUidBindKeyword(text: string) {
   return suffix ? { active: true, memberNo: clean(suffix).toUpperCase() } : { active: false, memberNo: "" };
 }
 
+function parseMemberCheckinKeyword(text: string) {
+  const raw = clean(text);
+  const normalized = normalizeKeyword(raw);
+  const keyword = normalizeKeyword(memberCheckinKeyword);
+  if (normalized === keyword) return { active: true, memberNo: "" };
+  if (!normalized.startsWith(keyword)) return { active: false, memberNo: "" };
+  const suffix = raw.replace(/^\s*會員\s*報到\s*[+＋:：]?\s*/i, "").trim();
+  return suffix ? { active: true, memberNo: clean(suffix).toUpperCase() } : { active: true, memberNo: "" };
+}
+
 function aiweMemberNo(row: Record<string, unknown>) {
   return firstClean(row.rosterMemberNo, row.memberNo, row.user_login).toUpperCase();
 }
@@ -5328,11 +5338,15 @@ async function hasMemberOnboardingSession(events: LineEvent[], env: Env) {
 }
 
 async function handleMemberCheckinEvents(events: LineEvent[], env: Env) {
+  if (!env.ASSETS_BUCKET) return json({ success: false, message: "R2 bucket is not configured" }, 503);
+  const rows = await readAiweMembers(env);
   const replies = [];
   const results = [];
+  let changed = false;
   for (const event of events) {
     const lineUserId = clean(event.source?.userId);
     const text = clean(extractTriggerText(event));
+    const parsed = parseMemberCheckinKeyword(text);
     if (!event.replyToken) {
       results.push({ success: false, lineUserId, text, message: "missing-reply-token" });
       continue;
@@ -5343,36 +5357,49 @@ async function handleMemberCheckinEvents(events: LineEvent[], env: Env) {
       results.push({ success: false, text, message: "missing-line-user" });
       continue;
     }
-    let member: LineLoginMember | null = null;
-    try {
-      member = await resolveLineLoginMember(env, lineUserId);
-    } catch (error) {
-      results.push({ success: false, lineUserId, text, message: "resolve-member-failed", error: error instanceof Error ? error.message : String(error) });
-    }
-    if (!member) {
-      replies.push(await startMemberOnboarding(env, event, text));
-      results.push({ success: false, lineUserId, text, message: "started-member-checkin" });
+    if (!parsed.memberNo) {
+      const message = {
+        type: "text",
+        text: "請輸入你的會員編號完成 LINE 綁定。\n格式：會員報到+會員編號\n範例：會員報到+A1090001",
+        quickReply: quickReply(["會員報到+A1090001", "取消"])
+      };
+      replies.push(await replyToLine(event.replyToken, [message], env));
+      results.push({ success: false, lineUserId, text, message: "missing-member-no" });
       continue;
     }
-    try {
-      const rows = await readAiweMembers(env);
-      const matched = rows.find((row) => memberLineUid(row).toLowerCase() === lineUserId.toLowerCase());
-      const crm = matched ? await upsertBoundMemberToManagerCrm(env, matched, lineUserId) : { written: false, reason: "member-row-not-found" };
-      const pointSync = await syncBoundMemberPoints(env, lineUserId).catch((error) => ({ success: false, message: error instanceof Error ? error.message : String(error) }));
-      const pointText = pointSync.success === true ? `\n目前點數：${numberValue(pointSync.balance)} 點` : "";
-      const message = { type: "text", text: `你已完成會員報到。\n會員編號：${member.memberNo}\n姓名/單位：${member.name}${pointText}\n子站 CRM：${crm.written ? "已更新" : "未更新"}` };
+    const matched = selectAiweBindRows(rows, parsed.memberNo);
+    if (!matched.length) {
+      const message = { type: "text", text: `已取得你的 LINE UID。\n但查無會員編號 ${parsed.memberNo}，請確認會員編號是否正確。` };
       replies.push(await replyToLine(event.replyToken, [message], env));
-      results.push({ success: true, lineUserId, text, memberNo: member.memberNo, crm, pointSync });
-    } catch (error) {
-      const message = { type: "text", text: "會員報到流程暫時無法完成，系統已記錄錯誤，請稍後再試或聯絡協會後台。" };
-      replies.push(await replyToLine(event.replyToken, [message], env));
-      results.push({ success: false, lineUserId, text, message: "member-checkin-failed", error: error instanceof Error ? error.message : String(error) });
+      results.push({ success: false, lineUserId, text, memberNo: parsed.memberNo, message: "member-not-found" });
+      continue;
     }
+    const conflict = matched.find((row) => {
+      const currentUid = memberLineUid(row);
+      return validLineUid(currentUid) && currentUid.toLowerCase() !== lineUserId.toLowerCase();
+    });
+    if (conflict) {
+      const message = { type: "text", text: "此會員編號已綁定其他 LINE 帳號，請聯絡協會後台確認。" };
+      replies.push(await replyToLine(event.replyToken, [message], env));
+      results.push({ success: false, lineUserId, text, memberNo: parsed.memberNo, message: "uid-conflict" });
+      continue;
+    }
+    for (const row of matched) setAiweRowLineUid(row, lineUserId);
+    changed = true;
+    const crm = await upsertBoundMemberToManagerCrm(env, matched[0], lineUserId);
+    const pointSync = await syncBoundMemberPoints(env, lineUserId).catch((error) => ({ success: false, message: error instanceof Error ? error.message : String(error) }));
+    const pointText = pointSync.success === true ? `\n目前點數：${numberValue(pointSync.balance)} 點` : "\n點數同步：稍後可在後台重新同步";
+    const member = publicAiweMember(matched[0]);
+    const displayName = firstClean(member.rosterName, member.companyName, aiweRowDisplayName(matched[0]));
+    const message = { type: "text", text: `UID 已綁定，會員報到完成。\n會員編號：${parsed.memberNo}\n姓名/單位：${displayName}\n更新筆數：${matched.length}${pointText}\n子站 CRM：${crm.written ? "已更新" : "未更新"}` };
+    replies.push(await replyToLine(event.replyToken, [message], env));
+    results.push({ success: true, lineUserId, text, memberNo: parsed.memberNo, updated: matched.length, crm, pointSync });
   }
+  if (changed) await writeAiweMembers(env, rows);
   await appendLineWebhookLog(env, {
     at: new Date().toISOString(),
     mode: "member-checkin",
-    result: results.some((item) => (item as Record<string, unknown>).success === true) ? "handled" : "started-or-failed",
+    result: results.some((item) => (item as Record<string, unknown>).success === true) ? "handled" : "prompted-or-failed",
     texts: events.map((event) => clean(extractTriggerText(event))).filter(Boolean).slice(0, 5),
     eventCount: events.length,
     results,
@@ -5760,6 +5787,46 @@ async function handleMonthlyWebhook(request: Request, env: Env, rawBody: string,
   let payload: unknown;
   try { payload = JSON.parse(rawBody); } catch (_) { return null; }
   const allEvents = extractLineEvents(payload);
+  const earlyMemberCheckinEvents = allEvents.filter((event) => isMemberCheckinText(extractTriggerText(event)));
+  if (earlyMemberCheckinEvents.length) {
+    const signature = request.headers.get("x-line-signature");
+    const diagnostics = earlyMemberCheckinEvents.map((event) => ({ text: clean(extractTriggerText(event)), normalized: normalizeKeyword(extractTriggerText(event)), hasReplyToken: Boolean(event.replyToken), hasLineUserId: Boolean(clean(event.source?.userId)) }));
+    await appendLineWebhookLog(env, {
+      at: new Date().toISOString(),
+      mode: "member-checkin-early",
+      result: "matched",
+      hasSignature: Boolean(clean(signature)),
+      diagnostics,
+      eventCount: allEvents.length
+    });
+    let signatureOk = false;
+    try {
+      signatureOk = await verifyLineSignature(rawBody, signature, env.LINE_CHANNEL_SECRET);
+    } catch (error) {
+      await appendLineWebhookLog(env, {
+        at: new Date().toISOString(),
+        mode: "member-checkin-early",
+        result: "signature-error",
+        hasSignature: Boolean(clean(signature)),
+        error: error instanceof Error ? error.message : String(error),
+        diagnostics,
+        eventCount: allEvents.length
+      });
+      return new Response("Invalid Signature", { status: 403, headers });
+    }
+    if (!signatureOk) {
+      await appendLineWebhookLog(env, {
+        at: new Date().toISOString(),
+        mode: "member-checkin-early",
+        result: "invalid-signature",
+        hasSignature: Boolean(clean(signature)),
+        diagnostics,
+        eventCount: allEvents.length
+      });
+      return new Response("Invalid Signature", { status: 403, headers });
+    }
+    return handleMemberCheckinEvents(earlyMemberCheckinEvents, env);
+  }
   const watchedTexts = allEvents.map((event) => clean(extractTriggerText(event))).filter((text) => /TDEA|每月活動|會員|報到/i.test(text));
   if (watchedTexts.length && !allEvents.some((event) => isMonthlyActivityKeyword(extractTriggerText(event)))) {
     await appendLineWebhookLog(env, {
@@ -5805,12 +5872,7 @@ async function handleMonthlyWebhook(request: Request, env: Env, rawBody: string,
     }
     return replyMonthlyActivityEvents(events, allEvents, env, ctx);
   }
-  const memberCheckinEvents = allEvents.filter((event) => isMemberCheckinText(extractTriggerText(event)));
-  if (memberCheckinEvents.length) {
-    const signature = request.headers.get("x-line-signature");
-    if (!await verifyLineSignature(rawBody, signature, env.LINE_CHANNEL_SECRET)) return new Response("Invalid Signature", { status: 403, headers });
-    return handleMemberCheckinEvents(memberCheckinEvents, env);
-  }
+
   const builtInKeywordTexts = new Set([queryKeyword, memberQrKeyword, calendarKeyword, personalMessageKeyword, vendorCardKeyword, marqueeKeyword, ...marqueeLegacyKeywords].map(normalizeKeyword));
   const customKeywordEvents = allEvents.filter((event) => {
     const text = extractTriggerText(event);
