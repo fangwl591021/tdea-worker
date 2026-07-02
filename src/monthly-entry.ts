@@ -5150,20 +5150,30 @@ function memberOnboardingSessionKey(lineUserId: string) {
   return `member-onboarding/session-${encodeURIComponent(lineUserId)}.json`;
 }
 
+const memberOnboardingMemorySessions = new Map<string, MemberOnboardingSession>();
+
 async function readMemberOnboardingSession(env: Env, lineUserId: string): Promise<MemberOnboardingSession | null> {
-  if (!env.ASSETS_BUCKET || !lineUserId) return null;
+  if (!lineUserId) return null;
+  const memorySession = memberOnboardingMemorySessions.get(lineUserId);
+  if (memorySession) return memorySession;
+  if (!env.ASSETS_BUCKET) return null;
   const object = await env.ASSETS_BUCKET.get(memberOnboardingSessionKey(lineUserId));
-  return object ? await object.json().catch(() => null) as MemberOnboardingSession | null : null;
+  const session = object ? await object.json().catch(() => null) as MemberOnboardingSession | null : null;
+  if (session) memberOnboardingMemorySessions.set(lineUserId, session);
+  return session;
 }
 
 async function writeMemberOnboardingSession(env: Env, session: MemberOnboardingSession) {
-  if (!env.ASSETS_BUCKET) return;
   session.updatedAt = new Date().toISOString();
+  memberOnboardingMemorySessions.set(session.lineUserId, { ...session, answers: { ...session.answers } });
+  if (!env.ASSETS_BUCKET) return;
   await env.ASSETS_BUCKET.put(memberOnboardingSessionKey(session.lineUserId), JSON.stringify(session, null, 2), { httpMetadata: { contentType: "application/json; charset=utf-8", cacheControl: "no-store" } });
 }
 
 async function deleteMemberOnboardingSession(env: Env, lineUserId: string) {
-  if (!env.ASSETS_BUCKET || !lineUserId) return;
+  if (!lineUserId) return;
+  memberOnboardingMemorySessions.delete(lineUserId);
+  if (!env.ASSETS_BUCKET) return;
   await env.ASSETS_BUCKET.delete(memberOnboardingSessionKey(lineUserId));
 }
 
