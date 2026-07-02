@@ -5241,15 +5241,22 @@ function membershipQuestionMessage() {
   };
 }
 
-async function startMemberOnboarding(env: Env, event: LineEvent, triggerText: string) {
+async function startMemberOnboarding(env: Env, event: LineEvent, triggerText: string, preset?: { memberNo?: string }) {
   const lineUserId = clean(event.source?.userId);
   if (!lineUserId || !event.replyToken) return { ok: false, status: 400, message: "Missing LINE UID or replyToken" };
   const now = new Date().toISOString();
-  await writeMemberOnboardingSession(env, { lineUserId, step: "memberNo", answers: {}, triggerText, createdAt: now, updatedAt: now });
+  const presetMemberNo = clean(preset?.memberNo).toUpperCase();
+  if (presetMemberNo) {
+    await writeMemberOnboardingSession(env, { lineUserId, step: "name", answers: { memberNo: presetMemberNo }, triggerText, createdAt: now, updatedAt: now });
+    return replyToLine(event.replyToken, [{
+      type: "text",
+      text: "請輸入會員姓名或公司/單位名稱，用來核對身分。"
+    }], env);
+  }
+  await writeMemberOnboardingSession(env, { lineUserId, step: "name", answers: {}, triggerText, createdAt: now, updatedAt: now });
   return replyToLine(event.replyToken, [{
     type: "text",
-    text: "尚未完成 LINE 綁定。\n請先輸入會員編號，下一步會核對姓名或公司/單位名稱。",
-    quickReply: quickReply(["不是會員", "取消"])
+    text: "請先輸入會員姓名或公司/單位名稱。"
   }], env);
 }
 
@@ -5277,26 +5284,26 @@ async function handleMemberOnboardingEvent(event: LineEvent, env: Env): Promise<
     }
     return replyToLine(event.replyToken, [membershipQuestionMessage()], env) as unknown as Record<string, unknown>;
   }
+  if (session.step === "name") {
+    session.answers.name = text;
+    session.step = "memberNo";
+    await writeMemberOnboardingSession(env, session);
+    return replyToLine(event.replyToken, [{ type: "text", text: "請輸入會員編號。" }], env) as unknown as Record<string, unknown>;
+  }
   if (session.step === "memberNo") {
     if (intent === "no") {
       session.step = "joinInterest";
       await writeMemberOnboardingSession(env, session);
       return replyToLine(event.replyToken, [{ type: "text", text: "歡迎加入 TDEA。\n請問你是否有加入協會或成為廠商會員的意願？", quickReply: quickReply(["有興趣", "暫時不用"]) }], env) as unknown as Record<string, unknown>;
     }
-    session.answers.memberNo = clean(text).toUpperCase();
-    session.step = "name";
-    await writeMemberOnboardingSession(env, session);
-    return replyToLine(event.replyToken, [{ type: "text", text: "請輸入會員姓名或公司/單位名稱，用來核對身分。", quickReply: quickReply(["取消"]) }], env) as unknown as Record<string, unknown>;
-  }
-  if (session.step === "name") {
-    const memberNo = clean(session.answers.memberNo).toUpperCase();
-    const result = await verifyAndBindMemberCheckin(env, lineUserId, memberNo, text);
+    const memberNo = clean(text).toUpperCase();
+    const result = await verifyAndBindMemberCheckin(env, lineUserId, memberNo, clean(session.answers.name));
     if (!result.success && result.reason === "member-not-found") {
       await deleteMemberOnboardingSession(env, lineUserId);
       return replyToLine(event.replyToken, [{ type: "text", text: `查無會員編號 ${memberNo}，請確認後重新點「會員報到」。` }], env) as unknown as Record<string, unknown>;
     }
     if (!result.success && result.reason === "name-mismatch") {
-      return replyToLine(event.replyToken, [{ type: "text", text: "會員編號與姓名不一致，請重新輸入姓名或公司/單位名稱，或輸入「取消」中止。", quickReply: quickReply(["取消"]) }], env) as unknown as Record<string, unknown>;
+      return replyToLine(event.replyToken, [{ type: "text", text: "會員編號與姓名不一致，請重新輸入會員編號，或輸入「取消」中止。" }], env) as unknown as Record<string, unknown>;
     }
     if (!result.success && result.reason === "uid-conflict") {
       await deleteMemberOnboardingSession(env, lineUserId);
@@ -5341,10 +5348,8 @@ async function hasMemberOnboardingSession(events: LineEvent[], env: Env) {
 
 async function handleMemberCheckinEvents(events: LineEvent[], env: Env) {
   if (!env.ASSETS_BUCKET) return json({ success: false, message: "R2 bucket is not configured" }, 503);
-  let rows: Array<Record<string, unknown>> | null = null;
   const replies = [];
   const results = [];
-  let changed = false;
   for (const event of events) {
     const lineUserId = clean(event.source?.userId);
     const text = clean(extractTriggerText(event));
@@ -5359,59 +5364,18 @@ async function handleMemberCheckinEvents(events: LineEvent[], env: Env) {
       results.push({ success: false, text, message: "missing-line-user" });
       continue;
     }
-    if (!parsed.memberNo) {
-      const message = {
-        type: "text",
-        text: "請輸入你的會員編號完成 LINE 綁定。\n格式：會員報到+會員編號\n範例：會員報到+A1090001",
-        quickReply: quickReply(["會員報到+A1090001", "取消"])
-      };
-      replies.push(await replyToLine(event.replyToken, [message], env));
-      results.push({ success: false, lineUserId, text, message: "missing-member-no" });
+    if (parsed.memberNo) {
+      replies.push(await startMemberOnboarding(env, event, text, { memberNo: parsed.memberNo }));
+      results.push({ success: false, lineUserId, text, memberNo: parsed.memberNo, message: "started-member-checkin-name-for-direct-input" });
       continue;
     }
-    if (!rows) {
-      try {
-        rows = await readAiweMembers(env);
-      } catch (error) {
-        const message = { type: "text", text: "已收到會員報到，但目前讀取會員名冊失敗，請稍後再試或聯絡協會後台。" };
-        replies.push(await replyToLine(event.replyToken, [message], env));
-        results.push({ success: false, lineUserId, text, memberNo: parsed.memberNo, message: "read-members-failed", error: error instanceof Error ? error.message : String(error) });
-        continue;
-      }
-    }
-    const matched = selectAiweBindRows(rows, parsed.memberNo);
-    if (!matched.length) {
-      const message = { type: "text", text: `已取得你的 LINE UID。\n但查無會員編號 ${parsed.memberNo}，請確認會員編號是否正確。` };
-      replies.push(await replyToLine(event.replyToken, [message], env));
-      results.push({ success: false, lineUserId, text, memberNo: parsed.memberNo, message: "member-not-found" });
-      continue;
-    }
-    const conflict = matched.find((row) => {
-      const currentUid = memberLineUid(row);
-      return validLineUid(currentUid) && currentUid.toLowerCase() !== lineUserId.toLowerCase();
-    });
-    if (conflict) {
-      const message = { type: "text", text: "此會員編號已綁定其他 LINE 帳號，請聯絡協會後台確認。" };
-      replies.push(await replyToLine(event.replyToken, [message], env));
-      results.push({ success: false, lineUserId, text, memberNo: parsed.memberNo, message: "uid-conflict" });
-      continue;
-    }
-    for (const row of matched) setAiweRowLineUid(row, lineUserId);
-    changed = true;
-    const crm = await upsertBoundMemberToManagerCrm(env, matched[0], lineUserId);
-    const pointSync = await syncBoundMemberPoints(env, lineUserId).catch((error) => ({ success: false, message: error instanceof Error ? error.message : String(error) }));
-    const pointText = pointSync.success === true ? `\n目前點數：${numberValue(pointSync.balance)} 點` : "\n點數同步：稍後可在後台重新同步";
-    const member = publicAiweMember(matched[0]);
-    const displayName = firstClean(member.rosterName, member.companyName, aiweRowDisplayName(matched[0]));
-    const message = { type: "text", text: `UID 已綁定，會員報到完成。\n會員編號：${parsed.memberNo}\n姓名/單位：${displayName}\n更新筆數：${matched.length}${pointText}\n子站 CRM：${crm.written ? "已更新" : "未更新"}` };
-    replies.push(await replyToLine(event.replyToken, [message], env));
-    results.push({ success: true, lineUserId, text, memberNo: parsed.memberNo, updated: matched.length, crm, pointSync });
+    replies.push(await startMemberOnboarding(env, event, text));
+    results.push({ success: false, lineUserId, text, message: "started-member-checkin-name-first" });
   }
-  if (changed && rows) await writeAiweMembers(env, rows);
   await appendLineWebhookLog(env, {
     at: new Date().toISOString(),
     mode: "member-checkin",
-    result: results.some((item) => (item as Record<string, unknown>).success === true) ? "handled" : "prompted-or-failed",
+    result: "prompted",
     texts: events.map((event) => clean(extractTriggerText(event))).filter(Boolean).slice(0, 5),
     eventCount: events.length,
     results,
@@ -5883,6 +5847,16 @@ async function handleMonthlyWebhook(request: Request, env: Env, rawBody: string,
       return new Response("Invalid Signature", { status: 403, headers });
     }
     return replyMonthlyActivityEvents(events, allEvents, env, ctx);
+  }
+
+  const onboardingActiveEarly = await hasMemberOnboardingSession(allEvents, env);
+  if (onboardingActiveEarly) {
+    const signature = request.headers.get("x-line-signature");
+    if (!await verifyLineSignature(rawBody, signature, env.LINE_CHANNEL_SECRET)) return new Response("Invalid Signature", { status: 403, headers });
+    for (const event of allEvents) {
+      const handled = await handleMemberOnboardingEvent(event, env);
+      if (handled) return json({ success: true, mode: "member-onboarding", lineReply: handled });
+    }
   }
 
   const builtInKeywordTexts = new Set([queryKeyword, memberQrKeyword, calendarKeyword, personalMessageKeyword, vendorCardKeyword, marqueeKeyword, ...marqueeLegacyKeywords].map(normalizeKeyword));
