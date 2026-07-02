@@ -4947,10 +4947,15 @@ function parseMemberCheckinKeyword(text: string) {
   const raw = clean(text);
   const normalized = normalizeKeyword(raw);
   const keyword = memberCheckinAliases.map(normalizeKeyword).find((item) => normalized === item || normalized.startsWith(item));
-  if (!keyword) return { active: false, memberNo: "" };
-  if (normalized === keyword) return { active: true, memberNo: "" };
+  if (!keyword) return { active: false, memberNo: "", name: "" };
+  if (normalized === keyword) return { active: true, memberNo: "", name: "" };
   const suffix = raw.replace(/^\s*會員\s*(報到|打卡|簽到)\s*[+＋:：]?\s*/i, "").trim();
-  return suffix ? { active: true, memberNo: clean(suffix).toUpperCase() } : { active: true, memberNo: "" };
+  if (!suffix) return { active: true, memberNo: "", name: "" };
+  const parts = suffix.split(/[+＋,，\s/／]+/).map(clean).filter(Boolean);
+  const memberNoPart = parts.find((part) => /[A-Za-z]/.test(part) && /\d/.test(part) && /^[A-Za-z][A-Za-z0-9-]{3,}$/.test(part));
+  const memberNo = clean(memberNoPart).toUpperCase();
+  const name = parts.filter((part) => part !== memberNoPart).join("");
+  return { active: true, memberNo, name };
 }
 
 function aiweMemberNo(row: Record<string, unknown>) {
@@ -5393,22 +5398,27 @@ async function handleMemberCheckinEvents(events: LineEvent[], env: Env, ctx?: Ex
       results.push({ success: false, text, message: "missing-line-user" });
       continue;
     }
-    if (parsed.memberNo) {
+    if (parsed.memberNo && parsed.name) {
       await deleteMemberOnboardingSession(env, lineUserId);
-      const result = await verifyAndBindMemberCheckin(env, lineUserId, parsed.memberNo, "");
+      const result = await verifyAndBindMemberCheckin(env, lineUserId, parsed.memberNo, parsed.name);
       if (!result.success && result.reason === "member-not-found") {
-        replies.push(await replyToLine(event.replyToken, [{ type: "text", text: `查無會員編號 ${parsed.memberNo}，請確認後重新輸入。\n格式：會員報到+A1090001` }], env));
-        results.push({ success: false, lineUserId, text, memberNo: parsed.memberNo, message: "member-not-found" });
+        replies.push(await replyToLine(event.replyToken, [{ type: "text", text: `查無會員編號 ${parsed.memberNo}，請確認後重新輸入。\n格式：會員報到+姓名+會員編號` }], env));
+        results.push({ success: false, lineUserId, text, memberNo: parsed.memberNo, name: parsed.name, message: "member-not-found" });
+        continue;
+      }
+      if (!result.success && result.reason === "name-mismatch") {
+        replies.push(await replyToLine(event.replyToken, [{ type: "text", text: "會員姓名與會員編號不一致，請確認後重新輸入。\n格式：會員報到+姓名+會員編號\n範例：會員報到+王小明+A1090001" }], env));
+        results.push({ success: false, lineUserId, text, memberNo: parsed.memberNo, name: parsed.name, message: "name-mismatch" });
         continue;
       }
       if (!result.success && result.reason === "uid-conflict") {
         replies.push(await replyToLine(event.replyToken, [{ type: "text", text: "此會員編號已綁定其他 LINE 帳號，請聯絡協會後台確認。" }], env));
-        results.push({ success: false, lineUserId, text, memberNo: parsed.memberNo, message: "uid-conflict" });
+        results.push({ success: false, lineUserId, text, memberNo: parsed.memberNo, name: parsed.name, message: "uid-conflict" });
         continue;
       }
       if (!result.success) {
-        replies.push(await replyToLine(event.replyToken, [{ type: "text", text: "會員報到失敗，請確認會員編號後重新輸入。\n格式：會員報到+A1090001" }], env));
-        results.push({ success: false, lineUserId, text, memberNo: parsed.memberNo, message: result.reason || "bind-failed" });
+        replies.push(await replyToLine(event.replyToken, [{ type: "text", text: "會員報到失敗，請確認姓名與會員編號後重新輸入。\n格式：會員報到+姓名+會員編號" }], env));
+        results.push({ success: false, lineUserId, text, memberNo: parsed.memberNo, name: parsed.name, message: result.reason || "bind-failed" });
         continue;
       }
       const bound = result as { memberNo: string; name: string; updated: number; pointSync?: Record<string, unknown>; crm?: Record<string, unknown> };
@@ -5418,8 +5428,8 @@ async function handleMemberCheckinEvents(events: LineEvent[], env: Env, ctx?: Ex
       continue;
     }
     await deleteMemberOnboardingSession(env, lineUserId);
-    replies.push(await replyToLine(event.replyToken, [{ type: "text", text: "請輸入你的會員編號完成 LINE 綁定。\n格式：會員報到+會員編號\n範例：會員報到+A1090001" }], env));
-    results.push({ success: false, lineUserId, text, message: "prompted-direct-format" });
+    replies.push(await replyToLine(event.replyToken, [{ type: "text", text: "請輸入姓名與會員編號完成 LINE 綁定。\n格式：會員報到+姓名+會員編號\n範例：會員報到+王小明+A1090001" }], env));
+    results.push({ success: false, lineUserId, text, memberNo: parsed.memberNo, name: parsed.name, message: "prompted-name-and-member-no-format" });
   }
   const logTask = safeAppendLineWebhookLog(env, {
     at: new Date().toISOString(),
