@@ -5051,7 +5051,8 @@ async function verifyAndBindMemberCheckin(env: Env, lineUserId: string, memberNo
   const rows = await readAiweMembers(env);
   const matched = selectAiweBindRows(rows, normalizedMemberNo);
   if (!matched.length) return { success: false, reason: "member-not-found", memberNo: normalizedMemberNo };
-  const verified = matched.filter((row) => rowMatchesMemberName(row, memberName));
+  const requiredName = clean(memberName);
+  const verified = requiredName ? matched.filter((row) => rowMatchesMemberName(row, requiredName)) : matched;
   if (!verified.length) return { success: false, reason: "name-mismatch", memberNo: normalizedMemberNo };
   const currentUid = memberLineUid(verified[0]);
   if (validLineUid(currentUid) && currentUid.toLowerCase() !== uid.toLowerCase()) return { success: false, reason: "uid-conflict", memberNo: normalizedMemberNo };
@@ -5393,12 +5394,32 @@ async function handleMemberCheckinEvents(events: LineEvent[], env: Env, ctx?: Ex
       continue;
     }
     if (parsed.memberNo) {
-      replies.push(await startMemberOnboarding(env, event, text, { memberNo: parsed.memberNo }, ctx));
-      results.push({ success: false, lineUserId, text, memberNo: parsed.memberNo, message: "started-member-checkin-name-for-direct-input" });
+      await deleteMemberOnboardingSession(env, lineUserId);
+      const result = await verifyAndBindMemberCheckin(env, lineUserId, parsed.memberNo, "");
+      if (!result.success && result.reason === "member-not-found") {
+        replies.push(await replyToLine(event.replyToken, [{ type: "text", text: `查無會員編號 ${parsed.memberNo}，請確認後重新輸入。\n格式：會員報到+A1090001` }], env));
+        results.push({ success: false, lineUserId, text, memberNo: parsed.memberNo, message: "member-not-found" });
+        continue;
+      }
+      if (!result.success && result.reason === "uid-conflict") {
+        replies.push(await replyToLine(event.replyToken, [{ type: "text", text: "此會員編號已綁定其他 LINE 帳號，請聯絡協會後台確認。" }], env));
+        results.push({ success: false, lineUserId, text, memberNo: parsed.memberNo, message: "uid-conflict" });
+        continue;
+      }
+      if (!result.success) {
+        replies.push(await replyToLine(event.replyToken, [{ type: "text", text: "會員報到失敗，請確認會員編號後重新輸入。\n格式：會員報到+A1090001" }], env));
+        results.push({ success: false, lineUserId, text, memberNo: parsed.memberNo, message: result.reason || "bind-failed" });
+        continue;
+      }
+      const bound = result as { memberNo: string; name: string; updated: number; pointSync?: Record<string, unknown>; crm?: Record<string, unknown> };
+      const pointText = bound.pointSync?.success === true ? `\n目前點數：${numberValue(bound.pointSync.balance)} 點` : "";
+      replies.push(await replyToLine(event.replyToken, [{ type: "text", text: `身分已確認並完成 LINE 綁定，已寫入子站 CRM。\n會員編號：${bound.memberNo}\n姓名/單位：${bound.name}\n更新筆數：${bound.updated}${pointText}\n之後可直接使用活動報名與會員功能。` }], env));
+      results.push({ success: true, lineUserId, text, memberNo: bound.memberNo, name: bound.name, message: "bound-direct-member-checkin" });
       continue;
     }
-    replies.push(await startMemberOnboarding(env, event, text, undefined, ctx));
-    results.push({ success: false, lineUserId, text, message: "started-member-checkin-name-first" });
+    await deleteMemberOnboardingSession(env, lineUserId);
+    replies.push(await replyToLine(event.replyToken, [{ type: "text", text: "請輸入你的會員編號完成 LINE 綁定。\n格式：會員報到+會員編號\n範例：會員報到+A1090001" }], env));
+    results.push({ success: false, lineUserId, text, message: "prompted-direct-format" });
   }
   const logTask = safeAppendLineWebhookLog(env, {
     at: new Date().toISOString(),
