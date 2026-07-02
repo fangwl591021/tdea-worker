@@ -76,6 +76,7 @@ const calendarKeyword = "TDEA行事曆";
 const personalMessageKeyword = "TDEA個人訊息";
 const uidBindKeyword = "UID";
 const memberCheckinKeyword = "會員報到";
+const memberCheckinAliases = [memberCheckinKeyword, "會員打卡", "會員簽到"];
 const lineActivityCreateKeyword = "TDEA建立活動";
 const lineActivityCreateAliases = ["TDEA新增活動", "TDEA活動上稿", "TDEA製作活動"];
 const defaultLiffBase = "https://liff.line.me/2005868456-2jmxqyFU?monthlyDetail={id}";
@@ -4928,8 +4929,9 @@ async function importAiweMembersApi(request: Request, env: Env) {
 
 function isMemberCheckinText(text: string) {
   const normalized = normalizeKeyword(text);
-  const keyword = normalizeKeyword(memberCheckinKeyword);
-  return normalized === keyword || normalized.startsWith(keyword) || (normalized.includes("會員") && normalized.includes("報到"));
+  const keywords = memberCheckinAliases.map(normalizeKeyword);
+  return keywords.some((keyword) => normalized === keyword || normalized.startsWith(keyword))
+    || (normalized.includes("會員") && (normalized.includes("報到") || normalized.includes("打卡") || normalized.includes("簽到")));
 }
 
 function parseUidBindKeyword(text: string) {
@@ -4944,10 +4946,10 @@ function parseUidBindKeyword(text: string) {
 function parseMemberCheckinKeyword(text: string) {
   const raw = clean(text);
   const normalized = normalizeKeyword(raw);
-  const keyword = normalizeKeyword(memberCheckinKeyword);
+  const keyword = memberCheckinAliases.map(normalizeKeyword).find((item) => normalized === item || normalized.startsWith(item));
+  if (!keyword) return { active: false, memberNo: "" };
   if (normalized === keyword) return { active: true, memberNo: "" };
-  if (!normalized.startsWith(keyword)) return { active: false, memberNo: "" };
-  const suffix = raw.replace(/^\s*會員\s*報到\s*[+＋:：]?\s*/i, "").trim();
+  const suffix = raw.replace(/^\s*會員\s*(報到|打卡|簽到)\s*[+＋:：]?\s*/i, "").trim();
   return suffix ? { active: true, memberNo: clean(suffix).toUpperCase() } : { active: true, memberNo: "" };
 }
 
