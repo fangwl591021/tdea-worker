@@ -5726,6 +5726,25 @@ async function safeAppendLineWebhookLog(env: Env, record: Record<string, unknown
   }
 }
 
+async function appendLineWebhookIngressLog(env: Env, request: Request, rawBody: string, ctx?: ExecutionContext) {
+  let events: LineEvent[] = [];
+  try {
+    events = extractLineEvents(JSON.parse(rawBody));
+  } catch (_) {}
+  const texts = events.map((event) => clean(extractTriggerText(event))).filter(Boolean).slice(0, 5);
+  if (!texts.length) return;
+  const task = safeAppendLineWebhookLog(env, {
+    at: new Date().toISOString(),
+    mode: "webhook-ingress",
+    result: "received",
+    hasSignature: Boolean(clean(request.headers.get("x-line-signature"))),
+    texts,
+    lineUserIds: events.map((event) => clean(event.source?.userId)).filter(Boolean).slice(0, 5),
+    eventCount: events.length
+  });
+  if (ctx) ctx.waitUntil(task);
+  else await task;
+}
 async function lineWebhookLogsApi(request: Request, env: Env) {
   const guard = await requireAdmin(request, env);
   if (guard) return guard;
@@ -5804,7 +5823,7 @@ async function handleMonthlyWebhook(request: Request, env: Env, rawBody: string,
   const earlyMemberCheckinEvents = allEvents.filter((event) => isMemberCheckinText(extractTriggerText(event)));
   if (earlyMemberCheckinEvents.length) {
     const signature = request.headers.get("x-line-signature");
-    const diagnostics = earlyMemberCheckinEvents.map((event) => ({ text: clean(extractTriggerText(event)), normalized: normalizeKeyword(extractTriggerText(event)), hasReplyToken: Boolean(event.replyToken), hasLineUserId: Boolean(clean(event.source?.userId)) }));
+    const diagnostics = earlyMemberCheckinEvents.map((event) => ({ text: clean(extractTriggerText(event)), normalized: normalizeKeyword(extractTriggerText(event)), hasReplyToken: Boolean(event.replyToken), hasLineUserId: Boolean(clean(event.source?.userId)), lineUserId: clean(event.source?.userId) }));
     await safeAppendLineWebhookLog(env, {
       at: new Date().toISOString(),
       mode: "member-checkin-early",
@@ -6211,7 +6230,7 @@ export default {
     if (request.method === "GET" && url.pathname === "/api/registrations/export") return exportRegistrationsExcel(request, env);
     const detailMatch = url.pathname.match(/^\/monthly-detail\/([^/]+)$/);
     if (request.method === "GET" && detailMatch) return monthlyDetail(env, decodeURIComponent(detailMatch[1]));
-    if (request.method === "POST" && url.pathname === "/line-webhook") { const rawBody = await request.text(); const monthly = await handleMonthlyWebhook(request, env, rawBody, ctx); if (monthly) return monthly; if (clean(env.FORWARD_WEBHOOK_URL)) { ctx.waitUntil(forwardToMotherWebhookWithLog(request, env, rawBody)); return json({ success: true, forwarded: true, async: true }); } return baseEntry.fetch(rebuildRequest(request, rawBody), env, ctx); }
+    if (request.method === "POST" && url.pathname === "/line-webhook") { const rawBody = await request.text(); await appendLineWebhookIngressLog(env, request, rawBody, ctx); const monthly = await handleMonthlyWebhook(request, env, rawBody, ctx); if (monthly) return monthly; if (clean(env.FORWARD_WEBHOOK_URL)) { ctx.waitUntil(forwardToMotherWebhookWithLog(request, env, rawBody)); return json({ success: true, forwarded: true, async: true }); } return baseEntry.fetch(rebuildRequest(request, rawBody), env, ctx); }
     return baseEntry.fetch(request, env, ctx);
   }
 };
