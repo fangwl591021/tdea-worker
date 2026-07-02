@@ -5246,33 +5246,32 @@ async function startMemberOnboarding(env: Env, event: LineEvent, triggerText: st
   if (!lineUserId || !event.replyToken) return { ok: false, status: 400, message: "Missing LINE UID or replyToken" };
   const now = new Date().toISOString();
   const presetMemberNo = clean(preset?.memberNo).toUpperCase();
+  const session: MemberOnboardingSession = {
+    lineUserId,
+    step: "name",
+    answers: presetMemberNo ? { memberNo: presetMemberNo } : {},
+    triggerText,
+    createdAt: now,
+    updatedAt: now
+  };
+  const reply = await replyToLine(event.replyToken, [{
+    type: "text",
+    text: presetMemberNo ? "請輸入姓名，用來核對身分。" : "請先輸入姓名。"
+  }], env);
   try {
-    await writeMemberOnboardingSession(env, {
-      lineUserId,
-      step: "name",
-      answers: presetMemberNo ? { memberNo: presetMemberNo } : {},
-      triggerText,
-      createdAt: now,
-      updatedAt: now
-    });
+    await writeMemberOnboardingSession(env, session);
   } catch (error) {
     await safeAppendLineWebhookLog(env, {
       at: new Date().toISOString(),
       mode: "member-onboarding-session",
-      result: "write-failed",
+      result: "write-failed-after-reply",
       lineUserId,
       text: triggerText,
       error: error instanceof Error ? error.message : String(error)
     });
-    return replyToLine(event.replyToken, [{
-      type: "text",
-      text: "會員報到流程暫時無法建立，請稍後再試或聯絡協會後台。"
-    }], env);
+    return { ...reply, sessionWrite: false };
   }
-  return replyToLine(event.replyToken, [{
-    type: "text",
-    text: presetMemberNo ? "請輸入會員姓名或公司/單位名稱，用來核對身分。" : "請先輸入會員姓名或公司/單位名稱。"
-  }], env);
+  return { ...reply, sessionWrite: true };
 }
 
 async function handleMemberOnboardingEvent(event: LineEvent, env: Env): Promise<Record<string, unknown> | null> {
