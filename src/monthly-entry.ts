@@ -5274,12 +5274,15 @@ async function startMemberOnboarding(env: Env, event: LineEvent, triggerText: st
     createdAt: now,
     updatedAt: now
   };
-  queueMemberOnboardingSessionWrite(env, session, ctx, { text: triggerText, source: "start" });
+  await writeMemberOnboardingSession(env, session);
+  const sessionLogTask = safeAppendLineWebhookLog(env, { at: new Date().toISOString(), mode: "member-onboarding-session", result: "written-before-reply", lineUserId, step: session.step, text: triggerText, source: "start" });
+  if (ctx) ctx.waitUntil(sessionLogTask);
+  else await sessionLogTask;
   const reply = await replyToLine(event.replyToken, [{
     type: "text",
     text: presetMemberNo ? "請輸入姓名，用來核對身分。" : "請先輸入姓名。"
   }], env);
-  return { ...reply, sessionWrite: "queued-before-reply" };
+  return { ...reply, sessionWrite: "written-before-reply" };
 }
 
 async function handleMemberOnboardingEvent(event: LineEvent, env: Env, ctx?: ExecutionContext): Promise<Record<string, unknown> | null> {
@@ -5309,7 +5312,10 @@ async function handleMemberOnboardingEvent(event: LineEvent, env: Env, ctx?: Exe
   if (session.step === "name") {
     session.answers.name = text;
     session.step = "memberNo";
-    queueMemberOnboardingSessionWrite(env, session, ctx, { text, source: "name" });
+    await writeMemberOnboardingSession(env, session);
+    const sessionLogTask = safeAppendLineWebhookLog(env, { at: new Date().toISOString(), mode: "member-onboarding-session", result: "written-before-reply", lineUserId, step: session.step, text, source: "name" });
+    if (ctx) ctx.waitUntil(sessionLogTask);
+    else await sessionLogTask;
     return replyToLine(event.replyToken, [{ type: "text", text: "請輸入會員編號。" }], env) as unknown as Record<string, unknown>;
   }
   if (session.step === "memberNo") {
@@ -5407,7 +5413,7 @@ async function handleMemberCheckinEvents(events: LineEvent[], env: Env, ctx?: Ex
   else await logTask;
   return json({ success: true, mode: "member-checkin", results, lineReplies: replies });
 }
-async function handleClosedMemberGate(allEvents: LineEvent[], gatedEvents: LineEvent[], env: Env) {
+async function handleClosedMemberGate(allEvents: LineEvent[], gatedEvents: LineEvent[], env: Env, ctx?: ExecutionContext) {
   for (const event of allEvents) {
     const handled = await handleMemberOnboardingEvent(event, env, ctx);
     if (handled) return handled;
@@ -5969,7 +5975,7 @@ async function handleMonthlyWebhook(request: Request, env: Env, rawBody: string,
     ...pointEvents.map((item) => item.event),
     ...bareUidBindEvents
   ];
-  const closedGate = await handleClosedMemberGate(allEvents, gatedEvents, env);
+  const closedGate = await handleClosedMemberGate(allEvents, gatedEvents, env, ctx);
   if (closedGate) {
     await appendLineWebhookLog(env, {
       at: new Date().toISOString(),
