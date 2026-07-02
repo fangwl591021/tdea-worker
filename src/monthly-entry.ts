@@ -5170,6 +5170,16 @@ async function writeMemberOnboardingSession(env: Env, session: MemberOnboardingS
   await env.ASSETS_BUCKET.put(memberOnboardingSessionKey(session.lineUserId), JSON.stringify(session, null, 2), { httpMetadata: { contentType: "application/json; charset=utf-8", cacheControl: "no-store" } });
 }
 
+function queueMemberOnboardingSessionWrite(env: Env, session: MemberOnboardingSession, ctx: ExecutionContext | undefined, meta: Record<string, unknown>) {
+  memberOnboardingMemorySessions.set(session.lineUserId, { ...session, answers: { ...session.answers } });
+  const task = writeMemberOnboardingSession(env, session).then(
+    () => safeAppendLineWebhookLog(env, { at: new Date().toISOString(), mode: "member-onboarding-session", result: "written", lineUserId: session.lineUserId, step: session.step, ...meta }),
+    (error) => safeAppendLineWebhookLog(env, { at: new Date().toISOString(), mode: "member-onboarding-session", result: "write-failed", lineUserId: session.lineUserId, step: session.step, error: error instanceof Error ? error.message : String(error), ...meta })
+  );
+  if (ctx) ctx.waitUntil(task);
+  else task.catch(() => null);
+}
+
 async function deleteMemberOnboardingSession(env: Env, lineUserId: string) {
   if (!lineUserId) return;
   memberOnboardingMemorySessions.delete(lineUserId);
@@ -5264,36 +5274,15 @@ async function startMemberOnboarding(env: Env, event: LineEvent, triggerText: st
     createdAt: now,
     updatedAt: now
   };
-  memberOnboardingMemorySessions.set(lineUserId, { ...session, answers: { ...session.answers } });
+  queueMemberOnboardingSessionWrite(env, session, ctx, { text: triggerText, source: "start" });
   const reply = await replyToLine(event.replyToken, [{
     type: "text",
     text: presetMemberNo ? "請輸入姓名，用來核對身分。" : "請先輸入姓名。"
   }], env);
-  const writeTask = writeMemberOnboardingSession(env, session).then(
-    () => safeAppendLineWebhookLog(env, {
-      at: new Date().toISOString(),
-      mode: "member-onboarding-session",
-      result: "started",
-      lineUserId,
-      text: triggerText,
-      reply
-    }),
-    (error) => safeAppendLineWebhookLog(env, {
-      at: new Date().toISOString(),
-      mode: "member-onboarding-session",
-      result: "write-failed-after-reply",
-      lineUserId,
-      text: triggerText,
-      error: error instanceof Error ? error.message : String(error),
-      reply
-    })
-  );
-  if (ctx) ctx.waitUntil(writeTask);
-  else await writeTask;
-  return { ...reply, sessionWrite: "queued" };
+  return { ...reply, sessionWrite: "queued-before-reply" };
 }
 
-async function handleMemberOnboardingEvent(event: LineEvent, env: Env): Promise<Record<string, unknown> | null> {
+async function handleMemberOnboardingEvent(event: LineEvent, env: Env, ctx?: ExecutionContext): Promise<Record<string, unknown> | null> {
   const lineUserId = clean(event.source?.userId);
   const text = clean(extractTriggerText(event));
   if (!lineUserId || !event.replyToken || !text) return null;
@@ -5307,7 +5296,7 @@ async function handleMemberOnboardingEvent(event: LineEvent, env: Env): Promise<
   if (session.step === "askMember") {
     if (intent === "yes") {
       session.step = "memberNo";
-      await writeMemberOnboardingSession(env, session);
+      queueMemberOnboardingSessionWrite(env, session, ctx, { text, source: "askMember-yes" });
       return replyToLine(event.replyToken, [{ type: "text", text: "請輸入會員編號。", quickReply: quickReply(["取消"]) }], env) as unknown as Record<string, unknown>;
     }
     if (intent === "no") {
@@ -5320,7 +5309,7 @@ async function handleMemberOnboardingEvent(event: LineEvent, env: Env): Promise<
   if (session.step === "name") {
     session.answers.name = text;
     session.step = "memberNo";
-    await writeMemberOnboardingSession(env, session);
+    queueMemberOnboardingSessionWrite(env, session, ctx, { text, source: "name" });
     return replyToLine(event.replyToken, [{ type: "text", text: "請輸入會員編號。" }], env) as unknown as Record<string, unknown>;
   }
   if (session.step === "memberNo") {
@@ -5420,7 +5409,7 @@ async function handleMemberCheckinEvents(events: LineEvent[], env: Env, ctx?: Ex
 }
 async function handleClosedMemberGate(allEvents: LineEvent[], gatedEvents: LineEvent[], env: Env) {
   for (const event of allEvents) {
-    const handled = await handleMemberOnboardingEvent(event, env);
+    const handled = await handleMemberOnboardingEvent(event, env, ctx);
     if (handled) return handled;
   }
   for (const event of gatedEvents) {
@@ -5919,7 +5908,7 @@ async function handleMonthlyWebhook(request: Request, env: Env, rawBody: string,
     const signature = request.headers.get("x-line-signature");
     if (!await verifyLineSignature(rawBody, signature, env.LINE_CHANNEL_SECRET)) return new Response("Invalid Signature", { status: 403, headers });
     for (const event of allEvents) {
-      const handled = await handleMemberOnboardingEvent(event, env);
+      const handled = await handleMemberOnboardingEvent(event, env, ctx);
       if (handled) return json({ success: true, mode: "member-onboarding", lineReply: handled });
     }
   }
