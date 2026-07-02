@@ -5246,17 +5246,32 @@ async function startMemberOnboarding(env: Env, event: LineEvent, triggerText: st
   if (!lineUserId || !event.replyToken) return { ok: false, status: 400, message: "Missing LINE UID or replyToken" };
   const now = new Date().toISOString();
   const presetMemberNo = clean(preset?.memberNo).toUpperCase();
-  if (presetMemberNo) {
-    await writeMemberOnboardingSession(env, { lineUserId, step: "name", answers: { memberNo: presetMemberNo }, triggerText, createdAt: now, updatedAt: now });
+  try {
+    await writeMemberOnboardingSession(env, {
+      lineUserId,
+      step: "name",
+      answers: presetMemberNo ? { memberNo: presetMemberNo } : {},
+      triggerText,
+      createdAt: now,
+      updatedAt: now
+    });
+  } catch (error) {
+    await safeAppendLineWebhookLog(env, {
+      at: new Date().toISOString(),
+      mode: "member-onboarding-session",
+      result: "write-failed",
+      lineUserId,
+      text: triggerText,
+      error: error instanceof Error ? error.message : String(error)
+    });
     return replyToLine(event.replyToken, [{
       type: "text",
-      text: "請輸入會員姓名或公司/單位名稱，用來核對身分。"
+      text: "會員報到流程暫時無法建立，請稍後再試或聯絡協會後台。"
     }], env);
   }
-  await writeMemberOnboardingSession(env, { lineUserId, step: "name", answers: {}, triggerText, createdAt: now, updatedAt: now });
   return replyToLine(event.replyToken, [{
     type: "text",
-    text: "請先輸入會員姓名或公司/單位名稱。"
+    text: presetMemberNo ? "請輸入會員姓名或公司/單位名稱，用來核對身分。" : "請先輸入會員姓名或公司/單位名稱。"
   }], env);
 }
 
@@ -5372,7 +5387,7 @@ async function handleMemberCheckinEvents(events: LineEvent[], env: Env) {
     replies.push(await startMemberOnboarding(env, event, text));
     results.push({ success: false, lineUserId, text, message: "started-member-checkin-name-first" });
   }
-  await appendLineWebhookLog(env, {
+  await safeAppendLineWebhookLog(env, {
     at: new Date().toISOString(),
     mode: "member-checkin",
     result: "prompted",
@@ -5688,6 +5703,14 @@ async function appendLineWebhookLog(env: Env, record: Record<string, unknown>) {
   });
 }
 
+async function safeAppendLineWebhookLog(env: Env, record: Record<string, unknown>) {
+  try {
+    await appendLineWebhookLog(env, record);
+  } catch (_) {
+    // Logging must never block a LINE reply.
+  }
+}
+
 async function lineWebhookLogsApi(request: Request, env: Env) {
   const guard = await requireAdmin(request, env);
   if (guard) return guard;
@@ -5767,7 +5790,7 @@ async function handleMonthlyWebhook(request: Request, env: Env, rawBody: string,
   if (earlyMemberCheckinEvents.length) {
     const signature = request.headers.get("x-line-signature");
     const diagnostics = earlyMemberCheckinEvents.map((event) => ({ text: clean(extractTriggerText(event)), normalized: normalizeKeyword(extractTriggerText(event)), hasReplyToken: Boolean(event.replyToken), hasLineUserId: Boolean(clean(event.source?.userId)) }));
-    await appendLineWebhookLog(env, {
+    await safeAppendLineWebhookLog(env, {
       at: new Date().toISOString(),
       mode: "member-checkin-early",
       result: "matched",
@@ -5779,7 +5802,7 @@ async function handleMonthlyWebhook(request: Request, env: Env, rawBody: string,
     try {
       signatureOk = await verifyLineSignature(rawBody, signature, env.LINE_CHANNEL_SECRET);
     } catch (error) {
-      await appendLineWebhookLog(env, {
+      await safeAppendLineWebhookLog(env, {
         at: new Date().toISOString(),
         mode: "member-checkin-early",
         result: "signature-error",
@@ -5791,7 +5814,7 @@ async function handleMonthlyWebhook(request: Request, env: Env, rawBody: string,
       return new Response("Invalid Signature", { status: 403, headers });
     }
     if (!signatureOk) {
-      await appendLineWebhookLog(env, {
+      await safeAppendLineWebhookLog(env, {
         at: new Date().toISOString(),
         mode: "member-checkin-early",
         result: "invalid-signature",
@@ -5801,7 +5824,29 @@ async function handleMonthlyWebhook(request: Request, env: Env, rawBody: string,
       });
       return new Response("Invalid Signature", { status: 403, headers });
     }
-    return handleMemberCheckinEvents(earlyMemberCheckinEvents, env);
+    try {
+      return await handleMemberCheckinEvents(earlyMemberCheckinEvents, env);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      await safeAppendLineWebhookLog(env, {
+        at: new Date().toISOString(),
+        mode: "member-checkin-early",
+        result: "handler-error",
+        hasSignature: Boolean(clean(signature)),
+        diagnostics,
+        eventCount: allEvents.length,
+        error: message
+      });
+      const lineReplies = await Promise.all(earlyMemberCheckinEvents.map(async (event) => {
+        if (!event.replyToken) return { ok: false, status: 400, message: "Missing replyToken" };
+        try {
+          return await replyToLine(event.replyToken, [{ type: "text", text: "會員報到流程暫時無法啟動，請稍後再試或聯絡協會後台。" }], env);
+        } catch (replyError) {
+          return { ok: false, status: 599, message: replyError instanceof Error ? replyError.message : String(replyError) };
+        }
+      }));
+      return json({ success: false, mode: "member-checkin", error: message, lineReplies }, 500);
+    }
   }
   const watchedTexts = allEvents.map((event) => clean(extractTriggerText(event))).filter((text) => /TDEA|每月活動|會員|報到/i.test(text));
   if (watchedTexts.length && !allEvents.some((event) => isMonthlyActivityKeyword(extractTriggerText(event)))) {
