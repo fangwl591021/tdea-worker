@@ -5341,7 +5341,7 @@ async function hasMemberOnboardingSession(events: LineEvent[], env: Env) {
 
 async function handleMemberCheckinEvents(events: LineEvent[], env: Env) {
   if (!env.ASSETS_BUCKET) return json({ success: false, message: "R2 bucket is not configured" }, 503);
-  const rows = await readAiweMembers(env);
+  let rows: Array<Record<string, unknown>> | null = null;
   const replies = [];
   const results = [];
   let changed = false;
@@ -5368,6 +5368,16 @@ async function handleMemberCheckinEvents(events: LineEvent[], env: Env) {
       replies.push(await replyToLine(event.replyToken, [message], env));
       results.push({ success: false, lineUserId, text, message: "missing-member-no" });
       continue;
+    }
+    if (!rows) {
+      try {
+        rows = await readAiweMembers(env);
+      } catch (error) {
+        const message = { type: "text", text: "已收到會員報到，但目前讀取會員名冊失敗，請稍後再試或聯絡協會後台。" };
+        replies.push(await replyToLine(event.replyToken, [message], env));
+        results.push({ success: false, lineUserId, text, memberNo: parsed.memberNo, message: "read-members-failed", error: error instanceof Error ? error.message : String(error) });
+        continue;
+      }
     }
     const matched = selectAiweBindRows(rows, parsed.memberNo);
     if (!matched.length) {
@@ -5397,7 +5407,7 @@ async function handleMemberCheckinEvents(events: LineEvent[], env: Env) {
     replies.push(await replyToLine(event.replyToken, [message], env));
     results.push({ success: true, lineUserId, text, memberNo: parsed.memberNo, updated: matched.length, crm, pointSync });
   }
-  if (changed) await writeAiweMembers(env, rows);
+  if (changed && rows) await writeAiweMembers(env, rows);
   await appendLineWebhookLog(env, {
     at: new Date().toISOString(),
     mode: "member-checkin",
