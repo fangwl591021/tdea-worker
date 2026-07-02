@@ -5251,7 +5251,7 @@ function membershipQuestionMessage() {
   };
 }
 
-async function startMemberOnboarding(env: Env, event: LineEvent, triggerText: string, preset?: { memberNo?: string }) {
+async function startMemberOnboarding(env: Env, event: LineEvent, triggerText: string, preset?: { memberNo?: string }, ctx?: ExecutionContext) {
   const lineUserId = clean(event.source?.userId);
   if (!lineUserId || !event.replyToken) return { ok: false, status: 400, message: "Missing LINE UID or replyToken" };
   const now = new Date().toISOString();
@@ -5264,24 +5264,33 @@ async function startMemberOnboarding(env: Env, event: LineEvent, triggerText: st
     createdAt: now,
     updatedAt: now
   };
+  memberOnboardingMemorySessions.set(lineUserId, { ...session, answers: { ...session.answers } });
   const reply = await replyToLine(event.replyToken, [{
     type: "text",
     text: presetMemberNo ? "請輸入姓名，用來核對身分。" : "請先輸入姓名。"
   }], env);
-  try {
-    await writeMemberOnboardingSession(env, session);
-  } catch (error) {
-    await safeAppendLineWebhookLog(env, {
+  const writeTask = writeMemberOnboardingSession(env, session).then(
+    () => safeAppendLineWebhookLog(env, {
+      at: new Date().toISOString(),
+      mode: "member-onboarding-session",
+      result: "started",
+      lineUserId,
+      text: triggerText,
+      reply
+    }),
+    (error) => safeAppendLineWebhookLog(env, {
       at: new Date().toISOString(),
       mode: "member-onboarding-session",
       result: "write-failed-after-reply",
       lineUserId,
       text: triggerText,
-      error: error instanceof Error ? error.message : String(error)
-    });
-    return { ...reply, sessionWrite: false };
-  }
-  return { ...reply, sessionWrite: true };
+      error: error instanceof Error ? error.message : String(error),
+      reply
+    })
+  );
+  if (ctx) ctx.waitUntil(writeTask);
+  else await writeTask;
+  return { ...reply, sessionWrite: "queued" };
 }
 
 async function handleMemberOnboardingEvent(event: LineEvent, env: Env): Promise<Record<string, unknown> | null> {
@@ -5370,7 +5379,7 @@ async function hasMemberOnboardingSession(events: LineEvent[], env: Env) {
   return false;
 }
 
-async function handleMemberCheckinEvents(events: LineEvent[], env: Env) {
+async function handleMemberCheckinEvents(events: LineEvent[], env: Env, ctx?: ExecutionContext) {
   if (!env.ASSETS_BUCKET) return json({ success: false, message: "R2 bucket is not configured" }, 503);
   const replies = [];
   const results = [];
@@ -5389,14 +5398,14 @@ async function handleMemberCheckinEvents(events: LineEvent[], env: Env) {
       continue;
     }
     if (parsed.memberNo) {
-      replies.push(await startMemberOnboarding(env, event, text, { memberNo: parsed.memberNo }));
+      replies.push(await startMemberOnboarding(env, event, text, { memberNo: parsed.memberNo }, ctx));
       results.push({ success: false, lineUserId, text, memberNo: parsed.memberNo, message: "started-member-checkin-name-for-direct-input" });
       continue;
     }
-    replies.push(await startMemberOnboarding(env, event, text));
+    replies.push(await startMemberOnboarding(env, event, text, undefined, ctx));
     results.push({ success: false, lineUserId, text, message: "started-member-checkin-name-first" });
   }
-  await safeAppendLineWebhookLog(env, {
+  const logTask = safeAppendLineWebhookLog(env, {
     at: new Date().toISOString(),
     mode: "member-checkin",
     result: "prompted",
@@ -5405,6 +5414,8 @@ async function handleMemberCheckinEvents(events: LineEvent[], env: Env) {
     results,
     lineReplies: replies
   });
+  if (ctx) ctx.waitUntil(logTask);
+  else await logTask;
   return json({ success: true, mode: "member-checkin", results, lineReplies: replies });
 }
 async function handleClosedMemberGate(allEvents: LineEvent[], gatedEvents: LineEvent[], env: Env) {
@@ -5834,7 +5845,7 @@ async function handleMonthlyWebhook(request: Request, env: Env, rawBody: string,
       return new Response("Invalid Signature", { status: 403, headers });
     }
     try {
-      return await handleMemberCheckinEvents(earlyMemberCheckinEvents, env);
+      return await handleMemberCheckinEvents(earlyMemberCheckinEvents, env, ctx);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       await safeAppendLineWebhookLog(env, {
