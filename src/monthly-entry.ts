@@ -3762,6 +3762,25 @@ async function forwardToMotherWebhookWithLog(request: Request, env: Env, rawBody
       texts,
       eventCount
     });
+    if (response.ok && texts.some((text) => isMemberCheckinText(text))) {
+      await syncAiweMembersFromMother(env, { pages: 20, perPage: 100, reason: "member-checkin-forward" }).then((sync) => appendLineWebhookLog(env, {
+        at: new Date().toISOString(),
+        mode: "mother-member-sync",
+        result: sync.success ? "ok" : "failed",
+        durationMs: Date.now() - startedAt,
+        texts,
+        eventCount,
+        sync
+      })).catch((syncError) => appendLineWebhookLog(env, {
+        at: new Date().toISOString(),
+        mode: "mother-member-sync",
+        result: "error",
+        durationMs: Date.now() - startedAt,
+        texts,
+        eventCount,
+        error: syncError instanceof Error ? syncError.message : String(syncError)
+      }));
+    }
     return response;
   } catch (error) {
     await appendLineWebhookLog(env, {
@@ -4765,15 +4784,12 @@ async function fetchMotherWpUsers(env: Env, page: number, perPage: number, searc
   };
 }
 
-async function syncAiweMembersFromMotherApi(request: Request, env: Env) {
-  const guard = await requireAdmin(request, env);
-  if (guard) return guard;
-  if (!env.ASSETS_BUCKET) return json({ success: false, message: "R2 bucket is not configured" }, 503);
-  const url = new URL(request.url);
-  const startPage = Math.max(1, Number(url.searchParams.get("start") || 1));
-  const pages = Math.min(20, Math.max(1, Number(url.searchParams.get("pages") || 3)));
-  const perPage = Math.min(100, Math.max(1, Number(url.searchParams.get("per_page") || 100)));
-  const search = clean(url.searchParams.get("search"));
+async function syncAiweMembersFromMother(env: Env, options: { startPage?: number; pages?: number; perPage?: number; search?: string; reason?: string } = {}) {
+  if (!env.ASSETS_BUCKET) return { success: false, message: "R2 bucket is not configured" };
+  const startPage = Math.max(1, Number(options.startPage || 1));
+  const pages = Math.min(20, Math.max(1, Number(options.pages || 3)));
+  const perPage = Math.min(100, Math.max(1, Number(options.perPage || 100)));
+  const search = clean(options.search);
   const rows = await readAiweMembers(env);
   const fetched: Array<Record<string, unknown>> = [];
   let total = 0;
@@ -4791,7 +4807,21 @@ async function syncAiweMembersFromMotherApi(request: Request, env: Env) {
   const crm = await readManagerData(env).then((data) => ({ merged: true, aiweUidMergedAt: clean((data as Record<string, unknown>)?.aiweUidMergedAt), aiweUidMergeReport: (data as Record<string, unknown>)?.aiweUidMergeReport || null })).catch((error) => ({ merged: false, message: error instanceof Error ? error.message : String(error) }));
   const withUid = fetched.filter((row) => explicitMemberLineUid(row)).length;
   const withPhone = fetched.filter((row) => phoneDigits(firstClean(row.phone, row.mobile, row.tel, row.telephone, row.contactPhone))).length;
-  return json({ success: true, source: "wp-rest-users", fetched: fetched.length, withUid, withPhone, total, totalPages, ...report, cachedTotal: rows.length, crm });
+  return { success: true, source: "wp-rest-users", reason: clean(options.reason), fetched: fetched.length, withUid, withPhone, total, totalPages, ...report, cachedTotal: rows.length, crm };
+}
+
+async function syncAiweMembersFromMotherApi(request: Request, env: Env) {
+  const guard = await requireAdmin(request, env);
+  if (guard) return guard;
+  const url = new URL(request.url);
+  const result = await syncAiweMembersFromMother(env, {
+    startPage: Number(url.searchParams.get("start") || 1),
+    pages: Number(url.searchParams.get("pages") || 3),
+    perPage: Number(url.searchParams.get("per_page") || 100),
+    search: clean(url.searchParams.get("search")),
+    reason: "admin-api"
+  });
+  return json(result, result.success ? 200 : 503);
 }
 function richMenuSnapshot(config: RichMenuConfig): RichMenuSnapshot {
   const normalized = normalizeRichMenuConfig(config);
