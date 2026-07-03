@@ -5064,8 +5064,7 @@ async function verifyAndBindMemberCheckin(env: Env, lineUserId: string, memberNo
   for (const row of verified) setAiweRowLineUid(row, uid);
   await writeAiweMembers(env, rows);
   const crm = await upsertBoundMemberToManagerCrm(env, verified[0], uid);
-  const pointSync = await syncBoundMemberPoints(env, uid).catch((error) => ({ success: false, message: error instanceof Error ? error.message : String(error) }));
-  return { success: true, memberNo: normalizedMemberNo, name: aiweRowDisplayName(verified[0]), updated: verified.length, crm, pointSync };
+  return { success: true, memberNo: normalizedMemberNo, name: aiweRowDisplayName(verified[0]), updated: verified.length, crm };
 }
 
 function inferUidBindMemberNo(rows: Array<Record<string, unknown>>, lineUserId: string, env: Env) {
@@ -5344,9 +5343,13 @@ async function handleMemberOnboardingEvent(event: LineEvent, env: Env, ctx?: Exe
       return replyToLine(event.replyToken, [{ type: "text", text: "此會員編號已綁定其他 LINE 帳號，請聯絡協會後台確認。" }], env) as unknown as Record<string, unknown>;
     }
     await deleteMemberOnboardingSession(env, lineUserId);
-    const bound = result as { memberNo: string; name: string; updated: number; pointSync?: Record<string, unknown>; crm?: Record<string, unknown> };
-    const pointText = bound.pointSync?.success === true ? `\n目前點數：${numberValue(bound.pointSync.balance)} 點` : "";
-    return replyToLine(event.replyToken, [{ type: "text", text: `身分已確認並完成 LINE 綁定，已寫入子站 CRM。\n會員編號：${bound.memberNo}\n姓名/單位：${bound.name}\n更新筆數：${bound.updated}${pointText}\n之後可直接使用活動報名與會員功能。` }], env) as unknown as Record<string, unknown>;
+    const bound = result as { memberNo: string; name: string; updated: number; crm?: Record<string, unknown> };
+    const pointTask = syncBoundMemberPoints(env, lineUserId)
+      .then((pointSync) => safeAppendLineWebhookLog(env, { at: new Date().toISOString(), mode: "member-checkin-point-sync", result: "ok", lineUserId, memberNo: bound.memberNo, balance: numberValue((pointSync as Record<string, unknown>).balance) }))
+      .catch((error) => safeAppendLineWebhookLog(env, { at: new Date().toISOString(), mode: "member-checkin-point-sync", result: "error", lineUserId, memberNo: bound.memberNo, error: error instanceof Error ? error.message : String(error) }));
+    if (ctx) ctx.waitUntil(pointTask);
+    else pointTask.catch(() => null);
+    return replyToLine(event.replyToken, [{ type: "text", text: `身分已確認並完成 LINE 綁定，已寫入子站 CRM。\n會員編號：${bound.memberNo}\n姓名/單位：${bound.name}\n更新筆數：${bound.updated}\n點數將於背景同步，稍後可在會員資料查看。\n之後可直接使用活動報名與會員功能。` }], env) as unknown as Record<string, unknown>;
   }
   if (session.step === "joinInterest") {
     if (intent === "interested") {
@@ -5421,9 +5424,13 @@ async function handleMemberCheckinEvents(events: LineEvent[], env: Env, ctx?: Ex
         results.push({ success: false, lineUserId, text, memberNo: parsed.memberNo, name: parsed.name, message: result.reason || "bind-failed" });
         continue;
       }
-      const bound = result as { memberNo: string; name: string; updated: number; pointSync?: Record<string, unknown>; crm?: Record<string, unknown> };
-      const pointText = bound.pointSync?.success === true ? `\n目前點數：${numberValue(bound.pointSync.balance)} 點` : "";
-      replies.push(await replyToLine(event.replyToken, [{ type: "text", text: `身分已確認並完成 LINE 綁定，已寫入子站 CRM。\n會員編號：${bound.memberNo}\n姓名/單位：${bound.name}\n更新筆數：${bound.updated}${pointText}\n之後可直接使用活動報名與會員功能。` }], env));
+      const bound = result as { memberNo: string; name: string; updated: number; crm?: Record<string, unknown> };
+      const pointTask = syncBoundMemberPoints(env, lineUserId)
+        .then((pointSync) => safeAppendLineWebhookLog(env, { at: new Date().toISOString(), mode: "member-checkin-point-sync", result: "ok", lineUserId, memberNo: bound.memberNo, balance: numberValue((pointSync as Record<string, unknown>).balance) }))
+        .catch((error) => safeAppendLineWebhookLog(env, { at: new Date().toISOString(), mode: "member-checkin-point-sync", result: "error", lineUserId, memberNo: bound.memberNo, error: error instanceof Error ? error.message : String(error) }));
+      if (ctx) ctx.waitUntil(pointTask);
+      else pointTask.catch(() => null);
+      replies.push(await replyToLine(event.replyToken, [{ type: "text", text: `身分已確認並完成 LINE 綁定，已寫入子站 CRM。\n會員編號：${bound.memberNo}\n姓名/單位：${bound.name}\n更新筆數：${bound.updated}\n點數將於背景同步，稍後可在會員資料查看。\n之後可直接使用活動報名與會員功能。` }], env));
       results.push({ success: true, lineUserId, text, memberNo: bound.memberNo, name: bound.name, message: "bound-direct-member-checkin" });
       continue;
     }
