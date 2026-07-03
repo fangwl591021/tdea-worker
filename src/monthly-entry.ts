@@ -3453,7 +3453,7 @@ async function handleCustomKeywordEvents(events: LineEvent[], env: Env) {
 function buildMonthlyFlex(config: MonthlyConfig) {
   const normalized = normalizeConfig(config);
   if (!(normalized.pages || []).length) return { type: "text", text: "TDEA 每月活動目前沒有上架活動。" };
-  return { type: "flex", altText: normalized.altText || "TDEA 每月活動", contents: { type: "carousel", contents: (normalized.pages || []).map((page) => buildMonthlyBubble(page, normalized)) } };
+  return { type: "flex", altText: normalized.altText || "TDEA 每月活動", contents: { type: "carousel", contents: (normalized.pages || []).map((page) => buildMonthlyBubble(page, normalized)) }, quickReply: quickReply(["會員報到"]) };
 }
 
 function buildMonthlyBubble(page: MonthlyPage, config: MonthlyConfig) {
