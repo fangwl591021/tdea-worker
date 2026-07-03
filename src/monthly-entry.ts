@@ -4788,9 +4788,10 @@ async function syncAiweMembersFromMotherApi(request: Request, env: Env) {
   }
   const report = upsertAiweMemberRows(rows, fetched);
   await writeAiweMembers(env, rows);
+  const crm = await readManagerData(env).then((data) => ({ merged: true, aiweUidMergedAt: clean((data as Record<string, unknown>)?.aiweUidMergedAt), aiweUidMergeReport: (data as Record<string, unknown>)?.aiweUidMergeReport || null })).catch((error) => ({ merged: false, message: error instanceof Error ? error.message : String(error) }));
   const withUid = fetched.filter((row) => explicitMemberLineUid(row)).length;
   const withPhone = fetched.filter((row) => phoneDigits(firstClean(row.phone, row.mobile, row.tel, row.telephone, row.contactPhone))).length;
-  return json({ success: true, source: "wp-rest-users", fetched: fetched.length, withUid, withPhone, total, totalPages, ...report, cachedTotal: rows.length });
+  return json({ success: true, source: "wp-rest-users", fetched: fetched.length, withUid, withPhone, total, totalPages, ...report, cachedTotal: rows.length, crm });
 }
 function richMenuSnapshot(config: RichMenuConfig): RichMenuSnapshot {
   const normalized = normalizeRichMenuConfig(config);
@@ -5858,7 +5859,9 @@ async function handleMonthlyWebhook(request: Request, env: Env, rawBody: string,
   let payload: unknown;
   try { payload = JSON.parse(rawBody); } catch (_) { return null; }
   const allEvents = extractLineEvents(payload);
-  const earlyMemberCheckinEvents = allEvents.filter((event) => isMemberCheckinText(extractTriggerText(event)));
+  const childMemberCheckinEnabled = false;
+  const hasMemberCheckinTextInPayload = allEvents.some((event) => isMemberCheckinText(extractTriggerText(event)));
+  const earlyMemberCheckinEvents = childMemberCheckinEnabled ? allEvents.filter((event) => isMemberCheckinText(extractTriggerText(event))) : [];
   if (earlyMemberCheckinEvents.length) {
     const signature = request.headers.get("x-line-signature");
     const diagnostics = earlyMemberCheckinEvents.map((event) => ({ text: clean(extractTriggerText(event)), normalized: normalizeKeyword(extractTriggerText(event)), hasReplyToken: Boolean(event.replyToken), hasLineUserId: Boolean(clean(event.source?.userId)), lineUserId: clean(event.source?.userId) }));
@@ -5966,7 +5969,7 @@ async function handleMonthlyWebhook(request: Request, env: Env, rawBody: string,
     return replyMonthlyActivityEvents(events, allEvents, env, ctx);
   }
 
-  const onboardingActiveEarly = await hasMemberOnboardingSession(allEvents, env);
+  const onboardingActiveEarly = !hasMemberCheckinTextInPayload && await hasMemberOnboardingSession(allEvents, env);
   if (onboardingActiveEarly) {
     const signature = request.headers.get("x-line-signature");
     if (!await verifyLineSignature(rawBody, signature, env.LINE_CHANNEL_SECRET)) return new Response("Invalid Signature", { status: 403, headers });
@@ -6006,7 +6009,8 @@ async function handleMonthlyWebhook(request: Request, env: Env, rawBody: string,
   const pointEvents = allEvents
     .map((event) => ({ event, query: parseMotherPointKeyword(extractTriggerText(event)) }))
     .filter((match): match is { event: LineEvent; query: { uid: string } } => Boolean(match.query));
-  const onboardingActive = await hasMemberOnboardingSession(allEvents, env);
+  const memberCheckinEvents = childMemberCheckinEnabled ? allEvents.filter((event) => isMemberCheckinText(extractTriggerText(event))) : [];
+  const onboardingActive = !hasMemberCheckinTextInPayload && await hasMemberOnboardingSession(allEvents, env);
   if (!queryEvents.length && !memberQrEvents.length && !calendarEvents.length && !personalMessageEvents.length && !uidBindEvents.length && !memberCheckinEvents.length && !vendorCardEvents.length && !marqueeEvents.length && !pointEvents.length && !events.length && !onboardingActive) return null;
   const signature = request.headers.get("x-line-signature");
   const signatureOk = await verifyLineSignature(rawBody, signature, env.LINE_CHANNEL_SECRET);
