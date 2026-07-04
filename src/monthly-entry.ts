@@ -6071,18 +6071,25 @@ async function handleMonthlyWebhook(request: Request, env: Env, rawBody: string,
     }
     return replyMonthlyActivityEvents(events, allEvents, env, ctx);
   }
-
-  const onboardingActiveEarly = !hasMemberCheckinTextInPayload && await hasMemberOnboardingSession(allEvents, env);
-  if (onboardingActiveEarly) {
+  const builtInKeywordTexts = new Set([queryKeyword, memberQrKeyword, calendarKeyword, personalMessageKeyword, vendorCardKeyword, marqueeKeyword, ...marqueeLegacyKeywords].map(normalizeKeyword));
+  const queryEvents = allEvents.filter((event) => normalizeKeyword(extractTriggerText(event)) === normalizeKeyword(queryKeyword));
+  const memberQrEvents = allEvents.filter((event) => normalizeKeyword(extractTriggerText(event)) === normalizeKeyword(memberQrKeyword));
+  const calendarEvents = allEvents.filter((event) => normalizeKeyword(extractTriggerText(event)) === normalizeKeyword(calendarKeyword));
+  const personalMessageEvents = allEvents.filter((event) => normalizeKeyword(extractTriggerText(event)) === normalizeKeyword(personalMessageKeyword));
+  const uidBindEvents = allEvents.filter((event) => parseUidBindKeyword(extractTriggerText(event)).active);
+  const vendorCardEvents = allEvents.filter((event) => normalizeKeyword(extractTriggerText(event)) === normalizeKeyword(vendorCardKeyword));
+  const marqueeKeywords = [marqueeKeyword, ...marqueeLegacyKeywords].map(normalizeKeyword);
+  const marqueeEvents = allEvents.filter((event) => marqueeKeywords.includes(normalizeKeyword(extractTriggerText(event))));
+  const pointEvents = allEvents
+    .map((event) => ({ event, query: parseMotherPointKeyword(extractTriggerText(event)) }))
+    .filter((match): match is { event: LineEvent; query: { uid: string } } => Boolean(match.query));
+  const hasBuiltInKeywordEvents = Boolean(queryEvents.length || memberQrEvents.length || calendarEvents.length || personalMessageEvents.length || uidBindEvents.length || vendorCardEvents.length || marqueeEvents.length || pointEvents.length);
+  if (hasBuiltInKeywordEvents) {
     const signature = request.headers.get("x-line-signature");
     if (!await verifyLineSignature(rawBody, signature, env.LINE_CHANNEL_SECRET)) return new Response("Invalid Signature", { status: 403, headers });
-    for (const event of allEvents) {
-      const handled = await handleMemberOnboardingEvent(event, env, ctx);
-      if (handled) return json({ success: true, mode: "member-onboarding", lineReply: handled });
-    }
+    if (vendorCardEvents.length) return replyVendorCardEvents(vendorCardEvents, allEvents, env, ctx);
   }
 
-  const builtInKeywordTexts = new Set([queryKeyword, memberQrKeyword, calendarKeyword, personalMessageKeyword, vendorCardKeyword, marqueeKeyword, ...marqueeLegacyKeywords].map(normalizeKeyword));
   const customKeywordEvents = allEvents.filter((event) => {
     const text = extractTriggerText(event);
     const normalized = normalizeKeyword(text);
@@ -6098,20 +6105,17 @@ async function handleMonthlyWebhook(request: Request, env: Env, rawBody: string,
     if (!await verifyLineSignature(rawBody, signatureForCustomKeyword, env.LINE_CHANNEL_SECRET)) return new Response("Invalid Signature", { status: 403, headers });
     const customKeyword = await handleCustomKeywordEvents(customKeywordEvents, env);
     if (customKeyword) return customKeyword;
+  }  const onboardingActiveEarly = !hasMemberCheckinTextInPayload && await hasMemberOnboardingSession(allEvents, env);
+  if (onboardingActiveEarly && !hasBuiltInKeywordEvents) {
+    const signature = request.headers.get("x-line-signature");
+    if (!await verifyLineSignature(rawBody, signature, env.LINE_CHANNEL_SECRET)) return new Response("Invalid Signature", { status: 403, headers });
+    for (const event of allEvents) {
+      const handled = await handleMemberOnboardingEvent(event, env, ctx);
+      if (handled) return json({ success: true, mode: "member-onboarding", lineReply: handled });
+    }
   }
-  const lineActivityMaker = await handleLineActivityMaker(request, env, rawBody, allEvents, ctx);
+  const lineActivityMaker = hasBuiltInKeywordEvents ? null : await handleLineActivityMaker(request, env, rawBody, allEvents, ctx);
   if (lineActivityMaker) return lineActivityMaker;
-  const queryEvents = allEvents.filter((event) => normalizeKeyword(extractTriggerText(event)) === normalizeKeyword(queryKeyword));
-  const memberQrEvents = allEvents.filter((event) => normalizeKeyword(extractTriggerText(event)) === normalizeKeyword(memberQrKeyword));
-  const calendarEvents = allEvents.filter((event) => normalizeKeyword(extractTriggerText(event)) === normalizeKeyword(calendarKeyword));
-  const personalMessageEvents = allEvents.filter((event) => normalizeKeyword(extractTriggerText(event)) === normalizeKeyword(personalMessageKeyword));
-  const uidBindEvents = allEvents.filter((event) => parseUidBindKeyword(extractTriggerText(event)).active);
-  const vendorCardEvents = allEvents.filter((event) => normalizeKeyword(extractTriggerText(event)) === normalizeKeyword(vendorCardKeyword));
-  const marqueeKeywords = [marqueeKeyword, ...marqueeLegacyKeywords].map(normalizeKeyword);
-  const marqueeEvents = allEvents.filter((event) => marqueeKeywords.includes(normalizeKeyword(extractTriggerText(event))));
-  const pointEvents = allEvents
-    .map((event) => ({ event, query: parseMotherPointKeyword(extractTriggerText(event)) }))
-    .filter((match): match is { event: LineEvent; query: { uid: string } } => Boolean(match.query));
   const memberCheckinEvents = childMemberCheckinEnabled ? allEvents.filter((event) => isMemberCheckinText(extractTriggerText(event))) : [];
   const onboardingActive = !hasMemberCheckinTextInPayload && await hasMemberOnboardingSession(allEvents, env);
   if (!queryEvents.length && !memberQrEvents.length && !calendarEvents.length && !personalMessageEvents.length && !uidBindEvents.length && !memberCheckinEvents.length && !vendorCardEvents.length && !marqueeEvents.length && !pointEvents.length && !events.length && !onboardingActive) return null;
@@ -6379,4 +6383,6 @@ export default {
     return baseEntry.fetch(request, env, ctx);
   }
 };
+
+
 
