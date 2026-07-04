@@ -714,37 +714,72 @@ function managerRosterMemberKeys(row: Record<string, unknown>) {
     .filter(Boolean);
 }
 
+function memberRosterNameKey(row: Record<string, unknown>) {
+  return firstClean(row.name, row.rosterName, row.memberName, row.displayName, row.companyName).replace(/\s+/g, "").toLowerCase();
+}
+
+function rememberUniqueRemote(map: Map<string, { uid: string; row: Record<string, unknown>; conflict: boolean }>, key: string, uid: string, row: Record<string, unknown>) {
+  if (!key) return;
+  const current = map.get(key);
+  if (current && current.uid.toLowerCase() !== uid.toLowerCase()) map.set(key, { ...current, conflict: true });
+  else if (!current) map.set(key, { uid, row, conflict: false });
+}
+
 function mergeMotherUidIntoManagerRoster(data: Record<string, unknown>, motherRows: Array<Record<string, unknown>>) {
   const remoteByTypeAndMember = new Map<string, { uid: string; row: Record<string, unknown>; conflict: boolean }>();
+  const remoteByTypeAndName = new Map<string, { uid: string; row: Record<string, unknown>; conflict: boolean }>();
+  const remoteByUid = new Map<string, Record<string, unknown>>();
   for (const row of motherRows) {
     const uid = memberLineUid(row);
     if (!uid) continue;
     const type = clean(row.rosterType) === "vendor" ? "vendor" : "association";
-    for (const key of managerRosterMemberKeys(row)) {
-      const mapKey = `${type}:${key}`;
-      const current = remoteByTypeAndMember.get(mapKey);
-      if (current && current.uid.toLowerCase() !== uid.toLowerCase()) remoteByTypeAndMember.set(mapKey, { ...current, conflict: true });
-      else if (!current) remoteByTypeAndMember.set(mapKey, { uid, row, conflict: false });
-    }
+    for (const key of managerRosterMemberKeys(row)) rememberUniqueRemote(remoteByTypeAndMember, `${type}:${key}`, uid, row);
+    rememberUniqueRemote(remoteByTypeAndName, `${type}:${memberRosterNameKey(row)}`, uid, row);
+    if (!remoteByUid.has(uid.toLowerCase())) remoteByUid.set(uid.toLowerCase(), row);
   }
 
-  const report = { association: { written: 0, skipped: 0, conflicts: 0, missing: 0 }, vendor: { written: 0, skipped: 0, conflicts: 0, missing: 0 } };
+  const report = { association: { written: 0, skipped: 0, conflicts: 0, missing: 0, nameMatched: 0 }, vendor: { written: 0, skipped: 0, conflicts: 0, missing: 0, nameMatched: 0 } };
   let changed = false;
   for (const type of ["association", "vendor"] as const) {
     const rows = Array.isArray(data[type]) ? data[type] as Array<Record<string, unknown>> : [];
+    const localNameCounts = new Map<string, number>();
+    for (const row of rows) {
+      const nameKey = memberRosterNameKey(row);
+      if (nameKey) localNameCounts.set(nameKey, (localNameCounts.get(nameKey) || 0) + 1);
+    }
     for (const row of rows) {
       const keys = managerRosterMemberKeys(row);
       const currentUid = memberLineUid(row);
-      const remote = keys.map((key) => remoteByTypeAndMember.get(`${type}:${key}`)).find(Boolean);
+      if (currentUid) {
+        const uidRemoteRow = remoteByUid.get(currentUid.toLowerCase());
+        const remoteMemberNoForUid = uidRemoteRow ? firstClean(uidRemoteRow.aiweMemberNo, uidRemoteRow.rosterMemberNo, uidRemoteRow.memberNo, uidRemoteRow.user_login).toUpperCase() : "";
+        const localFormalMemberNo = firstClean(row.memberNo, row.rosterMemberNo, row.member_no).toUpperCase();
+        if (uidRemoteRow && memberRosterNameKey(uidRemoteRow) === memberRosterNameKey(row) && remoteMemberNoForUid && remoteMemberNoForUid !== localFormalMemberNo && clean(row.aiweMemberNo).toUpperCase() === remoteMemberNoForUid) {
+          row.aiweMemberNo = "";
+          changed = true;
+        }
+      }
+      let remote = keys.map((key) => remoteByTypeAndMember.get(`${type}:${key}`)).find(Boolean);
+      let matchedByName = false;
+      if (!remote && !currentUid) {
+        const nameKey = memberRosterNameKey(row);
+        if (nameKey && localNameCounts.get(nameKey) === 1) {
+          remote = remoteByTypeAndName.get(`${type}:${nameKey}`);
+          matchedByName = Boolean(remote && !remote.conflict);
+        }
+      }
       if (!remote) { report[type].missing += 1; continue; }
       if (remote.conflict) { report[type].conflicts += 1; continue; }
       if (currentUid && currentUid.toLowerCase() !== remote.uid.toLowerCase()) { report[type].conflicts += 1; continue; }
       if (currentUid === remote.uid) { report[type].skipped += 1; continue; }
       setAiweRowLineUid(row, remote.uid);
-      if (!clean(row.aiweMemberNo)) row.aiweMemberNo = firstClean(remote.row.aiweMemberNo, remote.row.rosterMemberNo, remote.row.memberNo, remote.row.user_login);
+      const remoteMemberNo = firstClean(remote.row.aiweMemberNo, remote.row.rosterMemberNo, remote.row.memberNo, remote.row.user_login);
+      if (matchedByName && clean(row.aiweMemberNo).toUpperCase() === remoteMemberNo.toUpperCase() && !managerRosterMemberKeys(row).includes(remoteMemberNo.toUpperCase())) row.aiweMemberNo = "";
+      if (!matchedByName && !clean(row.aiweMemberNo)) row.aiweMemberNo = remoteMemberNo;
       if (!clean(row.phone)) row.phone = firstClean(remote.row.phone, remote.row.mobile, remote.row.tel, remote.row.telephone);
       if (!clean(row.email) || isSyntheticLineEmail(row.email)) row.email = isSyntheticLineEmail(firstClean(remote.row.email, remote.row.user_email)) ? "" : firstClean(remote.row.email, remote.row.user_email);
       report[type].written += 1;
+      if (matchedByName) report[type].nameMatched += 1;
       changed = true;
     }
   }
