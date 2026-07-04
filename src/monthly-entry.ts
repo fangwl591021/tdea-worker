@@ -1,4 +1,4 @@
-import baseEntry from "./roster-sync-entry4";
+﻿import baseEntry from "./roster-sync-entry4";
 
 type Env = { ADMIN_EMAILS?: string; ADMIN_LOGIN_USER?: string; ADMIN_LOGIN_PASSWORD?: string; ASSETS_BUCKET?: R2Bucket; LINE_CHANNEL_SECRET?: string; LINE_CHANNEL_ACCESS_TOKEN?: string; FORWARD_WEBHOOK_URL?: string; GOOGLE_FORMS_SCRIPT_URL?: string; GOOGLE_FORMS_SHARED_SECRET?: string; OPNFORM_API_BASE?: string; OPNFORM_PUBLIC_BASE?: string; OPNFORM_API_TOKEN?: string; OPNFORM_WORKSPACE_ID?: string; OPNFORM_WEBHOOK_SECRET?: string; WETW_POINT_API_KEY?: string; WETW_SHOP_ID?: string; WETW_POINT_TYPE?: string; TDEA_POINT_EXTERNAL_SYNC?: string; TDEA_ADMIN_LINE_USER_IDS?: string; AIWE_WP_USER?: string; AIWE_WP_APP_PASSWORD?: string; OPENAI_API_KEY?: string; OPENAI_MODEL?: string };
 type LineEvent = { type?: string; replyToken?: string; message?: { type?: string; id?: string; text?: string }; postback?: { data?: string }; source?: { type?: string; userId?: string; groupId?: string; roomId?: string } };
@@ -1844,10 +1844,22 @@ function nativeMemberAutoFieldKeys() {
 async function resolveLineLoginMember(env: Env, lineUserId: string): Promise<LineLoginMember | null> {
   const uid = clean(lineUserId);
   if (!uid) return null;
+  const managerData = await readManagerData(env).catch(() => null);
+  const managerMember = resolveLineLoginMemberFromManagerData(managerData, uid);
+  if (managerMember) return managerMember;
   const rows = await readAiweMembers(env);
   const lowerUid = uid.toLowerCase();
-  const row = rows.find((item) => memberLineUid(item).toLowerCase() === lowerUid);
-  if (!row) return null;
+  const matches = rows.filter((item) => memberLineUid(item).toLowerCase() === lowerUid);
+  if (!matches.length) return null;
+  const row = matches
+    .map((item) => {
+      const email = firstClean(item.email, item.user_email);
+      const phone = firstClean(item.phone, item.mobile, item.tel, item.telephone, item.contactPhone);
+      const id = clean(item.id);
+      const score = (isSyntheticLineEmail(email) ? 0 : 20) + (phone ? 10 : 0) + (/^(association|vendor)-/i.test(id) ? 8 : 0) + (clean(item.source) === "wp-rest-users" ? 0 : 4);
+      return { item, score };
+    })
+    .sort((a, b) => b.score - a.score)[0].item;
   const rosterType = clean(row.rosterType) === "vendor" ? "vendor" : "association";
   const memberNo = firstClean(row.rosterMemberNo, row.memberNo, row.user_login);
   const name = rosterType === "vendor"
@@ -1868,6 +1880,32 @@ async function resolveLineLoginMember(env: Env, lineUserId: string): Promise<Lin
   };
 }
 
+function resolveLineLoginMemberFromManagerData(data: Record<string, unknown> | null, lineUserId: string): LineLoginMember | null {
+  if (!data) return null;
+  const lowerUid = clean(lineUserId).toLowerCase();
+  for (const rosterType of ["association", "vendor"] as const) {
+    const rows = Array.isArray(data[rosterType]) ? data[rosterType] as Array<Record<string, unknown>> : [];
+    const row = rows.find((item) => explicitMemberLineUid(item).toLowerCase() === lowerUid || memberLineUid(item).toLowerCase() === lowerUid);
+    if (!row) continue;
+    const memberNo = firstClean(row.memberNo, row.rosterMemberNo, row.member_no, row.aiweMemberNo, row.motherMemberNo, row.user_login);
+    const name = rosterType === "vendor"
+      ? firstClean(row.companyName, row.name, row.rosterName, row.displayName)
+      : firstClean(row.name, row.rosterName, row.memberName, row.displayName);
+    return {
+      rosterType,
+      memberNo,
+      name,
+      role: rosterType === "vendor" ? "廠商會員" : "協會會員",
+      lineUserId: clean(lineUserId),
+      company: rosterType === "vendor" ? firstClean(row.companyName, row.company, row.organization, row.unit) : firstClean(row.company, row.companyName, row.organization, row.unit),
+      phone: firstClean(row.phone, row.mobile, row.tel, row.telephone, row.contactPhone, row["手機"], row["手機號碼"], row["行動電話"], row["電話"]),
+      email: isSyntheticLineEmail(firstClean(row.email, row.user_email)) ? "" : firstClean(row.email, row.user_email),
+      gender: firstClean(row.gender, row.sex),
+      raw: row
+    };
+  }
+  return null;
+}
 function publicLineLoginMember(member: LineLoginMember) {
   return {
     rosterType: member.rosterType,
@@ -6341,3 +6379,4 @@ export default {
     return baseEntry.fetch(request, env, ctx);
   }
 };
+
