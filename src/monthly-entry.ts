@@ -5031,6 +5031,39 @@ function extractSelectOptions(html: string, name: string) {
   return options;
 }
 
+function extractNamedTextareaValue(html: string, name: string) {
+  const textareas = String(html || "").match(/<textarea\b[^>]*>[\s\S]*?<\/textarea>/gi) || [];
+  for (const tag of textareas) {
+    if (htmlAttribute(tag, "name") === name) return stripHtmlText(tag.replace(/^<textarea\b[^>]*>/i, "").replace(/<\/textarea>$/i, ""));
+  }
+  return "";
+}
+
+function extractSelectedOptionValue(html: string, name: string) {
+  const selects = String(html || "").match(/<select\b[^>]*>[\s\S]*?<\/select>/gi) || [];
+  const select = selects.find((tag) => htmlAttribute(tag, "name") === name || htmlAttribute(tag, "id") === name);
+  if (!select) return "";
+  const optionTags = select.match(/<option\b[^>]*>[\s\S]*?<\/option>/gi) || [];
+  const selected = optionTags.find((tag) => /\sselected(?:\s|=|>)/i.test(tag));
+  if (!selected) return "";
+  return clean(htmlAttribute(selected, "value")) || clean(stripHtmlText(selected));
+}
+
+function extractNamedFormValue(html: string, name: string) {
+  return clean(extractNamedInputValue(html, name)) || clean(extractSelectedOptionValue(html, name)) || clean(extractNamedTextareaValue(html, name));
+}
+
+function extractMotherRegisterValues(html: string) {
+  return {
+    display_name: extractNamedFormValue(html, "display_name"),
+    gender: extractNamedFormValue(html, "gender"),
+    birthday: extractNamedFormValue(html, "birthday"),
+    phone: phoneDigits(extractNamedFormValue(html, "phone")),
+    email: clean(extractNamedFormValue(html, "email")).toLowerCase(),
+    city: extractNamedFormValue(html, "city"),
+    category: extractNamedFormValue(html, "category")
+  };
+}
 function extractMotherRegisterSchema(html: string) {
   const gender = extractSelectOptions(html, "gender");
   const city = extractSelectOptions(html, "city");
@@ -5074,7 +5107,7 @@ async function getMotherRegisterFormApi(request: Request, env: Env) {
   if (!page.response.ok) return json({ success: false, message: `母站註冊頁讀取失敗：HTTP ${page.response.status}` }, 502);
   const nonce = extractNamedInputValue(page.html, "mfmm_nonce");
   if (!nonce) return json({ success: false, message: "母站註冊頁未提供可送出的表單，請確認連結是否仍有效" }, 502);
-  return json({ success: true, data: extractMotherRegisterSchema(page.html) });
+  return json({ success: true, data: { ...extractMotherRegisterSchema(page.html), values: extractMotherRegisterValues(page.html) } });
 }
 
 function normalizeMotherRegisterFields(input: Record<string, unknown>) {
@@ -5141,6 +5174,30 @@ function motherRegisterRecordFromSubmit(params: URLSearchParams, fields: ReturnT
     submitStatus: "sent-to-mother",
     motherHttpStatus: status.httpStatus,
     motherMessage: status.message
+  };
+}
+
+function motherRegisterRecordFromForm(params: URLSearchParams, values: ReturnType<typeof extractMotherRegisterValues>, status: { httpStatus: number; message: string }) {
+  return {
+    id: `MR-FORM-${Date.now()}-${codeToken(4)}`,
+    createdAt: new Date().toISOString(),
+    importedAt: new Date().toISOString(),
+    lineUserId: clean(params.get("line_userid")),
+    shopId: clean(params.get("shop_id")),
+    clientId: clean(params.get("client_id")),
+    redirectUri: clean(params.get("redirect_uri")),
+    botTokenPresent: Boolean(clean(params.get("bot_token"))),
+    displayName: clean(values.display_name),
+    gender: clean(values.gender),
+    birthday: clean(values.birthday),
+    phone: phoneDigits(values.phone),
+    email: clean(values.email).toLowerCase(),
+    city: clean(values.city),
+    category: clean(values.category),
+    submitStatus: "captured-from-mother-form",
+    motherHttpStatus: status.httpStatus,
+    motherMessage: status.message,
+    source: "mother-form/cus_account"
   };
 }
 
@@ -5293,6 +5350,54 @@ async function syncMotherRegisterRecordsApi(request: Request, env: Env) {
   return json({ success: true, source: `wetw/${endpoint}`, shopId, clientId, fetched: records.length, ...report, data: records.slice(0, 20) });
 }
 
+function motherRegisterParamsFromCaptureInput(input: Record<string, unknown>) {
+  const sourceUrl = clean(input.sourceUrl || input.url || input.registrationUrl);
+  if (sourceUrl) {
+    try {
+      return motherRegisterParamsFromSearch(new URL(sourceUrl).searchParams);
+    } catch (_) {
+      return new URLSearchParams();
+    }
+  }
+  return motherRegisterParamsFromRecord(asRecord(input.sourceParams || input));
+}
+
+async function captureMotherRegisterFormApi(request: Request, env: Env) {
+  const guard = await requireAdmin(request, env);
+  if (guard) return guard;
+  const input = asRecord(await request.json().catch(() => ({})));
+  const params = motherRegisterParamsFromCaptureInput(input);
+  const missingParams = motherRegisterMissingParams(params);
+  if (missingParams.length) return json({ success: false, message: `缺少母站註冊必要參數：${missingParams.join(", ")}`, missing: missingParams }, 400);
+  const page = await fetchMotherRegisterPage(params);
+  if (!page.response.ok) return json({ success: false, message: `母站註冊頁讀取失敗：HTTP ${page.response.status}` }, 502);
+  const values = extractMotherRegisterValues(page.html);
+  const hasUsefulData = clean(values.display_name) || phoneDigits(values.phone) || clean(values.email) || clean(params.get("line_userid"));
+  if (!hasUsefulData) return json({ success: false, message: "母站註冊頁沒有可補入的會員欄位，請確認連結是否有效" }, 422);
+  const record = motherRegisterRecordFromForm(params, values, {
+    httpStatus: page.response.status,
+    message: "從母站 cus_account 表單補入"
+  });
+  const report = await upsertMotherRegisterRecords(env, [record]);
+  return json({
+    success: true,
+    message: "已從母站註冊頁補入獨立資料頁。",
+    inserted: report.inserted,
+    updated: report.updated,
+    total: report.total,
+    data: {
+      displayName: record.displayName,
+      phone: record.phone,
+      email: record.email,
+      city: record.city,
+      category: record.category,
+      lineUserId: record.lineUserId,
+      shopId: record.shopId,
+      clientId: record.clientId,
+      source: record.source
+    }
+  });
+}
 async function listMotherRegisterRecordsApi(request: Request, env: Env) {
   const guard = await requireAdmin(request, env);
   if (guard) return guard;
@@ -6729,6 +6834,7 @@ export default {
 	    if (request.method === "GET" && url.pathname === "/api/mother-register/form") return getMotherRegisterFormApi(request, env);
 	    if (request.method === "POST" && url.pathname === "/api/mother-register/submit") return submitMotherRegisterApi(request, env);
 	    if ((request.method === "POST" || request.method === "GET") && url.pathname === "/api/mother-register/sync") return syncMotherRegisterRecordsApi(request, env);
+	    if (request.method === "POST" && url.pathname === "/api/mother-register/capture") return captureMotherRegisterFormApi(request, env);
 	    if (request.method === "GET" && url.pathname === "/api/mother-register/records") return listMotherRegisterRecordsApi(request, env);
 	    if ((request.method === "POST" || request.method === "GET") && url.pathname === "/api/aiwe-members/sync") return syncAiweMembersFromMotherApi(request, env);
 	    if (request.method === "POST" && url.pathname === "/api/aiwe-members/import") return importAiweMembersApi(request, env);

@@ -1333,7 +1333,7 @@
       <td><span class="badge live">${esc(row.submitStatus || "sent-to-mother")}</span><br><span class="muted">HTTP ${esc(row.motherHttpStatus || "-")}</span></td>
     </tr>`;
     }).join("");
-    return `<section class="panel"><div class="panel-head"><div><h2 class="panel-title">母站註冊資料</h2><div class="muted">這裡只保存母站註冊表送回資料，不併入會員 CRM，也不改寫名冊。</div></div><div class="actions">${search}<span class="badge live" data-mother-register-count>${n(rows.length)} / ${n(allRows.length)} 筆</span><button class="btn" data-load-mother-register>刷新資料</button></div></div>${allRows.length ? `<div class="table-wrap"><table><thead><tr><th>時間</th><th>姓名</th><th>聯絡</th><th>縣市</th><th>產業類別</th><th>LINE UID</th><th>shop/client</th><th>母站送出</th></tr></thead><tbody>${bodyRows}</tbody></table></div>` : empty("目前沒有母站註冊資料")}</section>`;
+    return `<section class="panel"><div class="panel-head"><div><h2 class="panel-title">母站註冊資料</h2><div class="muted">這裡只保存母站註冊表送回資料，不併入會員 CRM，也不改寫名冊。</div></div><div class="actions">${search}<div class="field" style="min-width:300px;max-width:520px"><input data-mother-register-capture-url placeholder="貼上母站註冊網址補入"></div><button class="btn" data-capture-mother-register>補入連結</button><span class="badge live" data-mother-register-count>${n(rows.length)} / ${n(allRows.length)} 筆</span><button class="btn" data-load-mother-register>刷新資料</button></div></div>${allRows.length ? `<div class="table-wrap"><table><thead><tr><th>時間</th><th>姓名</th><th>聯絡</th><th>縣市</th><th>產業類別</th><th>LINE UID</th><th>shop/client</th><th>母站送出</th></tr></thead><tbody>${bodyRows}</tbody></table></div>` : empty("目前沒有母站註冊資料")}</section>`;
   }
 
   function downloadMotherRegisterRecords() {
@@ -2031,6 +2031,7 @@
     const worker = document.querySelector("[data-worker]"); if (worker) worker.onclick = async () => { try { const r = await fetch(api + "/api/activities"); const j = await r.json(); toast(j.success ? "Worker API 連線正常" : "Worker API 回應異常"); } catch (_) { toast("Worker API 無法連線"); } };
     document.querySelectorAll("[data-load-mother-register]").forEach(b => b.onclick = async () => { b.disabled = true; await loadMotherRegisterRecords(true); b.disabled = false; });
     document.querySelectorAll("[data-sync-mother-register]").forEach(b => b.onclick = async () => { b.disabled = true; await syncMotherRegisterRecords(); b.disabled = false; });
+    document.querySelectorAll("[data-capture-mother-register]").forEach(b => b.onclick = async () => { b.disabled = true; await captureMotherRegisterRecord(); b.disabled = false; });
     document.querySelectorAll("[data-download-mother-register]").forEach(b => b.onclick = downloadMotherRegisterRecords);
     const exp = document.querySelector("[data-export]"); if (exp) exp.onclick = () => { navigator.clipboard.writeText(JSON.stringify(state.data, null, 2)); toast("備份 JSON 已複製"); };
     const copy = document.querySelector("[data-copy]"); if (copy) copy.onclick = () => { navigator.clipboard.writeText(location.href); toast("預覽網址已複製"); };
@@ -2288,6 +2289,28 @@
       toast(`母站同步完成：新增 ${result.inserted || 0}，更新 ${result.updated || 0}`);
     } catch (error) {
       toast(error?.message || "母站同步失敗");
+    }
+  }
+  async function captureMotherRegisterRecord() {
+    if (!hasAdminIdentity()) return toast("請先登入管理者");
+    const input = document.querySelector("[data-mother-register-capture-url]");
+    const sourceUrl = String(input?.value || "").trim();
+    if (!sourceUrl) return toast("請先貼上母站註冊網址");
+    try {
+      toast("正在補入母站註冊資料...");
+      const response = await fetch(api + "/api/mother-register/capture", {
+        method: "POST",
+        headers: adminHeaders({ "content-type": "application/json" }),
+        body: JSON.stringify({ sourceUrl })
+      });
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok || !result.success) throw new Error(result.message || "母站註冊資料補入失敗");
+      if (input) input.value = "";
+      await loadMotherRegisterRecords();
+      render();
+      toast(`補入完成：新增 ${result.inserted || 0}，更新 ${result.updated || 0}`);
+    } catch (error) {
+      toast(error?.message || "母站註冊資料補入失敗");
     }
   }
   async function loadRedeemRecords(showMessage = false) {
