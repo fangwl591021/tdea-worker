@@ -24,7 +24,7 @@ import {
   vendorCardKeyword
 } from "./line-keywords";
 
-type Env = { ADMIN_EMAILS?: string; ADMIN_LOGIN_USER?: string; ADMIN_LOGIN_PASSWORD?: string; ASSETS_BUCKET?: R2Bucket; LINE_CHANNEL_SECRET?: string; LINE_CHANNEL_ACCESS_TOKEN?: string; FORWARD_WEBHOOK_URL?: string; GOOGLE_FORMS_SCRIPT_URL?: string; GOOGLE_FORMS_SHARED_SECRET?: string; OPNFORM_API_BASE?: string; OPNFORM_PUBLIC_BASE?: string; OPNFORM_API_TOKEN?: string; OPNFORM_WORKSPACE_ID?: string; OPNFORM_WEBHOOK_SECRET?: string; WETW_POINT_API_KEY?: string; WETW_SHOP_ID?: string; WETW_POINT_TYPE?: string; TDEA_POINT_EXTERNAL_SYNC?: string; TDEA_ADMIN_LINE_USER_IDS?: string; AIWE_WP_USER?: string; AIWE_WP_APP_PASSWORD?: string; OPENAI_API_KEY?: string; OPENAI_MODEL?: string };
+type Env = { ADMIN_EMAILS?: string; ADMIN_LOGIN_USER?: string; ADMIN_LOGIN_PASSWORD?: string; ASSETS_BUCKET?: R2Bucket; LINE_CHANNEL_SECRET?: string; LINE_CHANNEL_ACCESS_TOKEN?: string; FORWARD_WEBHOOK_URL?: string; GOOGLE_FORMS_SCRIPT_URL?: string; GOOGLE_FORMS_SHARED_SECRET?: string; OPNFORM_API_BASE?: string; OPNFORM_PUBLIC_BASE?: string; OPNFORM_API_TOKEN?: string; OPNFORM_WORKSPACE_ID?: string; OPNFORM_WEBHOOK_SECRET?: string; WETW_POINT_API_KEY?: string; WETW_MEMBER_API_KEY?: string; WETW_TDEA_SHOP_ID?: string; WETW_TDEA_CLIENT_ID?: string; WETW_SHOP_ID?: string; WETW_POINT_TYPE?: string; TDEA_POINT_EXTERNAL_SYNC?: string; TDEA_ADMIN_LINE_USER_IDS?: string; AIWE_WP_USER?: string; AIWE_WP_APP_PASSWORD?: string; OPENAI_API_KEY?: string; OPENAI_MODEL?: string };
 type LineEvent = { type?: string; replyToken?: string; message?: { type?: string; id?: string; text?: string }; postback?: { data?: string }; source?: { type?: string; userId?: string; groupId?: string; roomId?: string } };
 type MonthlyPage = { id?: string; manual?: boolean; activityNo?: string; activityId?: string; activityName?: string; imageUrl?: string; galleryUrls?: string[]; formImageUrl?: string; detailTitle?: string; detailText?: string; detailUrl?: string; formUrl?: string; shareUrl?: string; order?: number };
 type MonthlyConfig = { enabled?: boolean; keyword?: string; month?: string; altText?: string; detailBaseUrl?: string; pages?: MonthlyPage[]; updatedAt?: string };
@@ -98,6 +98,7 @@ const publicAppUrl = "https://fangwl591021.github.io/tdea-worker/";
 const publicLiffUrl = "https://liff.line.me/2005868456-2jmxqyFU";
 const nativeLiffUrl = "https://liff.line.me/2005868456-cfANNVou";
 const pointApiBase = "https://aiwe.cc/index.php/wp-json/wetw-point/v1";
+const lineUserApiBase = "https://aiwe.cc/index.php/wp-json/wetw/v1";
 function motherPointSyncRequired(env: Env) {
   return clean(env.TDEA_POINT_EXTERNAL_SYNC).toLowerCase() !== "false";
 }
@@ -5151,6 +5152,147 @@ async function appendMotherRegisterRecord(env: Env, record: Record<string, unkno
   return record;
 }
 
+function motherRegisterRecordKey(record: Record<string, unknown>) {
+  const lineUserId = firstClean(record.lineUserId, record.LINE_user_id, record.line_userid, record.line_user_id);
+  const shopId = firstClean(record.shopId, record.shop_id);
+  const clientId = firstClean(record.clientId, record.client_id);
+  if (lineUserId) return `line:${lineUserId}|shop:${shopId}|client:${clientId}`;
+  const phone = phoneDigits(firstClean(record.phone, record.mobile, record.tel));
+  const name = firstClean(record.displayName, record.name);
+  return `fallback:${phone}|${name}|shop:${shopId}|client:${clientId}`;
+}
+
+async function upsertMotherRegisterRecords(env: Env, incoming: Array<Record<string, unknown>>) {
+  const rows = await readMotherRegisterRecords(env);
+  const index = new Map<string, number>();
+  rows.forEach((row, rowIndex) => index.set(motherRegisterRecordKey(row), rowIndex));
+  let inserted = 0;
+  let updated = 0;
+  incoming.forEach((record) => {
+    const key = motherRegisterRecordKey(record);
+    const existingIndex = index.get(key);
+    if (existingIndex === undefined) {
+      rows.unshift(record);
+      inserted += 1;
+      return;
+    }
+    const existing = rows[existingIndex];
+    rows[existingIndex] = {
+      ...record,
+      ...existing,
+      raw: record.raw || existing.raw,
+      source: firstClean(existing.source, record.source),
+      importedAt: new Date().toISOString()
+    };
+    updated += 1;
+  });
+  await writeMotherRegisterRecords(env, rows.slice(0, 3000));
+  return { inserted, updated, total: rows.length };
+}
+
+function wetwMemberApiKey(env: Env) {
+  return firstClean(env.WETW_MEMBER_API_KEY, env.WETW_POINT_API_KEY);
+}
+
+function motherRegisterSyncEndpoint(value: unknown) {
+  const endpoint = clean(value || "query-line-user-list");
+  return endpoint === "query-shop-2500-line-user-list" ? endpoint : "query-line-user-list";
+}
+
+function motherRegisterLineRows(body: Record<string, unknown>) {
+  const data = body.data;
+  const dataRecord = asRecord(data);
+  const candidates = [data, dataRecord.list, dataRecord.rows, dataRecord.data, body.list, body.rows];
+  for (const candidate of candidates) {
+    if (Array.isArray(candidate)) return candidate.map(asRecord).filter((row) => Object.keys(row).length);
+  }
+  return [];
+}
+
+async function queryMotherRegisterLineUsers(env: Env, options: { endpoint?: string; shopId: string; clientId: string; startPage: number; pages: number; perPage: number }) {
+  const apiKey = wetwMemberApiKey(env);
+  if (!apiKey) return { success: false, code: "missing_api_key", message: "WETW_MEMBER_API_KEY / WETW_POINT_API_KEY is not configured", rows: [] as Record<string, unknown>[] };
+  const endpoint = motherRegisterSyncEndpoint(options.endpoint);
+  const rows: Record<string, unknown>[] = [];
+  let lastBody: Record<string, unknown> = {};
+  let httpStatus = 0;
+  for (let offset = 0; offset < options.pages; offset += 1) {
+    const page = options.startPage + offset;
+    const payload = {
+      api_key: apiKey,
+      shop_id: Number(options.shopId) || options.shopId,
+      client_id: options.clientId,
+      page,
+      per_page: options.perPage
+    };
+    const response = await fetch(`${lineUserApiBase}/${endpoint}`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(payload)
+    });
+    httpStatus = response.status;
+    lastBody = await response.json().catch(() => ({ success: false, message: "Invalid JSON response" })) as Record<string, unknown>;
+    if (lastBody.success === false) return { success: false, httpStatus, endpoint, rows, ...lastBody };
+    const pageRows = motherRegisterLineRows(lastBody);
+    rows.push(...pageRows);
+    if (!pageRows.length || pageRows.length < options.perPage) break;
+  }
+  return { success: true, httpStatus, endpoint, rows, raw: lastBody };
+}
+
+function motherRegisterRecordFromWetw(row: Record<string, unknown>, meta: { shopId: string; clientId: string; endpoint: string; httpStatus: number }, index: number) {
+  const lineUserId = firstClean(row.LINE_user_id, row.lineUserId, row.line_userid, row.line_user_id, row.uid, row.user_line_id);
+  const externalId = firstClean(row.id, row.user_id, row.ID, lineUserId, index);
+  const createdAt = firstClean(row.created_at, row.create_at, row.registered_at, row.updated_at, row.update_at, row.date) || new Date().toISOString();
+  return {
+    id: `MR-WETW-${String(externalId).replace(/[^a-zA-Z0-9_-]/g, "").slice(0, 48) || `${Date.now()}-${index}`}`,
+    createdAt,
+    importedAt: new Date().toISOString(),
+    lineUserId,
+    shopId: firstClean(row.shop_id, meta.shopId),
+    clientId: firstClean(row.client_id, row.clientId, meta.clientId),
+    displayName: firstClean(row.display_name, row.displayName, row.name, row.user_name, row.username, row.nickname, row.nick_name, row.real_name),
+    gender: firstClean(row.gender, row.sex),
+    birthday: firstClean(row.birthday, row.birth, row.birth_date),
+    phone: firstClean(row.phone, row.mobile, row.tel, row.telephone, row.user_phone),
+    email: firstClean(row.email, row.user_email),
+    city: firstClean(row.city, row.county, row.address_city),
+    category: firstClean(row.category, row.industry, row.business_category, row.user_category),
+    submitStatus: "imported-from-mother",
+    motherHttpStatus: meta.httpStatus,
+    motherMessage: "母站 wetw 名單同步",
+    source: `wetw/${meta.endpoint}`,
+    raw: row
+  };
+}
+
+async function syncMotherRegisterRecordsApi(request: Request, env: Env) {
+  const guard = await requireAdmin(request, env);
+  if (guard) return guard;
+  const url = new URL(request.url);
+  const input = request.method === "POST" ? asRecord(await request.json().catch(() => ({}))) : {};
+  const shopId = firstClean(input.shop_id, input.shopId, url.searchParams.get("shop_id"), env.WETW_TDEA_SHOP_ID, "653");
+  const clientId = firstClean(input.client_id, input.clientId, url.searchParams.get("client_id"), env.WETW_TDEA_CLIENT_ID, "2005868456");
+  const startPage = Math.max(1, numberValue(firstClean(input.start, url.searchParams.get("start"))) || 1);
+  const pages = Math.max(1, Math.min(20, numberValue(firstClean(input.pages, url.searchParams.get("pages"))) || 5));
+  const perPage = Math.max(1, Math.min(500, numberValue(firstClean(input.per_page, input.perPage, url.searchParams.get("per_page"))) || 100));
+  const result = await queryMotherRegisterLineUsers(env, {
+    endpoint: firstClean(input.endpoint, url.searchParams.get("endpoint")),
+    shopId,
+    clientId,
+    startPage,
+    pages,
+    perPage
+  });
+  if (result.success !== true) {
+    return json({ success: false, message: clean(result.message) || clean(result.code) || "母站會員名單同步失敗", source: "wetw/query-line-user-list", result: { ...result, rows: undefined, raw: undefined } }, 502);
+  }
+  const endpoint = clean(result.endpoint) || "query-line-user-list";
+  const records = result.rows.map((row, index) => motherRegisterRecordFromWetw(row, { shopId, clientId, endpoint, httpStatus: numberValue(result.httpStatus) || 200 }, index));
+  const report = await upsertMotherRegisterRecords(env, records);
+  return json({ success: true, source: `wetw/${endpoint}`, shopId, clientId, fetched: records.length, ...report, data: records.slice(0, 20) });
+}
+
 async function listMotherRegisterRecordsApi(request: Request, env: Env) {
   const guard = await requireAdmin(request, env);
   if (guard) return guard;
@@ -6586,6 +6728,7 @@ export default {
 	    if (request.method === "GET" && url.pathname === "/api/aiwe-members-public") return listAiweMembersPublicApi(request, env);
 	    if (request.method === "GET" && url.pathname === "/api/mother-register/form") return getMotherRegisterFormApi(request, env);
 	    if (request.method === "POST" && url.pathname === "/api/mother-register/submit") return submitMotherRegisterApi(request, env);
+	    if ((request.method === "POST" || request.method === "GET") && url.pathname === "/api/mother-register/sync") return syncMotherRegisterRecordsApi(request, env);
 	    if (request.method === "GET" && url.pathname === "/api/mother-register/records") return listMotherRegisterRecordsApi(request, env);
 	    if ((request.method === "POST" || request.method === "GET") && url.pathname === "/api/aiwe-members/sync") return syncAiweMembersFromMotherApi(request, env);
 	    if (request.method === "POST" && url.pathname === "/api/aiwe-members/import") return importAiweMembersApi(request, env);

@@ -1075,7 +1075,7 @@
     if (state.view === "vendor") return `<button class="btn" data-import="vendor">匯入 CSV</button><button class="btn primary" data-drawer="vendor:new">新增廠商會員</button>`;
     if (state.view === "creator") return `<button class="btn" data-import-line-drafts>匯入 LINE 草稿</button><button class="btn" data-reset>清空表單</button>`;
     if (state.view === "redeem") return `<button class="btn" data-load-redeem>刷新紀錄</button>`;
-    if (state.view === "motherRegister") return `<button class="btn" data-load-mother-register>刷新資料</button><button class="btn primary" data-download-mother-register>下載 CSV</button>`;
+    if (state.view === "motherRegister") return `<button class="btn" data-load-mother-register>刷新資料</button><button class="btn" data-sync-mother-register>從母站同步</button><button class="btn primary" data-download-mother-register>下載 CSV</button>`;
     if (state.view === "keywords") return `<button class="btn" data-refresh-keywords>刷新列表</button><button class="btn primary" data-keyword-new>新增關鍵字</button>`;
     if (state.view === "adminWhitelist") return `<button class="btn" data-load-whitelist>重新載入</button><button class="btn primary" data-save-whitelist>儲存權限名單</button>`;
     return `<label class="sync-toggle"><input type="checkbox" data-auto-sync ${autoSyncEnabled() ? "checked" : ""}> 自動同步</label><button class="btn" data-sync-registrations>同步報名</button><button class="btn" data-worker>檢查 Worker</button><button class="btn danger" data-clear-test>清空測試資料</button><button class="btn primary" data-nav="creator">新增活動</button>`;
@@ -1981,6 +1981,7 @@
     const loadRoster = document.querySelector("[data-load-roster]"); if (loadRoster) loadRoster.onclick = () => loadRosterSeed(true);
     const worker = document.querySelector("[data-worker]"); if (worker) worker.onclick = async () => { try { const r = await fetch(api + "/api/activities"); const j = await r.json(); toast(j.success ? "Worker API 連線正常" : "Worker API 回應異常"); } catch (_) { toast("Worker API 無法連線"); } };
     document.querySelectorAll("[data-load-mother-register]").forEach(b => b.onclick = async () => { b.disabled = true; await loadMotherRegisterRecords(true); b.disabled = false; });
+    document.querySelectorAll("[data-sync-mother-register]").forEach(b => b.onclick = async () => { b.disabled = true; await syncMotherRegisterRecords(); b.disabled = false; });
     document.querySelectorAll("[data-download-mother-register]").forEach(b => b.onclick = downloadMotherRegisterRecords);
     const exp = document.querySelector("[data-export]"); if (exp) exp.onclick = () => { navigator.clipboard.writeText(JSON.stringify(state.data, null, 2)); toast("備份 JSON 已複製"); };
     const copy = document.querySelector("[data-copy]"); if (copy) copy.onclick = () => { navigator.clipboard.writeText(location.href); toast("預覽網址已複製"); };
@@ -2220,6 +2221,24 @@
     } catch (error) {
       state.motherRegisterRecords ||= [];
       if (showMessage) toast(error?.message || "母站註冊資料讀取失敗");
+    }
+  }
+  async function syncMotherRegisterRecords() {
+    if (!hasAdminIdentity()) return toast("請先登入管理者");
+    try {
+      toast("正在從母站同步...");
+      const response = await fetch(api + "/api/mother-register/sync", {
+        method: "POST",
+        headers: adminHeaders({ "content-type": "application/json" }),
+        body: JSON.stringify({ shop_id: "653", client_id: "2005868456", pages: 5, per_page: 100 })
+      });
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok || !result.success) throw new Error(result.message || "母站同步失敗");
+      await loadMotherRegisterRecords();
+      render();
+      toast(`母站同步完成：新增 ${result.inserted || 0}，更新 ${result.updated || 0}`);
+    } catch (error) {
+      toast(error?.message || "母站同步失敗");
     }
   }
   async function loadRedeemRecords(showMessage = false) {
