@@ -23,7 +23,7 @@ export const personalMessageKeyword = "TDEA個人訊息";
 export const uidBindKeyword = "UID";
 export const motherPointAliases = ["TDEA點數", "TDEA點數查詢", "TDEA查點", "TDEA紅利"];
 export const memberCheckinKeyword = "會員報到";
-export const memberCheckinAliases = [memberCheckinKeyword, "會員打卡", "會員簽到"];
+export const memberCheckinAliases = [memberCheckinKeyword, "會員簽到"];
 export const lineActivityCreateKeyword = "TDEA建立活動";
 export const lineActivityCreateAliases = ["TDEA新增活動", "TDEA活動上稿", "TDEA製作活動"];
 
@@ -127,7 +127,7 @@ export function parseMemberCheckinKeyword(text: string): MemberCheckinQuery {
   const keyword = memberCheckinAliases.map(normalizeKeyword).find((item) => normalized === item || normalized.startsWith(item));
   if (!keyword) return { active: false, memberNo: "", name: "" };
   if (normalized === keyword) return { active: true, memberNo: "", name: "" };
-  const suffix = raw.replace(/^(會員報到|會員打卡|會員簽到)\s*[+＋:：,，]?\s*/i, "").trim();
+  const suffix = raw.replace(/^(會員報到|會員簽到)\s*[+＋:：,，]?\s*/i, "").trim();
   const parts = suffix.split(/[\s,，、]+/).map(clean).filter(Boolean);
   return { active: true, memberNo: clean(parts[0]).toUpperCase(), name: clean(parts.slice(1).join(" ")) };
 }
