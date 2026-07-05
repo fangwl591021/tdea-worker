@@ -17,9 +17,11 @@ export const marqueeKeyword = "TDEA廣告贈點";
 export const queryKeyword = "TDEA活動查詢";
 export const marqueeLegacyKeywords = ["TDEA跑馬燈"];
 export const memberQrKeyword = "TDEA會員QR";
+export const memberQrAliases = ["會員查詢", "TDEA會員查詢", "TDEA會員", "TDEA會員專區", "TDEA會員中心", "TDEA專區", "會員QR"];
 export const calendarKeyword = "TDEA行事曆";
 export const personalMessageKeyword = "TDEA個人訊息";
 export const uidBindKeyword = "UID";
+export const motherPointAliases = ["TDEA點數", "TDEA點數查詢", "TDEA查點", "TDEA紅利"];
 export const memberCheckinKeyword = "會員報到";
 export const memberCheckinAliases = [memberCheckinKeyword, "會員打卡", "會員簽到"];
 export const lineActivityCreateKeyword = "TDEA建立活動";
@@ -91,9 +93,9 @@ export function parseMotherPointKeyword(text: string): MotherPointQuery | null {
   const raw = clean(text);
   const compact = raw.replace(/\s+/g, "");
   if (!compact) return null;
-  const aliases = ["TDEA點數", "TDEA點數查詢"];
+  const aliases = motherPointAliases;
   if (aliases.some((alias) => normalizeKeyword(compact) === normalizeKeyword(alias))) return { uid: "" };
-  for (const alias of aliases) {
+  for (const alias of ["TDEA點數", "TDEA點數查詢"]) {
     const prefix = normalizeKeyword(alias);
     const normalized = normalizeKeyword(compact);
     if (normalized.startsWith(prefix + "+") || normalized.startsWith(prefix + "：") || normalized.startsWith(prefix + ":") || normalized.startsWith(prefix + "，")) {
@@ -139,7 +141,7 @@ export function classifyKeywordText(text: string): KeywordMatch | null {
   const normalized = normalizeKeyword(text);
   if (isMonthlyActivityKeyword(text)) return { kind: "monthlyActivity", keyword: fixedKeyword };
   if (normalized === normalizeKeyword(queryKeyword)) return { kind: "registrationQuery", keyword: queryKeyword };
-  if (normalized === normalizeKeyword(memberQrKeyword)) return { kind: "memberQr", keyword: memberQrKeyword };
+  if ([memberQrKeyword, ...memberQrAliases].map(normalizeKeyword).includes(normalized)) return { kind: "memberQr", keyword: memberQrKeyword };
   if (normalized === normalizeKeyword(calendarKeyword)) return { kind: "calendar", keyword: calendarKeyword };
   if (normalized === normalizeKeyword(personalMessageKeyword)) return { kind: "personalMessage", keyword: personalMessageKeyword };
   const uidBind = parseUidBindKeyword(text);
@@ -160,11 +162,11 @@ export function effectiveLineKeywords() {
     { kind: "vendorCard", keyword: vendorCardKeyword, aliases: [] },
     { kind: "marquee", keyword: marqueeKeyword, aliases: marqueeLegacyKeywords },
     { kind: "registrationQuery", keyword: queryKeyword, aliases: [] },
-    { kind: "memberQr", keyword: memberQrKeyword, aliases: [] },
+    { kind: "memberQr", keyword: memberQrKeyword, aliases: memberQrAliases },
     { kind: "calendar", keyword: calendarKeyword, aliases: [] },
     { kind: "personalMessage", keyword: personalMessageKeyword, aliases: [] },
     { kind: "uidBind", keyword: uidBindKeyword, aliases: [] },
-    { kind: "motherPoint", keyword: "TDEA點數", aliases: ["TDEA點數查詢", "TDEA點數+UID"] },
+    { kind: "motherPoint", keyword: "TDEA點數", aliases: ["TDEA點數查詢", "TDEA點數+UID", "TDEA查點", "TDEA紅利"] },
     { kind: "memberCheckin", keyword: memberCheckinKeyword, aliases: memberCheckinAliases.filter((item) => item !== memberCheckinKeyword) },
     { kind: "lineActivityCreate", keyword: lineActivityCreateKeyword, aliases: lineActivityCreateAliases }
   ];
@@ -178,7 +180,8 @@ export function classifyLineEvents(allEvents: KeywordLineEvent[]): ClassifiedKey
   const builtInKeywordTexts = builtInKeywordTextSet();
   const monthlyActivityEvents = allEvents.filter((event) => isMonthlyActivityKeyword(extractTriggerText(event)));
   const queryEvents = allEvents.filter((event) => normalizeKeyword(extractTriggerText(event)) === normalizeKeyword(queryKeyword));
-  const memberQrEvents = allEvents.filter((event) => normalizeKeyword(extractTriggerText(event)) === normalizeKeyword(memberQrKeyword));
+  const memberQrKeywords = [memberQrKeyword, ...memberQrAliases].map(normalizeKeyword);
+  const memberQrEvents = allEvents.filter((event) => memberQrKeywords.includes(normalizeKeyword(extractTriggerText(event))));
   const calendarEvents = allEvents.filter((event) => normalizeKeyword(extractTriggerText(event)) === normalizeKeyword(calendarKeyword));
   const personalMessageEvents = allEvents.filter((event) => normalizeKeyword(extractTriggerText(event)) === normalizeKeyword(personalMessageKeyword));
   const uidBindEvents = allEvents.filter((event) => parseUidBindKeyword(extractTriggerText(event)).active);
