@@ -2820,6 +2820,9 @@ async function submitNativeForm(request: Request, env: Env, formId: string) {
   if (!env.ASSETS_BUCKET) return json({ success: false, message: "R2 bucket is not configured" }, 503);
   const form = await readNativeForm(env, formId);
   if (!form) return json({ success: false, message: "?曆??啣?”" }, 404);
+  if (nativeRegistrationMode(form.settings || {}) === "member_login") {
+    return json({ success: false, message: "此活動僅允許 CRM 會員、廠商會員或母站已註冊者使用 LINE 快速報名。", code: "quick_registration_required" }, 403);
+  }
   const input = await request.json().catch(() => ({})) as Record<string, unknown>;
   const rawAnswers = asRecord(input.answers);
   const answers = normalizeAnswersRecord(rawAnswers);

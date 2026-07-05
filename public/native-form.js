@@ -509,24 +509,18 @@
         const memberResult = await memberResponse.json().catch(() => ({}));
         if (memberResponse.ok && memberResult.success) {
           const member = memberResult.data || {};
-          const sessionId = sessions[0]?.id || "default";
-          renderLoading(`已確認會員 ${member.name || ""}，正在送出報名...`);
-          const { response: submitResponse, result: submitResult } = await submitLoginRegistration(id, { lineUserId: uid, sessionId, answers: {} });
-          if (submitResponse.ok && submitResult.success) {
-            renderReceipt(submitResult);
-            return;
-          }
-          if (mode === "member_login") return renderError(submitResult.message || "報名失敗");
-          autoLoginNotice = submitResult.message || "會員自動報名未完成，請補填必要欄位後送出。";
+          autoLoginNotice = `已確認 ${member.name || member.role || "LINE 身分"}，請確認場次後送出快速報名。`;
         } else if (mode === "member_login") {
-          effectiveMode = "form";
-          showFullForm = true;
-          autoLoginNotice = memberResult.message || "此 LINE 帳號尚未對到 CRM 會員或母站註冊資料，請改填完整報名表。";
+          autoLoginNotice = memberResult.message || "此 LINE 帳號尚未對到 CRM 會員、廠商會員或母站註冊資料，無法使用此活動報名。";
         }
       } else if (!uid && (mode === "member_login" || mode === "mixed")) {
-        effectiveMode = "form";
-        showFullForm = true;
-        autoLoginNotice = "未取得 LINE UID，已切換為完整表單報名。";
+        if (mode === "member_login") {
+          autoLoginNotice = "未取得 LINE UID，請從 LINE LIFF 開啟並登入後再報名。";
+        } else {
+          effectiveMode = "form";
+          showFullForm = true;
+          autoLoginNotice = "未取得 LINE UID，已切換為完整表單報名。";
+        }
       }
     }
 
@@ -574,7 +568,8 @@
       if (!memberResponse.ok || !memberResult.success) {
         loginButton.disabled = false;
         loginButton.textContent = "LINE 快速報名";
-        return alert(memberResult.message || "此 LINE 帳號尚未對到 CRM 會員、廠商會員或母站註冊資料，請改填完整表單。");
+        const fallbackMessage = mode === "member_login" ? "此 LINE 帳號尚未對到 CRM 會員、廠商會員或母站註冊資料，無法使用此活動報名。" : "此 LINE 帳號尚未對到 CRM 會員、廠商會員或母站註冊資料，請改填完整表單。";
+        return alert(memberResult.message || fallbackMessage);
       } else {
         const memberArea = app.querySelector("[data-login-member-area]");
         if (memberArea) memberArea.innerHTML = memberSummary(member);
