@@ -8,14 +8,15 @@
   const memberQrMode = params.has("memberQr");
   const calendarMode = params.has("calendar");
   const marqueeMode = params.has("marquee");
+  const motherRegisterMode = params.has("motherRegister") || params.has("mother_register");
   const app = document.querySelector("#app");
-  const liffId = (formId || checkinToken || redeemToken || memberQrMode || calendarMode || marqueeMode) ? "2005868456-cfANNVou" : "2005868456-2jmxqyFU";
+  const liffId = (formId || checkinToken || redeemToken || memberQrMode || calendarMode || marqueeMode || motherRegisterMode) ? "2005868456-cfANNVou" : "2005868456-2jmxqyFU";
   const nativeLiffUrl = "https://liff.line.me/2005868456-cfANNVou";
   const calendarId = "7d66f2a96f192dda6cca2b04e60a6e549c7adf74f57721845d5b7e03f8b7ca89@group.calendar.google.com";
   let liffReady = null;
   let lineUserId = "";
 
-  if (!app || (!formId && !checkinToken && !redeemToken && !queryMode && !memberQrMode && !calendarMode && !marqueeMode)) return;
+  if (!app || (!formId && !checkinToken && !redeemToken && !queryMode && !memberQrMode && !calendarMode && !marqueeMode && !motherRegisterMode)) return;
 
   const esc = (value) => String(value ?? "").replace(/[&<>"']/g, (ch) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#039;" }[ch]));
   const trim = (value) => String(value ?? "").trim();
@@ -128,6 +129,116 @@
 
   function renderError(message) {
     renderShell(`<section class="nf-card"><div class="nf-body"><div class="nf-alert">${esc(message || "發生錯誤")}</div></div></section>`);
+  }
+
+
+  const motherRegisterParamKeys = ["line_userid", "bot_token", "shop_id", "client_id", "redirect_uri"];
+  const motherRegisterRequiredKeys = ["line_userid", "bot_token", "shop_id", "client_id", "redirect_uri"];
+  const fallbackMotherCities = ["台北市", "新北市", "桃園市", "台中市", "台南市", "高雄市", "基隆市", "新竹市", "嘉義市", "新竹縣", "苗栗縣", "彰化縣", "南投縣", "雲林縣", "嘉義縣", "屏東縣", "宜蘭縣", "花蓮縣", "台東縣", "澎湖縣", "金門縣", "連江縣"];
+
+  function motherRegisterSource(extraLineUserId = "") {
+    const source = {};
+    motherRegisterParamKeys.forEach((key) => {
+      const value = trim(params.get(key));
+      if (value) source[key] = value;
+    });
+    if (!source.line_userid && extraLineUserId) source.line_userid = extraLineUserId;
+    return source;
+  }
+
+  function motherRegisterMissing(source) {
+    return motherRegisterRequiredKeys.filter((key) => !trim(source[key]));
+  }
+
+  function optionHtml(options, placeholder = "請選擇") {
+    const rows = Array.isArray(options) ? options : [];
+    return `<option value="">${esc(placeholder)}</option>` + rows.map((item) => {
+      const value = typeof item === "string" ? item : trim(item?.value || item?.label);
+      const label = typeof item === "string" ? item : trim(item?.label || item?.value);
+      if (!value && !label) return "";
+      return `<option value="${esc(value || label)}">${esc(label || value)}</option>`;
+    }).join("");
+  }
+
+  function motherRegisterInput(name, label, type = "text", required = true, extra = "") {
+    return `<div class="nf-field"><label for="mr-${esc(name)}">${esc(label)}${required ? ' <span class="nf-required">*</span>' : ""}</label><input id="mr-${esc(name)}" name="${esc(name)}" type="${esc(type)}" ${required ? "required" : ""} ${extra}></div>`;
+  }
+
+  function motherRegisterSelect(name, label, options, required = true) {
+    return `<div class="nf-field"><label for="mr-${esc(name)}">${esc(label)}${required ? ' <span class="nf-required">*</span>' : ""}</label><select id="mr-${esc(name)}" name="${esc(name)}" ${required ? "required" : ""}>${optionHtml(options)}</select></div>`;
+  }
+
+  async function loadMotherRegisterSchema(source) {
+    const query = new URLSearchParams();
+    motherRegisterParamKeys.forEach((key) => { if (source[key]) query.set(key, source[key]); });
+    const response = await fetch(`${api}/api/mother-register/form?${query.toString()}`, { cache: "no-store" });
+    const result = await response.json().catch(() => ({}));
+    if (!response.ok || !result.success) throw new Error(result.message || "無法讀取母站註冊表");
+    return result.data || {};
+  }
+
+  async function showMotherRegister() {
+    renderLoading("讀取母站註冊表...");
+    let uid = trim(params.get("line_userid"));
+    if (!uid) uid = await loadLiff({ login: true }).catch(() => "");
+    const source = motherRegisterSource(uid);
+    const missing = motherRegisterMissing(source);
+    if (missing.length) return renderError("缺少母站註冊必要參數，請從 LINE 的會員註冊連結重新開啟。缺少：" + missing.join(", "));
+    let schema = {};
+    try {
+      schema = await loadMotherRegisterSchema(source);
+    } catch (error) {
+      schema = { options: { gender: [{ value: "男", label: "男" }, { value: "女", label: "女" }], city: fallbackMotherCities.map((city) => ({ value: city, label: city })), category: [] }, warning: error instanceof Error ? error.message : String(error) };
+    }
+    const options = schema.options || {};
+    const categoryOptions = Array.isArray(options.category) ? options.category : [];
+    const categoryField = categoryOptions.length
+      ? motherRegisterSelect("category", "產業類別", categoryOptions)
+      : motherRegisterInput("category", "產業類別", "text", true, 'placeholder="請輸入母站產業類別"');
+    renderShell(`<section class="nf-card"><div class="nf-body">
+      <h1 class="nf-title">母站會員註冊</h1>
+      ${schema.warning ? `<div class="nf-alert">${esc(schema.warning)}</div>` : ""}
+      <form class="nf-form" data-mother-register-form>
+        ${motherRegisterInput("display_name", "姓名")}
+        ${motherRegisterSelect("gender", "性別", Array.isArray(options.gender) && options.gender.length ? options.gender : [{ value: "男", label: "男" }, { value: "女", label: "女" }])}
+        ${motherRegisterInput("birthday", "生日", "date")}
+        ${motherRegisterInput("phone", "手機", "tel", true, 'inputmode="numeric" pattern="[0-9]{10}" placeholder="0912345678"')}
+        ${motherRegisterInput("email", "Email", "email", false)}
+        ${motherRegisterSelect("city", "縣市", Array.isArray(options.city) && options.city.length ? options.city : fallbackMotherCities.map((city) => ({ value: city, label: city })))}
+        ${categoryField}
+        <label class="nf-choice"><span><input type="checkbox" name="agree_terms" required> 我同意母站會員條款</span></label>
+        <div class="nf-actions"><button class="nf-btn primary" type="submit">送出註冊</button></div>
+        <div class="nf-ok" data-mother-register-result hidden></div>
+      </form>
+    </div></section>`);
+    const form = app.querySelector("[data-mother-register-form]");
+    const resultNode = app.querySelector("[data-mother-register-result]");
+    form?.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const button = form.querySelector("button[type='submit']");
+      if (button) { button.disabled = true; button.textContent = "送出中..."; }
+      if (resultNode) resultNode.hidden = true;
+      const data = new FormData(form);
+      const fields = Object.fromEntries(data.entries());
+      fields.agree_terms = data.has("agree_terms");
+      try {
+        const response = await fetch(`${api}/api/mother-register/submit`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ sourceParams: source, fields })
+        });
+        const result = await response.json().catch(() => ({}));
+        if (!response.ok || !result.success) throw new Error(result.message || "母站註冊送出失敗");
+        if (resultNode) {
+          resultNode.hidden = false;
+          resultNode.textContent = result.message || "母站註冊已送出，會員資料同步已完成或排入處理。";
+        }
+      } catch (error) {
+        alert(error instanceof Error ? error.message : String(error));
+      } finally {
+        if (button) { button.disabled = false; button.textContent = "送出註冊"; }
+      }
+    });
   }
 
   function isAutoMemberField(field) {
@@ -1297,7 +1408,8 @@
       });
     });
   }
-  if (formId) showRegister(formId);
+  if (motherRegisterMode) showMotherRegister();
+  else if (formId) showRegister(formId);
   else if (checkinToken) showCheckin(checkinToken);
   else if (redeemToken) showRedeem(redeemToken);
   else if (queryMode) showMyRegistrations();

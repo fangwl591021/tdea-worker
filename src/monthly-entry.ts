@@ -4942,6 +4942,220 @@ async function syncAiweMembersFromMotherApi(request: Request, env: Env) {
   });
   return json(result, result.success ? 200 : 503);
 }
+const motherRegisterBaseUrl = "https://aiwe.cc/index.php/cus_account/";
+const motherRegisterParamKeys = ["line_userid", "bot_token", "shop_id", "client_id", "redirect_uri"] as const;
+const motherRegisterRequiredKeys = motherRegisterParamKeys;
+const motherRegisterFallbackCities = ["台北市", "新北市", "桃園市", "台中市", "台南市", "高雄市", "基隆市", "新竹市", "嘉義市", "新竹縣", "苗栗縣", "彰化縣", "南投縣", "雲林縣", "嘉義縣", "屏東縣", "宜蘭縣", "花蓮縣", "台東縣", "澎湖縣", "金門縣", "連江縣"];
+
+function motherRegisterParamsFromRecord(input: Record<string, unknown>) {
+  const params = new URLSearchParams();
+  motherRegisterParamKeys.forEach((key) => {
+    const value = clean(input[key]);
+    if (value) params.set(key, value);
+  });
+  return params;
+}
+
+function motherRegisterParamsFromSearch(searchParams: URLSearchParams) {
+  const params = new URLSearchParams();
+  motherRegisterParamKeys.forEach((key) => {
+    const value = clean(searchParams.get(key));
+    if (value) params.set(key, value);
+  });
+  return params;
+}
+
+function motherRegisterMissingParams(params: URLSearchParams) {
+  return motherRegisterRequiredKeys.filter((key) => !clean(params.get(key)));
+}
+
+function motherRegisterTargetUrl(params: URLSearchParams) {
+  const target = new URL(motherRegisterBaseUrl);
+  motherRegisterParamKeys.forEach((key) => {
+    const value = clean(params.get(key));
+    if (value) target.searchParams.set(key, value);
+  });
+  return target;
+}
+
+function decodeHtmlEntities(value: string) {
+  return String(value || "")
+    .replace(/&quot;/g, '"')
+    .replace(/&#039;/g, "'")
+    .replace(/&apos;/g, "'")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&amp;/g, "&")
+    .replace(/&#x([0-9a-f]+);/gi, (_, code) => String.fromCharCode(parseInt(code, 16)))
+    .replace(/&#(\d+);/g, (_, code) => String.fromCharCode(Number(code)));
+}
+
+function htmlAttribute(tag: string, name: string) {
+  const pattern = new RegExp(`${name}\\s*=\\s*("([^"]*)"|'([^']*)'|([^\\s>]+))`, "i");
+  const match = tag.match(pattern);
+  return decodeHtmlEntities(match ? (match[2] || match[3] || match[4] || "") : "");
+}
+
+function stripHtmlText(html: string) {
+  return decodeHtmlEntities(String(html || "")
+    .replace(/<script\b[\s\S]*?<\/script>/gi, "")
+    .replace(/<style\b[\s\S]*?<\/style>/gi, "")
+    .replace(/<[^>]+>/g, " ")
+    .replace(/\s+/g, " ")
+    .trim());
+}
+
+function extractNamedInputValue(html: string, name: string) {
+  const tags = String(html || "").match(/<input\b[^>]*>/gi) || [];
+  for (const tag of tags) {
+    if (htmlAttribute(tag, "name") === name) return htmlAttribute(tag, "value");
+  }
+  return "";
+}
+
+function extractSelectOptions(html: string, name: string) {
+  const options: Array<{ value: string; label: string }> = [];
+  const selects = String(html || "").match(/<select\b[^>]*>[\s\S]*?<\/select>/gi) || [];
+  const select = selects.find((tag) => htmlAttribute(tag, "name") === name || htmlAttribute(tag, "id") === name);
+  if (!select) return options;
+  const optionTags = select.match(/<option\b[^>]*>[\s\S]*?<\/option>/gi) || [];
+  for (const optionTag of optionTags) {
+    if (/\sdisabled(?:\s|=|>)/i.test(optionTag)) continue;
+    const value = clean(htmlAttribute(optionTag, "value"));
+    const label = clean(stripHtmlText(optionTag));
+    if (!value && !label) continue;
+    options.push({ value: value || label, label: label || value });
+  }
+  return options;
+}
+
+function extractMotherRegisterSchema(html: string) {
+  const gender = extractSelectOptions(html, "gender");
+  const city = extractSelectOptions(html, "city");
+  const category = extractSelectOptions(html, "category");
+  return {
+    fields: ["display_name", "gender", "birthday", "phone", "email", "city", "category", "agree_terms"],
+    options: {
+      gender: gender.length ? gender : [{ value: "男", label: "男" }, { value: "女", label: "女" }],
+      city: city.length ? city : motherRegisterFallbackCities.map((item) => ({ value: item, label: item })),
+      category
+    }
+  };
+}
+
+function cookieHeaderFromSetCookie(setCookie: string) {
+  return clean(setCookie)
+    .split(/,(?=\s*[^;,\s]+=)/)
+    .map((part) => part.split(";")[0].trim())
+    .filter(Boolean)
+    .join("; ");
+}
+
+async function fetchMotherRegisterPage(params: URLSearchParams) {
+  const target = motherRegisterTargetUrl(params);
+  const response = await fetch(target.href, {
+    headers: {
+      accept: "text/html,application/xhtml+xml",
+      "user-agent": "tdea-worker-mother-register/1.0"
+    }
+  });
+  const html = await response.text();
+  return { target, response, html, cookie: cookieHeaderFromSetCookie(response.headers.get("set-cookie") || "") };
+}
+
+async function getMotherRegisterFormApi(request: Request, env: Env) {
+  void env;
+  const params = motherRegisterParamsFromSearch(new URL(request.url).searchParams);
+  const missing = motherRegisterMissingParams(params);
+  if (missing.length) return json({ success: false, message: `缺少母站註冊必要參數：${missing.join(", ")}`, missing }, 400);
+  const page = await fetchMotherRegisterPage(params);
+  if (!page.response.ok) return json({ success: false, message: `母站註冊頁讀取失敗：HTTP ${page.response.status}` }, 502);
+  const nonce = extractNamedInputValue(page.html, "mfmm_nonce");
+  if (!nonce) return json({ success: false, message: "母站註冊頁未提供可送出的表單，請確認連結是否仍有效" }, 502);
+  return json({ success: true, data: extractMotherRegisterSchema(page.html) });
+}
+
+function normalizeMotherRegisterFields(input: Record<string, unknown>) {
+  const displayName = clean(input.display_name || input.name);
+  const gender = clean(input.gender);
+  const birthday = clean(input.birthday);
+  const phone = phoneDigits(input.phone);
+  const email = clean(input.email).toLowerCase();
+  const city = clean(input.city);
+  const category = clean(input.category);
+  const agreeTerms = input.agree_terms === true || ["1", "true", "yes", "on"].includes(clean(input.agree_terms).toLowerCase());
+  const missing: string[] = [];
+  if (!displayName) missing.push("姓名");
+  if (!gender) missing.push("性別");
+  if (!birthday) missing.push("生日");
+  if (!phone) missing.push("手機");
+  if (phone && !/^09\d{8}$/.test(phone)) missing.push("手機格式");
+  if (!city) missing.push("縣市");
+  if (!category) missing.push("產業類別");
+  if (!agreeTerms) missing.push("會員條款同意");
+  return { displayName, gender, birthday, phone, email, city, category, agreeTerms, missing };
+}
+
+function motherRegisterResponseMessage(html: string) {
+  const text = stripHtmlText(html);
+  const message = text.match(/(註冊成功|更新成功|會員資料已更新|已完成|錯誤|失敗|缺少必要的參數|無法處理使用者資訊)[^。！!\n]*/)?.[0];
+  return clean(message) || clean(text).slice(0, 180);
+}
+
+async function submitMotherRegisterApi(request: Request, env: Env) {
+  const input = asRecord(await request.json().catch(() => ({})));
+  const params = motherRegisterParamsFromRecord(asRecord(input.sourceParams));
+  const missingParams = motherRegisterMissingParams(params);
+  if (missingParams.length) return json({ success: false, message: `缺少母站註冊必要參數：${missingParams.join(", ")}`, missing: missingParams }, 400);
+  const fields = normalizeMotherRegisterFields(asRecord(input.fields || input));
+  if (fields.missing.length) return json({ success: false, message: `欄位未完成或格式不正確：${fields.missing.join("、")}` }, 400);
+
+  const page = await fetchMotherRegisterPage(params);
+  if (!page.response.ok) return json({ success: false, message: `母站註冊頁讀取失敗：HTTP ${page.response.status}` }, 502);
+  const nonce = extractNamedInputValue(page.html, "mfmm_nonce");
+  if (!nonce) return json({ success: false, message: "母站註冊頁未提供可送出的表單，請確認連結是否仍有效" }, 502);
+
+  const form = new URLSearchParams();
+  form.set("mfmm_nonce", nonce);
+  form.set("_wp_http_referer", extractNamedInputValue(page.html, "_wp_http_referer") || `${page.target.pathname}${page.target.search}`);
+  form.set("display_name", fields.displayName);
+  form.set("gender", fields.gender);
+  form.set("birthday", fields.birthday);
+  form.set("phone", fields.phone);
+  if (fields.email) form.set("email", fields.email);
+  form.set("city", fields.city);
+  form.set("category", fields.category);
+  form.set("agree_terms", "on");
+  form.set("mfmm_update_user", extractNamedInputValue(page.html, "mfmm_update_user") || "送出");
+
+  const submitResponse = await fetch(page.target.href, {
+    method: "POST",
+    headers: {
+      accept: "text/html,application/xhtml+xml",
+      "content-type": "application/x-www-form-urlencoded",
+      referer: page.target.href,
+      origin: page.target.origin,
+      ...(page.cookie ? { cookie: page.cookie } : {})
+    },
+    body: form
+  });
+  const responseHtml = await submitResponse.text();
+  const responseMessage = motherRegisterResponseMessage(responseHtml);
+  const failed = !submitResponse.ok || /(錯誤|失敗|缺少必要的參數|無法處理使用者資訊|invalid|error)/i.test(responseMessage);
+  if (failed) return json({ success: false, message: responseMessage || `母站註冊送出失敗：HTTP ${submitResponse.status}`, status: submitResponse.status }, 502);
+
+  const sync = await syncAiweMembersFromMother(env, {
+    pages: 1,
+    perPage: 20,
+    search: fields.phone || fields.displayName,
+    reason: "mother-register-submit"
+  }).catch((error) => ({ success: false, message: error instanceof Error ? error.message : String(error) }));
+  return json({
+    success: true,
+    message: sync.success ? "母站註冊已送出，會員資料已同步回子站快取。" : "母站註冊已送出，但子站快取同步未完成。",
+    sync
+  });
+}
 function richMenuSnapshot(config: RichMenuConfig): RichMenuSnapshot {
   const normalized = normalizeRichMenuConfig(config);
   const snapshotConfig: Omit<RichMenuConfig, "snapshots" | "deployments"> = {
@@ -6316,6 +6530,8 @@ export default {
 	    if ((request.method === "PUT" || request.method === "POST") && url.pathname === "/api/admin-whitelist") return updateAdminWhitelistApi(request, env);
 	    if (request.method === "GET" && url.pathname === "/api/member-applications") return listMemberApplicationsApi(request, env);
 	    if (request.method === "GET" && url.pathname === "/api/aiwe-members-public") return listAiweMembersPublicApi(request, env);
+	    if (request.method === "GET" && url.pathname === "/api/mother-register/form") return getMotherRegisterFormApi(request, env);
+	    if (request.method === "POST" && url.pathname === "/api/mother-register/submit") return submitMotherRegisterApi(request, env);
 	    if ((request.method === "POST" || request.method === "GET") && url.pathname === "/api/aiwe-members/sync") return syncAiweMembersFromMotherApi(request, env);
 	    if (request.method === "POST" && url.pathname === "/api/aiwe-members/import") return importAiweMembersApi(request, env);
 	    if (request.method === "GET" && url.pathname === "/api/google-member-sheet") return fetchGoogleMemberSheet(request, env);
