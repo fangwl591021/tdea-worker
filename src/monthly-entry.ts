@@ -6378,10 +6378,11 @@ export default {
     if (request.method === "GET" && url.pathname === "/api/registrations/export") return exportRegistrationsExcel(request, env);
     const detailMatch = url.pathname.match(/^\/monthly-detail\/([^/]+)$/);
     if (request.method === "GET" && detailMatch) return monthlyDetail(env, decodeURIComponent(detailMatch[1]));
-    if (request.method === "POST" && url.pathname === "/line-webhook") { const rawBody = await request.text(); await appendLineWebhookIngressLog(env, request, rawBody, ctx); const monthly = await handleMonthlyWebhook(request, env, rawBody, ctx); if (monthly) return monthly; if (clean(env.FORWARD_WEBHOOK_URL)) return forwardToMotherWebhookWithLog(request, env, rawBody); return baseEntry.fetch(rebuildRequest(request, rawBody), env, ctx); }
+    if (request.method === "POST" && url.pathname === "/line-webhook") { const rawBody = await request.text(); await appendLineWebhookIngressLog(env, request, rawBody, ctx); const monthly = await handleMonthlyWebhook(request, env, rawBody, ctx); if (monthly) return monthly; if (clean(env.FORWARD_WEBHOOK_URL)) { ctx.waitUntil(forwardToMotherWebhookWithLog(request, env, rawBody).catch(() => undefined)); return forwardToMotherWebhook(request, env, rawBody); } return baseEntry.fetch(rebuildRequest(request, rawBody), env, ctx); }
     return baseEntry.fetch(request, env, ctx);
   }
 };
+
 
 
 
