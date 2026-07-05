@@ -1,4 +1,27 @@
-﻿import baseEntry from "./roster-sync-entry4";
+import baseEntry from "./roster-sync-entry4";
+import {
+  calendarKeyword,
+  classifyLineEvents,
+  effectiveLineKeywords,
+  extractTriggerText,
+  fixedKeyword,
+  isLineActivityStart,
+  isMemberCheckinText,
+  isMonthlyActivityKeyword,
+  lineActivityCreateKeyword,
+  marqueeKeyword,
+  marqueeLegacyKeywords,
+  memberCheckinKeyword,
+  memberQrKeyword,
+  normalizeKeyword,
+  parseMemberCheckinKeyword,
+  parseMotherPointKeyword,
+  parseUidBindKeyword,
+  personalMessageKeyword,
+  queryKeyword,
+  uidBindKeyword,
+  vendorCardKeyword
+} from "./line-keywords";
 
 type Env = { ADMIN_EMAILS?: string; ADMIN_LOGIN_USER?: string; ADMIN_LOGIN_PASSWORD?: string; ASSETS_BUCKET?: R2Bucket; LINE_CHANNEL_SECRET?: string; LINE_CHANNEL_ACCESS_TOKEN?: string; FORWARD_WEBHOOK_URL?: string; GOOGLE_FORMS_SCRIPT_URL?: string; GOOGLE_FORMS_SHARED_SECRET?: string; OPNFORM_API_BASE?: string; OPNFORM_PUBLIC_BASE?: string; OPNFORM_API_TOKEN?: string; OPNFORM_WORKSPACE_ID?: string; OPNFORM_WEBHOOK_SECRET?: string; WETW_POINT_API_KEY?: string; WETW_SHOP_ID?: string; WETW_POINT_TYPE?: string; TDEA_POINT_EXTERNAL_SYNC?: string; TDEA_ADMIN_LINE_USER_IDS?: string; AIWE_WP_USER?: string; AIWE_WP_APP_PASSWORD?: string; OPENAI_API_KEY?: string; OPENAI_MODEL?: string };
 type LineEvent = { type?: string; replyToken?: string; message?: { type?: string; id?: string; text?: string }; postback?: { data?: string }; source?: { type?: string; userId?: string; groupId?: string; roomId?: string } };
@@ -65,20 +88,6 @@ const memberApplicationListKey = "member-applications/list.json";
 const defaultCalendarId = "7d66f2a96f192dda6cca2b04e60a6e549c7adf74f57721845d5b7e03f8b7ca89@group.calendar.google.com";
 const googleMemberSheetCsvUrl = "https://docs.google.com/spreadsheets/d/1KzXzRsAesrF0vlKh2TLUKW-ltpWrxASWt7acWV7ic8w/export?format=csv&gid=858404675";
 const workerBaseUrl = "https://tdeawork.fangwl591021.workers.dev";
-const fixedKeyword = "TDEA每月活動";
-const monthlyActivityAliases = ["活動報名", "TDEA活動", "TDEA報名", "TDEA課程"];
-const vendorCardKeyword = "TDEA廠商列表";
-const marqueeKeyword = "TDEA廣告贈點";
-const queryKeyword = "TDEA活動查詢";
-const marqueeLegacyKeywords = ["TDEA跑馬燈"];
-const memberQrKeyword = "TDEA會員QR";
-const calendarKeyword = "TDEA行事曆";
-const personalMessageKeyword = "TDEA個人訊息";
-const uidBindKeyword = "UID";
-const memberCheckinKeyword = "會員報到";
-const memberCheckinAliases = [memberCheckinKeyword, "會員打卡", "會員簽到"];
-const lineActivityCreateKeyword = "TDEA建立活動";
-const lineActivityCreateAliases = ["TDEA新增活動", "TDEA活動上稿", "TDEA製作活動"];
 const defaultLiffBase = "https://liff.line.me/2005868456-2jmxqyFU?monthlyDetail={id}";
 const defaultLiffCloseUrl = "https://liff.line.me/2005868456-2jmxqyFU?close=1";
 const monthlyDefaultImageUrl = "https://fangwl591021.github.io/tdea-worker/public/assets/kooler-free-course.png";
@@ -97,14 +106,6 @@ const headers = { "access-control-allow-origin": "*", "access-control-allow-meth
 
 const json = (data: unknown, status = 200) => new Response(JSON.stringify(data), { status, headers: { "content-type": "application/json; charset=utf-8", "cache-control": "no-store", ...headers } });
 const esc = (value: unknown) => String(value ?? "").replace(/[&<>'"]/g, (ch) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "'": "&#039;", "\"": "&quot;" }[ch] || ch));
-const normalizeKeyword = (value: string) => value.trim().replace(/[\s\u200B-\u200D\uFEFF]+/g, "").toUpperCase();
-const isMonthlyActivityKeyword = (value: string) => {
-  const normalized = normalizeKeyword(value);
-  return normalized === normalizeKeyword(fixedKeyword)
-    || monthlyActivityAliases.some((keyword) => normalized === normalizeKeyword(keyword))
-    || (normalized.includes("TDEA") && normalized.includes("每月活動"));
-};
-
 function staticAdminEmails(env: Env) {
   return (env.ADMIN_EMAILS || "admin@example.com").split(",").map((item) => item.trim().toLowerCase()).filter(Boolean);
 }
@@ -2154,24 +2155,6 @@ async function queryMemberPointBatchApi(request: Request, env: Env) {
   return json({ success: true, data });
 }
 
-function parseMotherPointKeyword(text: string) {
-  const raw = clean(text);
-  const compact = raw.replace(/\s+/g, "");
-  if (!compact) return null;
-  const aliases = ["TDEA點數", "TDEA點數查詢"];
-  if (aliases.some((alias) => normalizeKeyword(compact) === normalizeKeyword(alias))) {
-    return { uid: "" };
-  }
-  for (const alias of aliases) {
-    const prefix = normalizeKeyword(alias);
-    const normalized = normalizeKeyword(compact);
-    if (normalized.startsWith(prefix + "+") || normalized.startsWith(prefix + "：") || normalized.startsWith(prefix + ":") || normalized.startsWith(prefix + "，")) {
-      return { uid: compact.slice(alias.length + 1).trim() };
-    }
-  }
-  return null;
-}
-
 function formatMotherPointReply(result: Record<string, unknown>, label: string) {
   if (result.success !== true) {
     return `${label}點數查詢失敗：${clean(result.message) || clean(result.code) || "未知錯誤"}`;
@@ -3630,7 +3613,6 @@ function base64ToBytes(value: string) { const binary = atob(value); const bytes 
 function constantTimeEqual(a: string, b: string) { let left: Uint8Array; let right: Uint8Array; try { left = base64ToBytes(a); right = base64ToBytes(b); } catch (_) { return false; } if (left.length !== right.length) return false; let diff = 0; for (let index = 0; index < left.length; index += 1) diff |= left[index] ^ right[index]; return diff === 0; }
 async function verifyLineSignature(rawBody: string, signature: string | null, channelSecret?: string) { const cleanSignature = signature?.trim(); const cleanSecret = channelSecret?.trim(); if (!cleanSignature || !cleanSecret) return false; const encoder = new TextEncoder(); const key = await crypto.subtle.importKey("raw", encoder.encode(cleanSecret), { name: "HMAC", hash: "SHA-256" }, false, ["verify"]); return crypto.subtle.verify("HMAC", key, base64ToBytes(cleanSignature), encoder.encode(rawBody)); }
 function extractLineEvents(payload: unknown): LineEvent[] { if (!payload || typeof payload !== "object") return []; const events = (payload as { events?: unknown }).events; return Array.isArray(events) ? events as LineEvent[] : []; }
-function extractTriggerText(event: LineEvent) { if (event.message?.type === "text" && event.message.text) return event.message.text; if (event.postback?.data) return event.postback.data; return ""; }
 async function replyToLine(replyToken: string, messages: Array<Record<string, unknown>>, env: Env) { const token = env.LINE_CHANNEL_ACCESS_TOKEN?.trim(); if (!token) return { ok: false, status: 503, message: "LINE token is not configured" }; const response = await fetch("https://api.line.me/v2/bot/message/reply", { method: "POST", headers: { authorization: `Bearer ${token}`, "content-type": "application/json" }, body: JSON.stringify({ replyToken, messages }) }); return { ok: response.ok, status: response.status, body: await response.text().catch(() => "") }; }
 async function pushToLine(to: string, messages: Array<Record<string, unknown>>, env: Env) { const token = env.LINE_CHANNEL_ACCESS_TOKEN?.trim(); if (!token) return { ok: false, status: 503, message: "LINE token is not configured" }; const response = await fetch("https://api.line.me/v2/bot/message/push", { method: "POST", headers: { authorization: `Bearer ${token}`, "content-type": "application/json" }, body: JSON.stringify({ to, messages }) }); return { ok: response.ok, status: response.status, body: await response.text().catch(() => "") }; }
 function rebuildRequest(request: Request, rawBody: string) { return new Request(request.url, { method: request.method, headers: request.headers, body: rawBody }); }
@@ -3912,11 +3894,6 @@ function lineActivityDraftKey(lineUserId: string) {
 
 function lineUserIdFromEvent(event: LineEvent) {
   return firstClean(event.source?.userId, event.source?.groupId, event.source?.roomId, "global-line-activity-maker");
-}
-
-function isLineActivityStart(text: string) {
-  const normalized = normalizeKeyword(text);
-  return [lineActivityCreateKeyword, ...lineActivityCreateAliases].some((keyword) => normalized === normalizeKeyword(keyword));
 }
 
 function isLineActivityCancel(text: string) {
@@ -5068,37 +5045,6 @@ async function importAiweMembersApi(request: Request, env: Env) {
   return json({ success: true, ...report, total: rows.length });
 }
 
-function isMemberCheckinText(text: string) {
-  const normalized = normalizeKeyword(text);
-  const keywords = memberCheckinAliases.map(normalizeKeyword);
-  return keywords.some((keyword) => normalized === keyword || normalized.startsWith(keyword))
-    || (normalized.includes("會員") && (normalized.includes("報到") || normalized.includes("打卡") || normalized.includes("簽到")));
-}
-
-function parseUidBindKeyword(text: string) {
-  const raw = clean(text);
-  const normalized = normalizeKeyword(raw);
-  if (normalized === uidBindKeyword) return { active: true, memberNo: "" };
-  if (!normalized.startsWith(uidBindKeyword)) return { active: false, memberNo: "" };
-  const suffix = raw.replace(/^UID\s*[+＋:：]?\s*/i, "").trim();
-  return suffix ? { active: true, memberNo: clean(suffix).toUpperCase() } : { active: false, memberNo: "" };
-}
-
-function parseMemberCheckinKeyword(text: string) {
-  const raw = clean(text);
-  const normalized = normalizeKeyword(raw);
-  const keyword = memberCheckinAliases.map(normalizeKeyword).find((item) => normalized === item || normalized.startsWith(item));
-  if (!keyword) return { active: false, memberNo: "", name: "" };
-  if (normalized === keyword) return { active: true, memberNo: "", name: "" };
-  const suffix = raw.replace(/^\s*會員\s*(報到|打卡|簽到)\s*[+＋:：]?\s*/i, "").trim();
-  if (!suffix) return { active: true, memberNo: "", name: "" };
-  const parts = suffix.split(/[+＋,，\s/／]+/).map(clean).filter(Boolean);
-  const memberNoPart = parts.find((part) => /[A-Za-z]/.test(part) && /\d/.test(part) && /^[A-Za-z][A-Za-z0-9-]{3,}$/.test(part));
-  const memberNo = clean(memberNoPart).toUpperCase();
-  const name = parts.filter((part) => part !== memberNoPart).join("");
-  return { active: true, memberNo, name };
-}
-
 function aiweMemberNo(row: Record<string, unknown>) {
   return firstClean(row.rosterMemberNo, row.memberNo, row.user_login).toUpperCase();
 }
@@ -6077,7 +6023,19 @@ async function handleMonthlyWebhook(request: Request, env: Env, rawBody: string,
       eventCount: allEvents.length
     });
   }
-  const events = allEvents.filter((event) => isMonthlyActivityKeyword(extractTriggerText(event)));
+  const classifiedKeywords = classifyLineEvents(allEvents);
+  const {
+    monthlyActivityEvents: events,
+    queryEvents,
+    memberQrEvents,
+    calendarEvents,
+    personalMessageEvents,
+    uidBindEvents,
+    vendorCardEvents,
+    marqueeEvents,
+    pointEvents,
+    builtInKeywordTexts
+  } = classifiedKeywords;
   if (events.length) {
     const signature = request.headers.get("x-line-signature");
     let signatureOk = false;
@@ -6108,19 +6066,7 @@ async function handleMonthlyWebhook(request: Request, env: Env, rawBody: string,
     }
     return replyMonthlyActivityEvents(events, allEvents, env, ctx);
   }
-  const builtInKeywordTexts = new Set([queryKeyword, memberQrKeyword, calendarKeyword, personalMessageKeyword, vendorCardKeyword, marqueeKeyword, ...marqueeLegacyKeywords].map(normalizeKeyword));
-  const queryEvents = allEvents.filter((event) => normalizeKeyword(extractTriggerText(event)) === normalizeKeyword(queryKeyword));
-  const memberQrEvents = allEvents.filter((event) => normalizeKeyword(extractTriggerText(event)) === normalizeKeyword(memberQrKeyword));
-  const calendarEvents = allEvents.filter((event) => normalizeKeyword(extractTriggerText(event)) === normalizeKeyword(calendarKeyword));
-  const personalMessageEvents = allEvents.filter((event) => normalizeKeyword(extractTriggerText(event)) === normalizeKeyword(personalMessageKeyword));
-  const uidBindEvents = allEvents.filter((event) => parseUidBindKeyword(extractTriggerText(event)).active);
-  const vendorCardEvents = allEvents.filter((event) => normalizeKeyword(extractTriggerText(event)) === normalizeKeyword(vendorCardKeyword));
-  const marqueeKeywords = [marqueeKeyword, ...marqueeLegacyKeywords].map(normalizeKeyword);
-  const marqueeEvents = allEvents.filter((event) => marqueeKeywords.includes(normalizeKeyword(extractTriggerText(event))));
-  const pointEvents = allEvents
-    .map((event) => ({ event, query: parseMotherPointKeyword(extractTriggerText(event)) }))
-    .filter((match): match is { event: LineEvent; query: { uid: string } } => Boolean(match.query));
-  const hasBuiltInKeywordEvents = Boolean(queryEvents.length || memberQrEvents.length || calendarEvents.length || personalMessageEvents.length || uidBindEvents.length || vendorCardEvents.length || marqueeEvents.length || pointEvents.length);
+  const hasBuiltInKeywordEvents = Boolean(queryEvents.length || memberQrEvents.length || calendarEvents.length || personalMessageEvents.length || uidBindEvents.length || vendorCardEvents.length || marqueeEvents.length || pointEvents.length);
   if (hasBuiltInKeywordEvents) {
     const signature = request.headers.get("x-line-signature");
     if (!await verifyLineSignature(rawBody, signature, env.LINE_CHANNEL_SECRET)) return new Response("Invalid Signature", { status: 403, headers });
@@ -6324,6 +6270,7 @@ export default {
     if (request.method === "OPTIONS") return new Response(null, { status: 204, headers });
 	    const uploadMatch = url.pathname.match(/^\/api\/uploads\/(.+)$/);
 	    if ((request.method === "GET" || request.method === "HEAD") && uploadMatch) return getUploadedFile(env, decodeURIComponent(uploadMatch[1]));
+      if (request.method === "GET" && url.pathname === "/api/line-keywords/effective") return json({ success: true, data: effectiveLineKeywords(), source: "src/line-keywords.ts" });
 	    if (request.method === "POST" && url.pathname === "/api/uploads") return uploadGenericImageApi(request, env);
 	    if (request.method === "GET" && url.pathname === "/api/line-activity-drafts") return listLineActivityDrafts(request, env);
 	    if ((request.method === "DELETE" || request.method === "POST") && url.pathname === "/api/line-activity-drafts/delete") return deleteLineActivityDraft(request, env);
