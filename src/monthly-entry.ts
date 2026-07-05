@@ -5144,97 +5144,6 @@ function motherRegisterRecordFromSubmit(params: URLSearchParams, fields: ReturnT
 }
 
 
-function motherRegisterRecordKey(record: Record<string, unknown>) {
-  return firstClean(record.wpUserId, record.lineUserId, record.email, record.phone, record.displayName).toLowerCase();
-}
-
-function motherRegisterRecordFromWpUser(user: Record<string, unknown>, sourceUrl: string) {
-  const normalized = normalizeWpUserToAiweMember(user, sourceUrl);
-  const wpUserId = Number(user.id || normalized.wpUserId || 0) || undefined;
-  const displayName = firstClean(normalized.name, user.name, user.display_name, user.nickname, user.user_nicename, user.user_login);
-  const phone = phoneDigits(firstClean(normalized.phone, normalizePhoneFromWpUser(user)));
-  const email = firstClean(normalized.email, user.email, user.user_email, wpUserField(user, ["email", "user_email", "電子郵件"])).toLowerCase();
-  const lineUserId = firstClean(normalized.lineUserId, normalized.LINE_user_id, lineUidFromText(JSON.stringify(user)));
-  return {
-    id: `MWP-${wpUserId || lineUserId || phone || codeToken(8)}`,
-    createdAt: firstClean(user.registered_date, user.user_registered, user.date, user.created_at) || new Date().toISOString(),
-    importedAt: new Date().toISOString(),
-    source: "wp-rest-users",
-    sourceUrl,
-    wpUserId,
-    userLogin: firstClean(user.user_login, user.slug, user.username),
-    lineUserId,
-    shopId: "",
-    clientId: "",
-    redirectUri: "",
-    botTokenPresent: false,
-    displayName,
-    gender: firstClean(wpUserField(user, ["gender", "sex", "性別"]), normalized.gender),
-    birthday: firstClean(wpUserField(user, ["birthday", "birthdate", "date_of_birth", "生日"]), normalized.birthday),
-    phone,
-    email,
-    city: firstClean(wpUserField(user, ["city", "billing_city", "shipping_city", "縣市", "城市"]), normalized.city),
-    category: firstClean(wpUserField(user, ["category", "industry", "business_category", "產業類別", "行業", "類別"]), normalized.category),
-    submitStatus: "imported-from-mother",
-    motherHttpStatus: 200,
-    motherMessage: "from WordPress users API"
-  };
-}
-
-async function importMotherRegisterRecordsFromMother(env: Env, options: { startPage?: number; pages?: number; perPage?: number; search?: string } = {}) {
-  if (!env.ASSETS_BUCKET) return { success: false, message: "R2 bucket is not configured" };
-  const startPage = Math.max(1, Number(options.startPage || 1));
-  const pages = Math.min(20, Math.max(1, Number(options.pages || 5)));
-  const perPage = Math.min(100, Math.max(1, Number(options.perPage || 100)));
-  const search = clean(options.search);
-  const records = await readMotherRegisterRecords(env);
-  const index = new Map<string, number>();
-  records.forEach((record, i) => {
-    const key = motherRegisterRecordKey(record);
-    if (key && !index.has(key)) index.set(key, i);
-  });
-  let fetched = 0;
-  let created = 0;
-  let updated = 0;
-  let total = 0;
-  let totalPages = 0;
-  for (let offset = 0; offset < pages; offset += 1) {
-    const page = startPage + offset;
-    const result = await fetchMotherWpUsers(env, page, perPage, search);
-    total = result.total || total;
-    totalPages = result.totalPages || totalPages;
-    fetched += result.rows.length;
-    for (const row of result.rows) {
-      const record = motherRegisterRecordFromWpUser(row, result.sourceUrl);
-      const key = motherRegisterRecordKey(record);
-      if (key && index.has(key)) {
-        const existingIndex = index.get(key) || 0;
-        records[existingIndex] = { ...records[existingIndex], ...record, id: records[existingIndex].id || record.id, createdAt: records[existingIndex].createdAt || record.createdAt };
-        updated += 1;
-      } else {
-        records.unshift(record);
-        if (key) index.set(key, 0);
-        created += 1;
-      }
-    }
-    if (!result.rows.length || page >= result.totalPages) break;
-  }
-  await writeMotherRegisterRecords(env, records.slice(0, 2000));
-  return { success: true, source: "wp-rest-users", fetched, created, updated, total, totalPages, cachedTotal: records.length };
-}
-
-async function importMotherRegisterRecordsApi(request: Request, env: Env) {
-  const guard = await requireAdmin(request, env);
-  if (guard) return guard;
-  const url = new URL(request.url);
-  const result = await importMotherRegisterRecordsFromMother(env, {
-    startPage: Number(url.searchParams.get("start") || 1),
-    pages: Number(url.searchParams.get("pages") || 5),
-    perPage: Number(url.searchParams.get("per_page") || 100),
-    search: clean(url.searchParams.get("search"))
-  });
-  return json(result, result.success ? 200 : 503);
-}
 async function appendMotherRegisterRecord(env: Env, record: Record<string, unknown>) {
   const rows = await readMotherRegisterRecords(env);
   rows.unshift(record);
@@ -6678,7 +6587,6 @@ export default {
 	    if (request.method === "GET" && url.pathname === "/api/mother-register/form") return getMotherRegisterFormApi(request, env);
 	    if (request.method === "POST" && url.pathname === "/api/mother-register/submit") return submitMotherRegisterApi(request, env);
 	    if (request.method === "GET" && url.pathname === "/api/mother-register/records") return listMotherRegisterRecordsApi(request, env);
-	    if ((request.method === "POST" || request.method === "GET") && url.pathname === "/api/mother-register/import") return importMotherRegisterRecordsApi(request, env);
 	    if ((request.method === "POST" || request.method === "GET") && url.pathname === "/api/aiwe-members/sync") return syncAiweMembersFromMotherApi(request, env);
 	    if (request.method === "POST" && url.pathname === "/api/aiwe-members/import") return importAiweMembersApi(request, env);
 	    if (request.method === "GET" && url.pathname === "/api/google-member-sheet") return fetchGoogleMemberSheet(request, env);

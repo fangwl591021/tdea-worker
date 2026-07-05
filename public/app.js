@@ -1075,7 +1075,7 @@
     if (state.view === "vendor") return `<button class="btn" data-import="vendor">匯入 CSV</button><button class="btn primary" data-drawer="vendor:new">新增廠商會員</button>`;
     if (state.view === "creator") return `<button class="btn" data-import-line-drafts>匯入 LINE 草稿</button><button class="btn" data-reset>清空表單</button>`;
     if (state.view === "redeem") return `<button class="btn" data-load-redeem>刷新紀錄</button>`;
-    if (state.view === "motherRegister") return `<button class="btn" data-import-mother-register>從母站帶入更多資料</button><button class="btn" data-load-mother-register>刷新資料</button><button class="btn primary" data-download-mother-register>下載 CSV</button>`;
+    if (state.view === "motherRegister") return `<button class="btn" data-load-mother-register>刷新資料</button><button class="btn primary" data-download-mother-register>下載 CSV</button>`;
     if (state.view === "keywords") return `<button class="btn" data-refresh-keywords>刷新列表</button><button class="btn primary" data-keyword-new>新增關鍵字</button>`;
     if (state.view === "adminWhitelist") return `<button class="btn" data-load-whitelist>重新載入</button><button class="btn primary" data-save-whitelist>儲存權限名單</button>`;
     return `<label class="sync-toggle"><input type="checkbox" data-auto-sync ${autoSyncEnabled() ? "checked" : ""}> 自動同步</label><button class="btn" data-sync-registrations>同步報名</button><button class="btn" data-worker>檢查 Worker</button><button class="btn danger" data-clear-test>清空測試資料</button><button class="btn primary" data-nav="creator">新增活動</button>`;
@@ -1299,7 +1299,7 @@
       <td>${esc(row.shopId || "-")} / ${esc(row.clientId || "-")}</td>
       <td><span class="badge live">${esc(row.submitStatus || "sent-to-mother")}</span><br><span class="muted">HTTP ${esc(row.motherHttpStatus || "-")}</span></td>
     </tr>`).join("");
-    return `<section class="panel"><div class="panel-head"><div><h2 class="panel-title">母站註冊資料</h2><div class="muted">這裡只保存母站註冊表送回資料，不併入會員 CRM，也不改寫名冊。</div></div><div class="actions"><span class="badge live">${n(rows.length)} 筆</span><button class="btn" data-import-mother-register>從母站帶入更多</button><button class="btn" data-load-mother-register>刷新資料</button></div></div>${rows.length ? `<div class="table-wrap"><table><thead><tr><th>時間</th><th>姓名</th><th>聯絡</th><th>縣市</th><th>產業類別</th><th>LINE UID</th><th>shop/client</th><th>母站送出</th></tr></thead><tbody>${bodyRows}</tbody></table></div>` : empty("目前沒有母站註冊資料")}</section>`;
+    return `<section class="panel"><div class="panel-head"><div><h2 class="panel-title">母站註冊資料</h2><div class="muted">這裡只保存母站註冊表送回資料，不併入會員 CRM，也不改寫名冊。</div></div><div class="actions"><span class="badge live">${n(rows.length)} 筆</span><button class="btn" data-load-mother-register>刷新資料</button></div></div>${rows.length ? `<div class="table-wrap"><table><thead><tr><th>時間</th><th>姓名</th><th>聯絡</th><th>縣市</th><th>產業類別</th><th>LINE UID</th><th>shop/client</th><th>母站送出</th></tr></thead><tbody>${bodyRows}</tbody></table></div>` : empty("目前沒有母站註冊資料")}</section>`;
   }
 
   function downloadMotherRegisterRecords() {
@@ -1981,7 +1981,6 @@
     const loadRoster = document.querySelector("[data-load-roster]"); if (loadRoster) loadRoster.onclick = () => loadRosterSeed(true);
     const worker = document.querySelector("[data-worker]"); if (worker) worker.onclick = async () => { try { const r = await fetch(api + "/api/activities"); const j = await r.json(); toast(j.success ? "Worker API 連線正常" : "Worker API 回應異常"); } catch (_) { toast("Worker API 無法連線"); } };
     document.querySelectorAll("[data-load-mother-register]").forEach(b => b.onclick = async () => { b.disabled = true; await loadMotherRegisterRecords(true); b.disabled = false; });
-    document.querySelectorAll("[data-import-mother-register]").forEach(b => b.onclick = async () => { b.disabled = true; await importMotherRegisterRecords(); b.disabled = false; });
     document.querySelectorAll("[data-download-mother-register]").forEach(b => b.onclick = downloadMotherRegisterRecords);
     const exp = document.querySelector("[data-export]"); if (exp) exp.onclick = () => { navigator.clipboard.writeText(JSON.stringify(state.data, null, 2)); toast("備份 JSON 已複製"); };
     const copy = document.querySelector("[data-copy]"); if (copy) copy.onclick = () => { navigator.clipboard.writeText(location.href); toast("預覽網址已複製"); };
@@ -2210,18 +2209,6 @@
   }
 
 
-  async function importMotherRegisterRecords() {
-    try {
-      const start = Math.floor((state.motherRegisterRecords || []).length / 100) + 1;
-      const response = await fetch(api + `/api/mother-register/import?start=${start}&pages=10&per_page=100`, { method: "POST", headers: adminHeaders(), cache: "no-store" });
-      const result = await response.json().catch(() => ({}));
-      if (!response.ok || !result.success) throw new Error(result.message || "母站註冊資料帶入失敗");
-      toast(`已從母站帶入 ${result.created || 0} 筆，更新 ${result.updated || 0} 筆`);
-      await loadMotherRegisterRecords(false);
-    } catch (error) {
-      toast(error?.message || "母站註冊資料帶入失敗");
-    }
-  }
   async function loadMotherRegisterRecords(showMessage = false) {
     try {
       const response = await fetch(api + "/api/mother-register/records?limit=1000", { headers: adminHeaders(), cache: "no-store" });
