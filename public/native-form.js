@@ -231,7 +231,7 @@
         if (!response.ok || !result.success) throw new Error(result.message || "母站註冊送出失敗");
         if (resultNode) {
           resultNode.hidden = false;
-          resultNode.textContent = result.message || "母站註冊已送出，會員資料同步已完成或排入處理。";
+          resultNode.textContent = result.message || "母站註冊已送出，資料已寫入母站註冊資料頁。";
         }
       } catch (error) {
         alert(error instanceof Error ? error.message : String(error));

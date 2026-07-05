@@ -81,6 +81,7 @@ const richMenuKey = "line/rich-menu.json";
 const adminAccessKey = "line/admin-access.json";
 const adminWhitelistKey = "line/admin-whitelist.json";
 const aiweMembersKey = "aiwe/members.json";
+const motherRegisterRecordsKey = "mother-register/records.json";
 const lineActivityDraftListKey = "line-activity/drafts.json";
 const lineActivityLatestDraftKey = "line-activity/latest-active.json";
 const lineActivityDebugKey = "line-activity/debug.json";
@@ -5102,6 +5103,60 @@ function motherRegisterResponseMessage(html: string) {
   return clean(message) || clean(text).slice(0, 180);
 }
 
+
+async function readMotherRegisterRecords(env: Env): Promise<Array<Record<string, unknown>>> {
+  if (!env.ASSETS_BUCKET) return [];
+  const object = await env.ASSETS_BUCKET.get(motherRegisterRecordsKey);
+  if (!object) return [];
+  const data = await object.json().catch(() => []);
+  const rows = Array.isArray(data) ? data : Array.isArray((data as { records?: unknown[] }).records) ? (data as { records: unknown[] }).records : [];
+  return rows.filter((row): row is Record<string, unknown> => Boolean(row) && typeof row === "object" && !Array.isArray(row));
+}
+
+async function writeMotherRegisterRecords(env: Env, records: Array<Record<string, unknown>>) {
+  if (!env.ASSETS_BUCKET) return false;
+  await env.ASSETS_BUCKET.put(motherRegisterRecordsKey, JSON.stringify({ updatedAt: new Date().toISOString(), records }, null, 2), {
+    httpMetadata: { contentType: "application/json; charset=utf-8", cacheControl: "no-store" }
+  });
+  return true;
+}
+
+function motherRegisterRecordFromSubmit(params: URLSearchParams, fields: ReturnType<typeof normalizeMotherRegisterFields>, status: { httpStatus: number; message: string }) {
+  return {
+    id: `MR-${Date.now()}-${codeToken(4)}`,
+    createdAt: new Date().toISOString(),
+    lineUserId: clean(params.get("line_userid")),
+    shopId: clean(params.get("shop_id")),
+    clientId: clean(params.get("client_id")),
+    redirectUri: clean(params.get("redirect_uri")),
+    botTokenPresent: Boolean(clean(params.get("bot_token"))),
+    displayName: fields.displayName,
+    gender: fields.gender,
+    birthday: fields.birthday,
+    phone: fields.phone,
+    email: fields.email,
+    city: fields.city,
+    category: fields.category,
+    submitStatus: "sent-to-mother",
+    motherHttpStatus: status.httpStatus,
+    motherMessage: status.message
+  };
+}
+
+async function appendMotherRegisterRecord(env: Env, record: Record<string, unknown>) {
+  const rows = await readMotherRegisterRecords(env);
+  rows.unshift(record);
+  await writeMotherRegisterRecords(env, rows.slice(0, 1000));
+  return record;
+}
+
+async function listMotherRegisterRecordsApi(request: Request, env: Env) {
+  const guard = await requireAdmin(request, env);
+  if (guard) return guard;
+  const limit = Math.min(1000, Math.max(1, Number(new URL(request.url).searchParams.get("limit") || 300)));
+  const rows = await readMotherRegisterRecords(env);
+  return json({ success: true, data: rows.slice(0, limit), total: rows.length, source: motherRegisterRecordsKey });
+}
 async function submitMotherRegisterApi(request: Request, env: Env) {
   const input = asRecord(await request.json().catch(() => ({})));
   const params = motherRegisterParamsFromRecord(asRecord(input.sourceParams));
@@ -5144,16 +5199,14 @@ async function submitMotherRegisterApi(request: Request, env: Env) {
   const failed = !submitResponse.ok || /(錯誤|失敗|缺少必要的參數|無法處理使用者資訊|invalid|error)/i.test(responseMessage);
   if (failed) return json({ success: false, message: responseMessage || `母站註冊送出失敗：HTTP ${submitResponse.status}`, status: submitResponse.status }, 502);
 
-  const sync = await syncAiweMembersFromMother(env, {
-    pages: 1,
-    perPage: 20,
-    search: fields.phone || fields.displayName,
-    reason: "mother-register-submit"
-  }).catch((error) => ({ success: false, message: error instanceof Error ? error.message : String(error) }));
+  const record = await appendMotherRegisterRecord(env, motherRegisterRecordFromSubmit(params, fields, {
+    httpStatus: submitResponse.status,
+    message: responseMessage
+  })).catch((error) => ({ saved: false, message: error instanceof Error ? error.message : String(error) }));
   return json({
     success: true,
-    message: sync.success ? "母站註冊已送出，會員資料已同步回子站快取。" : "母站註冊已送出，但子站快取同步未完成。",
-    sync
+    message: "母站註冊已送出，資料已寫入獨立的母站註冊資料頁。",
+    record
   });
 }
 function richMenuSnapshot(config: RichMenuConfig): RichMenuSnapshot {
@@ -6532,6 +6585,7 @@ export default {
 	    if (request.method === "GET" && url.pathname === "/api/aiwe-members-public") return listAiweMembersPublicApi(request, env);
 	    if (request.method === "GET" && url.pathname === "/api/mother-register/form") return getMotherRegisterFormApi(request, env);
 	    if (request.method === "POST" && url.pathname === "/api/mother-register/submit") return submitMotherRegisterApi(request, env);
+	    if (request.method === "GET" && url.pathname === "/api/mother-register/records") return listMotherRegisterRecordsApi(request, env);
 	    if ((request.method === "POST" || request.method === "GET") && url.pathname === "/api/aiwe-members/sync") return syncAiweMembersFromMotherApi(request, env);
 	    if (request.method === "POST" && url.pathname === "/api/aiwe-members/import") return importAiweMembersApi(request, env);
 	    if (request.method === "GET" && url.pathname === "/api/google-member-sheet") return fetchGoogleMemberSheet(request, env);

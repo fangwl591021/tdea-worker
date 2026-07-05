@@ -15,10 +15,11 @@
     "monthlyShare",
     "personalMessages",
     "close",
-    "marquee"
+    "marquee",
+    "motherRegister"
   ];
   const scriptVersions = [
-    "app.js?v=member-checkin-keyword1",
+    "app.js?v=mother-register-data1",
     "line-zone.js?v=access-label1",
     "lottery.js?v=lottery4",
     "activity-types.js?v=types4",
@@ -33,7 +34,7 @@
     "push-manager.js?v=push6",
     "calendar-manager.js?v=calendar3",
     "monthly-activity.js?v=monthly-source2",
-    "native-form.js?v=marquee-checkin1",
+    "native-form.js?v=mother-register1",
     "liff-detail.js?v=liff-detail13",
     "personal-message.js?v=pm4",
     "keyword-extra.js?v=kw2",
@@ -151,7 +152,7 @@
     const params = searchParams();
     if (params.has("monthlyDetail") || params.has("monthlyShare") || params.has("close")) return ["liff-detail.js?v=liff-detail13"];
     if (params.has("personalMessages")) return ["personal-message.js?v=pm4"];
-    return ["native-form.js?v=marquee-checkin1"];
+    return ["native-form.js?v=mother-register1"];
   }
 
   function loadScript(src) {

@@ -14,10 +14,11 @@
     creator: ["創建活動", "建立活動草稿，之後可直接改接 D1。"],
     keywords: ["關鍵字", "整理 LINE OA 觸發關鍵字、用途與回覆行為。"],
     adminWhitelist: ["權限名單", "後台登入、核銷與 LINE 工具使用權限。"],
-    redeem: ["點數折抵", "建立限時店家掃碼工作台，店家掃會員 QR 後執行扣點。"]
+    redeem: ["點數折抵", "建立限時店家掃碼工作台，店家掃會員 QR 後執行扣點。"],
+    motherRegister: ["母站註冊資料", "查看由母站註冊表送回的獨立資料，不併入會員 CRM。"]
   };
   purgeLegacyManagerCache();
-  const state = { view: "dashboard", drawer: "", keywordEditId: "", data: load(), archivedActivities: [], registrationLists: {}, memberRegistrationLists: {}, memberPointAccounts: {}, memberApplications: null, adminWhitelist: null, adminWhitelistMeta: null, rosterSearch: { association: "", vendor: "" } };
+  const state = { view: "dashboard", drawer: "", keywordEditId: "", data: load(), archivedActivities: [], registrationLists: {}, memberRegistrationLists: {}, memberPointAccounts: {}, memberApplications: null, adminWhitelist: null, adminWhitelistMeta: null, motherRegisterRecords: null, rosterSearch: { association: "", vendor: "" } };
   let motherRosterMapPromise = null;
   let managerDataSaveTimer = null;
   let managerDataLoading = false;
@@ -1048,7 +1049,7 @@
         <aside class="sidebar">
           <div class="brand"><span>TDEA 管理中心</span><button class="sidebar-toggle" type="button" data-sidebar-toggle title="${collapsed ? "展開選單" : "收合選單"}" aria-label="${collapsed ? "展開選單" : "收合選單"}">${collapsed ? "›" : "‹"}</button></div>
           ${adminProfileHtml()}
-          <nav class="nav">${nav("dashboard", "活動總覽")}${nav("association", "會員 CRM")}${nav("vendor", "廠商 CRM")}${nav("creator", "創建活動")}${nav("redeem", "點數折抵")}</nav>
+          <nav class="nav">${nav("dashboard", "活動總覽")}${nav("association", "會員 CRM")}${nav("vendor", "廠商 CRM")}${nav("motherRegister", "母站註冊資料")}${nav("creator", "創建活動")}${nav("redeem", "點數折抵")}</nav>
         </aside>
         <main class="main">
           <div class="topbar"><div><h1>${title}</h1><div class="subtitle">${sub}</div></div><div class="actions">${actions()}</div></div>
@@ -1062,6 +1063,7 @@
     if (autoSyncEnabled()) syncRegistrations();
     if (state.view === "redeem" && !state.redeemRecords) loadRedeemRecords();
     if (state.view === "redeem" && !state.pointLedger) loadPointLedger();
+    if (state.view === "motherRegister" && !state.motherRegisterRecords) loadMotherRegisterRecords();
     if (state.view === "dashboard" && state.memberApplications === null) loadMemberApplications();
     if (state.view === "adminWhitelist" && !state.adminWhitelist) loadAdminWhitelist().then(() => render()).catch(() => undefined);
     window.TDEALineNav?.refresh?.();
@@ -1073,6 +1075,7 @@
     if (state.view === "vendor") return `<button class="btn" data-import="vendor">匯入 CSV</button><button class="btn primary" data-drawer="vendor:new">新增廠商會員</button>`;
     if (state.view === "creator") return `<button class="btn" data-import-line-drafts>匯入 LINE 草稿</button><button class="btn" data-reset>清空表單</button>`;
     if (state.view === "redeem") return `<button class="btn" data-load-redeem>刷新紀錄</button>`;
+    if (state.view === "motherRegister") return `<button class="btn" data-load-mother-register>刷新資料</button><button class="btn primary" data-download-mother-register>下載 CSV</button>`;
     if (state.view === "keywords") return `<button class="btn" data-refresh-keywords>刷新列表</button><button class="btn primary" data-keyword-new>新增關鍵字</button>`;
     if (state.view === "adminWhitelist") return `<button class="btn" data-load-whitelist>重新載入</button><button class="btn primary" data-save-whitelist>儲存權限名單</button>`;
     return `<label class="sync-toggle"><input type="checkbox" data-auto-sync ${autoSyncEnabled() ? "checked" : ""}> 自動同步</label><button class="btn" data-sync-registrations>同步報名</button><button class="btn" data-worker>檢查 Worker</button><button class="btn danger" data-clear-test>清空測試資料</button><button class="btn primary" data-nav="creator">新增活動</button>`;
@@ -1082,6 +1085,7 @@
     if (state.view === "vendor") return members("vendor");
     if (state.view === "creator") return creator();
     if (state.view === "redeem") return redeem();
+    if (state.view === "motherRegister") return motherRegisterRecords();
     if (state.view === "keywords") return keywords();
     if (state.view === "adminWhitelist") return adminWhitelistClean();
     return memberApplicationsPanel() + dashboard();
@@ -1280,6 +1284,38 @@
     link.remove();
     setTimeout(() => URL.revokeObjectURL(url), 1000);
     toast("折抵名單已下載");
+  }
+
+  function motherRegisterRecords() {
+    const rows = state.motherRegisterRecords;
+    if (!rows) return `<section class="panel"><div class="panel-head"><h2 class="panel-title">母站註冊資料</h2><button class="btn" data-load-mother-register>刷新資料</button></div>${empty("正在載入母站註冊資料...")}</section>`;
+    const bodyRows = rows.map(row => `<tr>
+      <td>${esc(formatTime(row.createdAt))}</td>
+      <td><strong>${esc(row.displayName || "-")}</strong><br><span class="muted">${esc(row.gender || "")}${row.birthday ? ` / ${esc(row.birthday)}` : ""}</span></td>
+      <td>${esc(row.phone || "-")}<br><span class="muted">${esc(row.email || "")}</span></td>
+      <td>${esc(row.city || "-")}</td>
+      <td>${esc(row.category || "-")}</td>
+      <td style="max-width:260px;white-space:normal;word-break:break-all">${esc(row.lineUserId || "-")}</td>
+      <td>${esc(row.shopId || "-")} / ${esc(row.clientId || "-")}</td>
+      <td><span class="badge live">${esc(row.submitStatus || "sent-to-mother")}</span><br><span class="muted">HTTP ${esc(row.motherHttpStatus || "-")}</span></td>
+    </tr>`).join("");
+    return `<section class="panel"><div class="panel-head"><div><h2 class="panel-title">母站註冊資料</h2><div class="muted">這裡只保存母站註冊表送回資料，不併入會員 CRM，也不改寫名冊。</div></div><div class="actions"><span class="badge live">${n(rows.length)} 筆</span><button class="btn" data-load-mother-register>刷新資料</button></div></div>${rows.length ? `<div class="table-wrap"><table><thead><tr><th>時間</th><th>姓名</th><th>聯絡</th><th>縣市</th><th>產業類別</th><th>LINE UID</th><th>shop/client</th><th>母站送出</th></tr></thead><tbody>${bodyRows}</tbody></table></div>` : empty("目前沒有母站註冊資料")}</section>`;
+  }
+
+  function downloadMotherRegisterRecords() {
+    const rows = state.motherRegisterRecords || [];
+    if (!rows.length) return toast("目前沒有母站註冊資料可下載");
+    const header = ["時間", "姓名", "性別", "生日", "手機", "Email", "縣市", "產業類別", "LINE UID", "shop_id", "client_id", "母站狀態", "母站訊息"];
+    const lines = [header, ...rows.map(row => [formatTime(row.createdAt), row.displayName || "", row.gender || "", row.birthday || "", row.phone || "", row.email || "", row.city || "", row.category || "", row.lineUserId || "", row.shopId || "", row.clientId || "", row.submitStatus || "", row.motherMessage || ""])].map(cols => cols.map(csvValue).join(","));
+    const blob = new Blob(["\ufeff" + lines.join("\r\n")], { type: "text/csv;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = "母站註冊資料.csv";
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
   }
   function redeem() {
     const rows = state.redeemRecords || [];
@@ -1944,6 +1980,8 @@
     const im = document.querySelector("#import-form"); if (im) im.onsubmit = e => { e.preventDefault(); const d = Object.fromEntries(new FormData(im)); const count = importRows(im.dataset.type, d.csv || ""); state.drawer = ""; render(); toast(`已導入 ${count} 筆資料`); };
     const loadRoster = document.querySelector("[data-load-roster]"); if (loadRoster) loadRoster.onclick = () => loadRosterSeed(true);
     const worker = document.querySelector("[data-worker]"); if (worker) worker.onclick = async () => { try { const r = await fetch(api + "/api/activities"); const j = await r.json(); toast(j.success ? "Worker API 連線正常" : "Worker API 回應異常"); } catch (_) { toast("Worker API 無法連線"); } };
+    document.querySelectorAll("[data-load-mother-register]").forEach(b => b.onclick = async () => { b.disabled = true; await loadMotherRegisterRecords(true); b.disabled = false; });
+    document.querySelectorAll("[data-download-mother-register]").forEach(b => b.onclick = downloadMotherRegisterRecords);
     const exp = document.querySelector("[data-export]"); if (exp) exp.onclick = () => { navigator.clipboard.writeText(JSON.stringify(state.data, null, 2)); toast("備份 JSON 已複製"); };
     const copy = document.querySelector("[data-copy]"); if (copy) copy.onclick = () => { navigator.clipboard.writeText(location.href); toast("預覽網址已複製"); };
     const reset = document.querySelector("[data-reset]"); if (reset) reset.onclick = () => { const f = document.querySelector("#activity-form"); if (f) f.reset(); };
@@ -2170,6 +2208,20 @@
     toast("店家掃碼網址已產生");
   }
 
+
+  async function loadMotherRegisterRecords(showMessage = false) {
+    try {
+      const response = await fetch(api + "/api/mother-register/records?limit=1000", { headers: adminHeaders(), cache: "no-store" });
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok || !result.success) throw new Error(result.message || "母站註冊資料讀取失敗");
+      state.motherRegisterRecords = Array.isArray(result.data) ? result.data : [];
+      if (showMessage) toast(`已載入 ${state.motherRegisterRecords.length} 筆母站註冊資料`);
+      if (state.view === "motherRegister") render();
+    } catch (error) {
+      state.motherRegisterRecords ||= [];
+      if (showMessage) toast(error?.message || "母站註冊資料讀取失敗");
+    }
+  }
   async function loadRedeemRecords(showMessage = false) {
     if (!hasAdminIdentity()) {
       if (showMessage) toast("請先登入管理者");
