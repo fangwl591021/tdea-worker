@@ -19,7 +19,7 @@
     "motherRegister"
   ];
   const scriptVersions = [
-    "app.js?v=mother-register-sync1",
+    "app.js?v=mother-register-search1",
     "line-zone.js?v=access-label1",
     "lottery.js?v=lottery4",
     "activity-types.js?v=types4",

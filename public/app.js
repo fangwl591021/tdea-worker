@@ -18,7 +18,7 @@
     motherRegister: ["母站註冊資料", "查看由母站註冊表送回的獨立資料，不併入會員 CRM。"]
   };
   purgeLegacyManagerCache();
-  const state = { view: "dashboard", drawer: "", keywordEditId: "", data: load(), archivedActivities: [], registrationLists: {}, memberRegistrationLists: {}, memberPointAccounts: {}, memberApplications: null, adminWhitelist: null, adminWhitelistMeta: null, motherRegisterRecords: null, rosterSearch: { association: "", vendor: "" } };
+  const state = { view: "dashboard", drawer: "", keywordEditId: "", data: load(), archivedActivities: [], registrationLists: {}, memberRegistrationLists: {}, memberPointAccounts: {}, memberApplications: null, adminWhitelist: null, adminWhitelistMeta: null, motherRegisterRecords: null, motherRegisterSearch: "", rosterSearch: { association: "", vendor: "" } };
   let motherRosterMapPromise = null;
   let managerDataSaveTimer = null;
   let managerDataLoading = false;
@@ -341,6 +341,33 @@
     if (!query) return rows;
     const vendor = type === "vendor";
     return rows.filter((row) => rosterSearchValue(row, vendor).includes(query));
+  }
+  function motherRegisterSearchValue(row) {
+    return [
+      row.createdAt,
+      row.importedAt,
+      row.displayName,
+      row.gender,
+      row.birthday,
+      row.phone,
+      row.email,
+      row.city,
+      row.category,
+      row.lineUserId,
+      row.shopId,
+      row.clientId,
+      row.submitStatus,
+      row.motherMessage,
+      row.source
+    ].map((value) => String(value || "").toLowerCase()).join(" ");
+  }
+  function motherRegisterSearchQuery() {
+    return String(state.motherRegisterSearch || "").trim().toLowerCase();
+  }
+  function filterMotherRegisterRows(rows) {
+    const query = motherRegisterSearchQuery();
+    if (!query) return rows;
+    return rows.filter((row) => motherRegisterSearchValue(row).includes(query));
   }
   function cleanupRosterData() {
     if (rosterCleanupApplied) return;
@@ -1287,9 +1314,15 @@
   }
 
   function motherRegisterRecords() {
-    const rows = state.motherRegisterRecords;
-    if (!rows) return `<section class="panel"><div class="panel-head"><h2 class="panel-title">母站註冊資料</h2><button class="btn" data-load-mother-register>刷新資料</button></div>${empty("正在載入母站註冊資料...")}</section>`;
-    const bodyRows = rows.map(row => `<tr>
+    const allRows = state.motherRegisterRecords;
+    if (!allRows) return `<section class="panel"><div class="panel-head"><h2 class="panel-title">母站註冊資料</h2><button class="btn" data-load-mother-register>刷新資料</button></div>${empty("正在載入母站註冊資料...")}</section>`;
+    const rows = filterMotherRegisterRows(allRows);
+    const query = state.motherRegisterSearch || "";
+    const search = `<div class="field" style="min-width:280px;max-width:480px;margin-left:auto"><input data-mother-register-search value="${esc(query)}" placeholder="搜尋姓名、手機、Email、UID、縣市、產業類別"></div>`;
+    const bodyRows = allRows.map(row => {
+      const searchText = motherRegisterSearchValue(row);
+      const hidden = motherRegisterSearchQuery() && !searchText.includes(motherRegisterSearchQuery());
+      return `<tr data-mother-register-row data-mother-register-search-text="${esc(searchText)}" ${hidden ? `style="display:none"` : ""}>
       <td>${esc(formatTime(row.createdAt))}</td>
       <td><strong>${esc(row.displayName || "-")}</strong><br><span class="muted">${esc(row.gender || "")}${row.birthday ? ` / ${esc(row.birthday)}` : ""}</span></td>
       <td>${esc(row.phone || "-")}<br><span class="muted">${esc(row.email || "")}</span></td>
@@ -1298,20 +1331,21 @@
       <td style="max-width:260px;white-space:normal;word-break:break-all">${esc(row.lineUserId || "-")}</td>
       <td>${esc(row.shopId || "-")} / ${esc(row.clientId || "-")}</td>
       <td><span class="badge live">${esc(row.submitStatus || "sent-to-mother")}</span><br><span class="muted">HTTP ${esc(row.motherHttpStatus || "-")}</span></td>
-    </tr>`).join("");
-    return `<section class="panel"><div class="panel-head"><div><h2 class="panel-title">母站註冊資料</h2><div class="muted">這裡只保存母站註冊表送回資料，不併入會員 CRM，也不改寫名冊。</div></div><div class="actions"><span class="badge live">${n(rows.length)} 筆</span><button class="btn" data-load-mother-register>刷新資料</button></div></div>${rows.length ? `<div class="table-wrap"><table><thead><tr><th>時間</th><th>姓名</th><th>聯絡</th><th>縣市</th><th>產業類別</th><th>LINE UID</th><th>shop/client</th><th>母站送出</th></tr></thead><tbody>${bodyRows}</tbody></table></div>` : empty("目前沒有母站註冊資料")}</section>`;
+    </tr>`;
+    }).join("");
+    return `<section class="panel"><div class="panel-head"><div><h2 class="panel-title">母站註冊資料</h2><div class="muted">這裡只保存母站註冊表送回資料，不併入會員 CRM，也不改寫名冊。</div></div><div class="actions">${search}<span class="badge live" data-mother-register-count>${n(rows.length)} / ${n(allRows.length)} 筆</span><button class="btn" data-load-mother-register>刷新資料</button></div></div>${allRows.length ? `<div class="table-wrap"><table><thead><tr><th>時間</th><th>姓名</th><th>聯絡</th><th>縣市</th><th>產業類別</th><th>LINE UID</th><th>shop/client</th><th>母站送出</th></tr></thead><tbody>${bodyRows}</tbody></table></div>` : empty("目前沒有母站註冊資料")}</section>`;
   }
 
   function downloadMotherRegisterRecords() {
-    const rows = state.motherRegisterRecords || [];
-    if (!rows.length) return toast("目前沒有母站註冊資料可下載");
+    const rows = filterMotherRegisterRows(state.motherRegisterRecords || []);
+    if (!rows.length) return toast(motherRegisterSearchQuery() ? "目前搜尋結果沒有母站註冊資料可下載" : "目前沒有母站註冊資料可下載");
     const header = ["時間", "姓名", "性別", "生日", "手機", "Email", "縣市", "產業類別", "LINE UID", "shop_id", "client_id", "母站狀態", "母站訊息"];
     const lines = [header, ...rows.map(row => [formatTime(row.createdAt), row.displayName || "", row.gender || "", row.birthday || "", row.phone || "", row.email || "", row.city || "", row.category || "", row.lineUserId || "", row.shopId || "", row.clientId || "", row.submitStatus || "", row.motherMessage || ""])].map(cols => cols.map(csvValue).join(","));
     const blob = new Blob(["\ufeff" + lines.join("\r\n")], { type: "text/csv;charset=utf-8" });
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
     link.href = url;
-    link.download = "母站註冊資料.csv";
+    link.download = motherRegisterSearchQuery() ? "母站註冊資料-搜尋結果.csv" : "母站註冊資料.csv";
     document.body.appendChild(link);
     link.click();
     link.remove();
@@ -1789,6 +1823,21 @@
           if (matched) visible += 1;
         });
         const count = document.querySelector(`[data-roster-count="${type}"]`);
+        if (count) count.textContent = `${visible} / ${rows.length} 筆`;
+      };
+    });
+    document.querySelectorAll("[data-mother-register-search]").forEach(input => {
+      input.oninput = () => {
+        const query = String(input.value || "").trim().toLowerCase();
+        state.motherRegisterSearch = input.value || "";
+        const rows = Array.from(document.querySelectorAll("[data-mother-register-row]"));
+        let visible = 0;
+        rows.forEach((row) => {
+          const matched = !query || String(row.dataset.motherRegisterSearchText || "").includes(query);
+          row.style.display = matched ? "" : "none";
+          if (matched) visible += 1;
+        });
+        const count = document.querySelector("[data-mother-register-count]");
         if (count) count.textContent = `${visible} / ${rows.length} 筆`;
       };
     });
