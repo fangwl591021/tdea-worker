@@ -6117,8 +6117,7 @@ async function handleMonthlyWebhook(request: Request, env: Env, rawBody: string,
   const lineActivityMaker = hasBuiltInKeywordEvents ? null : await handleLineActivityMaker(request, env, rawBody, allEvents, ctx);
   if (lineActivityMaker) return lineActivityMaker;
   const memberCheckinEvents = childMemberCheckinEnabled ? allEvents.filter((event) => isMemberCheckinText(extractTriggerText(event))) : [];
-  const onboardingActive = !hasMemberCheckinTextInPayload && await hasMemberOnboardingSession(allEvents, env);
-  if (!queryEvents.length && !memberQrEvents.length && !calendarEvents.length && !personalMessageEvents.length && !uidBindEvents.length && !memberCheckinEvents.length && !vendorCardEvents.length && !marqueeEvents.length && !pointEvents.length && !events.length && !onboardingActive) return null;
+  if (!queryEvents.length && !memberQrEvents.length && !calendarEvents.length && !personalMessageEvents.length && !uidBindEvents.length && !memberCheckinEvents.length && !vendorCardEvents.length && !marqueeEvents.length && !pointEvents.length && !events.length) return null;
   const signature = request.headers.get("x-line-signature");
   const signatureOk = await verifyLineSignature(rawBody, signature, env.LINE_CHANNEL_SECRET);
   if (!signatureOk) {
@@ -6269,7 +6268,7 @@ async function handleMonthlyWebhook(request: Request, env: Env, rawBody: string,
     const lineReplies = await Promise.all(marqueeEvents.map((event) => event.replyToken ? replyToLine(event.replyToken, [marqueeMessage], env) : Promise.resolve({ ok: false, status: 400, message: "Missing replyToken" })));
     return json({ success: true, mode: "marquee", matched: [marqueeKeyword, ...marqueeLegacyKeywords], forwarded: false, lineReplies });
   }
-  return json({ success: true, mode: "monthly-activity", matched: [fixedKeyword], forwarded: false, lineReplies: [] });
+  return null;
 }
 
 async function monthlyDetail(env: Env, id: string) {
@@ -6383,6 +6382,7 @@ export default {
     return baseEntry.fetch(request, env, ctx);
   }
 };
+
 
 
 
