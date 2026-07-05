@@ -3494,12 +3494,16 @@ function customKeywordMessage(rule: Record<string, unknown>) {
   return { type: "text", text: lines.join("\n") || clean(rule.title || rule.keyword || "已收到訊息") };
 }
 
-async function handleCustomKeywordEvents(events: LineEvent[], env: Env) {
+async function findCustomKeywordMatches(events: LineEvent[], env: Env) {
   const data = await readManagerDataRaw(env) || {};
   const rules = [...(Array.isArray(data.keywordRules) ? data.keywordRules as Record<string, unknown>[] : []), ...(Array.isArray(data.flexRules) ? data.flexRules as Record<string, unknown>[] : [])];
-  const matches = events
+  return events
     .map((event) => ({ event, text: extractTriggerText(event), rule: rules.find((rule) => customKeywordMatches(rule, extractTriggerText(event))) }))
     .filter((item): item is { event: LineEvent; text: string; rule: Record<string, unknown> } => Boolean(item.rule));
+}
+
+async function handleCustomKeywordEvents(events: LineEvent[], env: Env) {
+  const matches = await findCustomKeywordMatches(events, env);
   if (!matches.length) return null;
   const lineReplies = await Promise.all(matches.map(({ event, rule }) => event.replyToken
     ? replyToLine(event.replyToken, [customKeywordMessage(rule)], env)
@@ -3616,6 +3620,32 @@ function extractLineEvents(payload: unknown): LineEvent[] { if (!payload || type
 async function replyToLine(replyToken: string, messages: Array<Record<string, unknown>>, env: Env) { const token = env.LINE_CHANNEL_ACCESS_TOKEN?.trim(); if (!token) return { ok: false, status: 503, message: "LINE token is not configured" }; const response = await fetch("https://api.line.me/v2/bot/message/reply", { method: "POST", headers: { authorization: `Bearer ${token}`, "content-type": "application/json" }, body: JSON.stringify({ replyToken, messages }) }); return { ok: response.ok, status: response.status, body: await response.text().catch(() => "") }; }
 async function pushToLine(to: string, messages: Array<Record<string, unknown>>, env: Env) { const token = env.LINE_CHANNEL_ACCESS_TOKEN?.trim(); if (!token) return { ok: false, status: 503, message: "LINE token is not configured" }; const response = await fetch("https://api.line.me/v2/bot/message/push", { method: "POST", headers: { authorization: `Bearer ${token}`, "content-type": "application/json" }, body: JSON.stringify({ to, messages }) }); return { ok: response.ok, status: response.status, body: await response.text().catch(() => "") }; }
 function rebuildRequest(request: Request, rawBody: string) { return new Request(request.url, { method: request.method, headers: request.headers, body: rawBody }); }
+function lineWebhookEventsFromRawBody(rawBody: string) {
+  try {
+    return extractLineEvents(JSON.parse(rawBody));
+  } catch (_) {
+    return [] as LineEvent[];
+  }
+}
+
+async function hasActiveLineActivityDraft(events: LineEvent[], env: Env) {
+  for (const event of events) {
+    const lineUserId = lineUserIdFromEvent(event);
+    if (lineUserId && await readLineActivityDraft(env, lineUserId)) return true;
+  }
+  return false;
+}
+
+async function shouldRouteLineWebhookToChild(rawBody: string, env: Env) {
+  const events = lineWebhookEventsFromRawBody(rawBody);
+  if (!events.length) return false;
+  const classified = classifyLineEvents(events);
+  if (classified.hasBuiltInKeywordEvents) return true;
+  if ((await findCustomKeywordMatches(events, env)).length) return true;
+  if (await hasMemberOnboardingSession(events, env)) return true;
+  if (await hasActiveLineActivityDraft(events, env)) return true;
+  return false;
+}
 
 function personalMessagesUrl() {
   return `${publicLiffUrl}?personalMessages=1`;
@@ -6362,7 +6392,7 @@ export default {
     if (request.method === "GET" && url.pathname === "/api/registrations/export") return exportRegistrationsExcel(request, env);
     const detailMatch = url.pathname.match(/^\/monthly-detail\/([^/]+)$/);
     if (request.method === "GET" && detailMatch) return monthlyDetail(env, decodeURIComponent(detailMatch[1]));
-    if (request.method === "POST" && url.pathname === "/line-webhook") { const rawBody = await request.text(); if (ctx) ctx.waitUntil(appendLineWebhookIngressLog(env, request, rawBody, ctx)); else await appendLineWebhookIngressLog(env, request, rawBody, ctx); const monthly = await handleMonthlyWebhook(request, env, rawBody, ctx); if (monthly) return monthly; if (clean(env.FORWARD_WEBHOOK_URL)) return forwardToMotherWebhookFast(request, env, rawBody, ctx); return baseEntry.fetch(rebuildRequest(request, rawBody), env, ctx); }
+    if (request.method === "POST" && url.pathname === "/line-webhook") { const rawBody = await request.text(); if (ctx) ctx.waitUntil(appendLineWebhookIngressLog(env, request, rawBody, ctx)); else await appendLineWebhookIngressLog(env, request, rawBody, ctx); if (await shouldRouteLineWebhookToChild(rawBody, env)) { const monthly = await handleMonthlyWebhook(request, env, rawBody, ctx); if (monthly) return monthly; return baseEntry.fetch(rebuildRequest(request, rawBody), env, ctx); } if (clean(env.FORWARD_WEBHOOK_URL)) return forwardToMotherWebhookFast(request, env, rawBody, ctx); return baseEntry.fetch(rebuildRequest(request, rawBody), env, ctx); }
     return baseEntry.fetch(request, env, ctx);
   }
 };
