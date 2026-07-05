@@ -378,7 +378,7 @@
       <strong>${esc(member.name || "會員")}</strong>
       <div class="nf-member-grid">
         <span>身分</span><b>${esc(member.role || "")}</b>
-        <span>會員編號</span><b>${esc(member.memberNo || "-")}</b>
+        ${member.memberNo ? `<span>會員編號</span><b>${esc(member.memberNo)}</b>` : ""}
         <span>公司/單位</span><b>${esc(member.company || "-")}</b>
       </div>
     </div>`;
@@ -388,11 +388,11 @@
     if (mode !== "member_login" && mode !== "mixed") return "";
     const extraFields = fields.filter((field) => !isLoginAutoMemberField(field));
     return `<form class="nf-form nf-login-box" data-login-register-box novalidate>
-      <div class="nf-ok">會員或廠商會員可使用 LINE 快速報名。系統會取得 LINE UID 並比對名冊，不需要手動填 LINE ID。</div>
+      <div class="nf-ok">CRM 會員、廠商會員或母站註冊者可使用 LINE 快速報名。系統會取得 LINE UID 並比對身分，不需要手動填 LINE ID。</div>
       <div data-login-member-area></div>
       ${sessionFieldHtml(sessions)}
-      ${extraFields.length ? `<div class="nf-ok">會員資料會自動帶入，只需補活動必要欄位。</div>${extraFields.map(fieldHtml).join("")}` : ""}
-      <div class="nf-actions"><button class="nf-btn primary" type="button" data-login-register>會員/廠商快速報名</button></div>
+      ${extraFields.length ? `<div class="nf-ok">身分資料會自動帶入，只需補活動必要欄位。</div>${extraFields.map(fieldHtml).join("")}` : ""}
+      <div class="nf-actions"><button class="nf-btn primary" type="button" data-login-register>LINE 快速報名</button></div>
     </form>`;
   }
 
@@ -522,7 +522,9 @@
           if (mode === "member_login") return renderError(submitResult.message || "報名失敗");
           autoLoginNotice = submitResult.message || "會員自動報名未完成，請補填必要欄位後送出。";
         } else if (mode === "member_login") {
-          return renderError(memberResult.message || "此 LINE 帳號尚未綁定會員或廠商會員資料。");
+          effectiveMode = "form";
+          showFullForm = true;
+          autoLoginNotice = memberResult.message || "此 LINE 帳號尚未對到 CRM 會員或母站註冊資料，請改填完整報名表。";
         }
       } else if (!uid && (mode === "member_login" || mode === "mixed")) {
         effectiveMode = "form";
@@ -565,7 +567,7 @@
       const uid = await loadLiff({ login: true });
       if (!uid) {
         loginButton.disabled = false;
-        loginButton.textContent = "會員/廠商快速報名";
+        loginButton.textContent = "LINE 快速報名";
         return alert("無法取得 LINE UID，請從 LINE LIFF 開啟報名頁。");
       }
       const sessionId = loginBox?.querySelector("[name='sessionId']")?.value || sessions[0]?.id || "default";
@@ -581,24 +583,25 @@
         const claimError = missingMemberClaimIdentity(claimAnswers);
         if (claimError) {
           loginButton.disabled = false;
-          loginButton.textContent = "會員/廠商快速報名";
+          loginButton.textContent = "LINE 快速報名";
           return alert(memberResult.message || claimError);
         }
         answers = claimAnswers;
       } else {
         const memberArea = app.querySelector("[data-login-member-area]");
         if (memberArea) memberArea.innerHTML = memberSummary(member);
-        if (!confirm(`確認以 ${member.name || "會員"} 報名？\n會員編號：${member.memberNo || "-"}`)) {
+        const memberNoLine = member.memberNo ? `\n會員編號：${member.memberNo}` : "";
+        if (!confirm(`確認以 ${member.name || member.role || "LINE 身分"} 報名？\n身分：${member.role || "-"}${memberNoLine}`)) {
           loginButton.disabled = false;
-          loginButton.textContent = "會員/廠商快速報名";
+          loginButton.textContent = "LINE 快速報名";
           return;
         }
       }
-      loginButton.textContent = member ? "送出中..." : "綁定並送出中...";
+      loginButton.textContent = member ? "送出中..." : "比對並送出中...";
       const { response: submitResponse, result: submitResult } = await submitLoginRegistration(id, { lineUserId: uid, sessionId, answers });
       if (!submitResponse.ok || !submitResult.success) {
         loginButton.disabled = false;
-        loginButton.textContent = "會員/廠商快速報名";
+        loginButton.textContent = "LINE 快速報名";
         return alert(submitResult.message || "報名失敗");
       }
       renderReceipt(submitResult);

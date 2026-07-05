@@ -37,12 +37,13 @@ type RegistrationRecord = { activityId?: string; activityNo?: string; activityNa
 type RegistrationSummary = { updatedAt?: string; activities: Record<string, RegistrationRecord> };
 type PaymentStatus = "free" | "unpaid" | "reported" | "paid" | "cancelled" | "refunded";
 type RegistrationPayment = { status: PaymentStatus; method?: "free" | "bank_transfer" | "cash" | "manual"; amount: number; currency?: string; remittanceLast5?: string; reportedAt?: string; paidAt?: string; verifiedBy?: string; verifiedAt?: string; note?: string; updatedAt?: string; transactions?: Array<Record<string, unknown>> };
-type RegistrationEntry = { id: string; sourceId?: string; formId?: string; submittedAt?: string; updatedAt?: string; activity?: Record<string, unknown>; answers?: Record<string, unknown>; status?: string; checkedInAt?: string; sessionId?: string; queryCode?: string; checkinToken?: string; cancelledAt?: string; lineUserId?: string; pointsSyncedAt?: string; pointResults?: unknown[]; payment?: RegistrationPayment };
+type RegistrationEntry = { id: string; sourceId?: string; formId?: string; submittedAt?: string; updatedAt?: string; activity?: Record<string, unknown>; answers?: Record<string, unknown>; status?: string; checkedInAt?: string; sessionId?: string; queryCode?: string; checkinToken?: string; cancelledAt?: string; lineUserId?: string; identityKey?: string; identityKind?: string; pointsSyncedAt?: string; pointResults?: unknown[]; payment?: RegistrationPayment };
 type ManagedSubmission = { formId?: string; sourceId?: string; submittedAt?: string; activity: Record<string, unknown>; answers: Record<string, unknown>; raw?: unknown };
 type NativeField = { key: string; label: string; type: string; required?: boolean; options?: string[] };
 type NativeSession = { id: string; name: string; startTime?: string; endTime?: string; capacity?: number; status?: string };
 type NativeForm = { id: string; provider: "native_form"; activity: Record<string, unknown>; settings: Record<string, unknown>; fields: NativeField[]; sessions: NativeSession[]; formUrl: string; createdAt: string; updatedAt: string };
 type LineLoginMember = { rosterType: "association" | "vendor"; memberNo: string; name: string; role: string; lineUserId: string; company?: string; phone?: string; email?: string; gender?: string; raw: Record<string, unknown> };
+type RegistrationIdentity = { kind: "crm-member" | "mother-registered"; rosterType: "association" | "vendor" | "mother"; memberNo: string; name: string; role: string; lineUserId: string; identityKey: string; source: string; company?: string; phone?: string; email?: string; gender?: string; raw: Record<string, unknown> };
 type PointLog = { logId: string; lineUserId: string; type: "EARN" | "SPEND"; amount: number; points: number; reason: string; balanceAfter: number; createdAt: string; createdTs: number; source?: string; referenceId?: string; externalSync?: unknown; externalBalanceSync?: unknown };
 type PointAccount = { balance: number; logs: PointLog[]; updatedAt?: string; source?: string; syncedAt?: string; externalRaw?: unknown };
 type RedeemMode = "fixed" | "manual" | "rate";
@@ -1889,9 +1890,14 @@ function resolveLineLoginMemberFromManagerData(data: Record<string, unknown> | n
   const lowerUid = clean(lineUserId).toLowerCase();
   for (const rosterType of ["association", "vendor"] as const) {
     const rows = Array.isArray(data[rosterType]) ? data[rosterType] as Array<Record<string, unknown>> : [];
-    const row = rows.find((item) => explicitMemberLineUid(item).toLowerCase() === lowerUid || memberLineUid(item).toLowerCase() === lowerUid);
+    const row = rows.find((item) => {
+      const memberNo = firstClean(item.memberNo, item.rosterMemberNo, item.member_no, item.aiweMemberNo, item.motherMemberNo, item.user_login);
+      const rowUid = firstClean(explicitMemberLineUid(item), memberLineUid(item));
+      return Boolean(memberNo && validLineUid(rowUid) && rowUid.toLowerCase() === lowerUid);
+    });
     if (!row) continue;
-    const memberNo = firstClean(row.memberNo, row.rosterMemberNo, row.member_no, row.aiweMemberNo, row.motherMemberNo, row.user_login);
+    const memberNo = firstClean(row.memberNo, row.rosterMemberNo, row.member_no, row.aiweMemberNo, row.motherMemberNo, row.user_login).toUpperCase();
+    const rowUid = firstClean(explicitMemberLineUid(row), memberLineUid(row));
     const name = rosterType === "vendor"
       ? firstClean(row.companyName, row.name, row.rosterName, row.displayName)
       : firstClean(row.name, row.rosterName, row.memberName, row.displayName);
@@ -1900,7 +1906,7 @@ function resolveLineLoginMemberFromManagerData(data: Record<string, unknown> | n
       memberNo,
       name,
       role: rosterType === "vendor" ? "廠商會員" : "協會會員",
-      lineUserId: clean(lineUserId),
+      lineUserId: rowUid,
       company: rosterType === "vendor" ? firstClean(row.companyName, row.company, row.organization, row.unit) : firstClean(row.company, row.companyName, row.organization, row.unit),
       phone: firstClean(row.phone, row.mobile, row.tel, row.telephone, row.contactPhone, row["手機"], row["手機號碼"], row["行動電話"], row["電話"]),
       email: isSyntheticLineEmail(firstClean(row.email, row.user_email)) ? "" : firstClean(row.email, row.user_email),
@@ -1910,34 +1916,110 @@ function resolveLineLoginMemberFromManagerData(data: Record<string, unknown> | n
   }
   return null;
 }
-function publicLineLoginMember(member: LineLoginMember) {
+
+function registrationIdentityKey(kind: RegistrationIdentity["kind"], memberNo: string, lineUserId: string) {
+  const uid = clean(lineUserId).toLowerCase();
+  if (kind === "crm-member") return `crm:${clean(memberNo).toUpperCase()}:${uid}`;
+  return `mother:${uid}`;
+}
+
+function registrationIdentityFromCrmMember(member: LineLoginMember): RegistrationIdentity {
   return {
+    kind: "crm-member",
     rosterType: member.rosterType,
     memberNo: member.memberNo,
     name: member.name,
     role: member.role,
     lineUserId: member.lineUserId,
-    company: member.company || "",
-    phone: member.phone || "",
-    email: member.email || "",
-    gender: member.gender || ""
+    identityKey: registrationIdentityKey("crm-member", member.memberNo, member.lineUserId),
+    source: "crm-roster",
+    company: member.company,
+    phone: member.phone,
+    email: member.email,
+    gender: member.gender,
+    raw: member.raw
   };
 }
 
-function memberAnswers(member: LineLoginMember) {
+async function resolveMotherRegisteredIdentity(env: Env, lineUserId: string): Promise<RegistrationIdentity | null> {
+  const uid = clean(lineUserId);
+  if (!validLineUid(uid)) return null;
+  const lowerUid = uid.toLowerCase();
+  const records = await readMotherRegisterRecords(env).catch(() => []);
+  const row = records.find((item) => {
+    const rowUid = firstClean(item.lineUserId, item.line_userid, item.line_user_id, item.lineUserID, item.LINE_user_id, item.uid, item.UID, item.userId);
+    return validLineUid(rowUid) && rowUid.toLowerCase() === lowerUid;
+  });
+  if (!row) return null;
+  const name = firstClean(row.displayName, row.display_name, row.name, row.userName, row.nickname);
+  return {
+    kind: "mother-registered",
+    rosterType: "mother",
+    memberNo: "",
+    name,
+    role: "母站註冊者",
+    lineUserId: uid,
+    identityKey: registrationIdentityKey("mother-registered", "", uid),
+    source: firstClean(row.source, row.registerSource, "wetw/query-line-user-list"),
+    company: firstClean(row.company, row.organization, row.unit),
+    phone: firstClean(row.phone, row.mobile, row.tel, row.telephone, row.contactPhone),
+    email: isSyntheticLineEmail(firstClean(row.email, row.user_email)) ? "" : firstClean(row.email, row.user_email),
+    gender: firstClean(row.gender, row.sex),
+    raw: row
+  };
+}
+
+async function resolveNativeRegistrationIdentity(env: Env, lineUserId: string): Promise<RegistrationIdentity | null> {
+  const uid = clean(lineUserId);
+  if (!validLineUid(uid)) return null;
+  const managerData = await readManagerData(env).catch(() => null);
+  const crmMember = resolveLineLoginMemberFromManagerData(managerData, uid);
+  if (crmMember) return registrationIdentityFromCrmMember(crmMember);
+  return resolveMotherRegisteredIdentity(env, uid);
+}
+
+function publicRegistrationIdentity(identity: RegistrationIdentity) {
+  return {
+    identityKind: identity.kind,
+    identityKey: identity.identityKey,
+    rosterType: identity.rosterType,
+    memberNo: identity.memberNo,
+    name: identity.name,
+    role: identity.role,
+    lineUserId: identity.lineUserId,
+    company: identity.company || "",
+    phone: identity.phone || "",
+    email: identity.email || "",
+    gender: identity.gender || "",
+    source: identity.source
+  };
+}
+
+function publicLineLoginMember(member: LineLoginMember) {
+  return publicRegistrationIdentity(registrationIdentityFromCrmMember(member));
+}
+
+function registrationIdentityAnswers(identity: RegistrationIdentity) {
   return normalizeAnswersRecord({
-    LINE_user_id: member.lineUserId,
-    name: member.name,
-    phone: member.phone || "",
-    email: member.email || "",
-    memberNo: member.memberNo,
-    company: member.company || (member.rosterType === "vendor" ? member.name : ""),
-    gender: member.gender || "",
-    isMember: "是",
-    memberType: member.role
+    LINE_user_id: identity.lineUserId,
+    name: identity.name,
+    phone: identity.phone || "",
+    email: identity.email || "",
+    memberNo: identity.kind === "crm-member" ? identity.memberNo : "",
+    company: identity.company || (identity.rosterType === "vendor" ? identity.name : ""),
+    gender: identity.gender || "",
+    isMember: identity.kind === "crm-member" ? "是" : "否",
+    memberType: identity.role,
+    motherRegistered: identity.kind === "mother-registered" ? "是" : "否",
+    registrationIdentityKind: identity.kind,
+    registrationIdentityKey: identity.identityKey,
+    registrationIdentitySource: identity.source
   });
 }
 
+function memberAnswers(member: LineLoginMember) {
+  return registrationIdentityAnswers(registrationIdentityFromCrmMember(member));
+}
 function nativeAnswerText(answers: Record<string, unknown>, keys: string[]) {
   for (const key of keys) {
     const value = answers[key];
@@ -2693,9 +2775,9 @@ async function getNativeLoginMember(request: Request, env: Env, formId: string) 
   const url = new URL(request.url);
   const lineUserId = firstClean(url.searchParams.get("lineUserId"), url.searchParams.get("uid"), url.searchParams.get("LINE_user_id"));
   if (!lineUserId) return json({ success: false, message: "缺少 LINE UID" }, 400);
-  const member = await resolveLineLoginMember(env, lineUserId);
-  if (!member) return json({ success: false, code: "member_not_found", message: "此 LINE 帳號尚未綁定會員或廠商會員資料" }, 404);
-  return json({ success: true, data: publicLineLoginMember(member) });
+  const identity = await resolveNativeRegistrationIdentity(env, lineUserId);
+  if (!identity) return json({ success: false, code: "registration_identity_not_found", message: "此 LINE 帳號尚未對到 CRM 會員或母站註冊資料" }, 404);
+  return json({ success: true, data: publicRegistrationIdentity(identity) });
 }
 
 function validateNativeAnswers(form: NativeForm, answers: Record<string, unknown>, sessionId: string) {
@@ -2714,7 +2796,6 @@ function validateNativeAnswers(form: NativeForm, answers: Record<string, unknown
   }
   return errors;
 }
-
 function validateNativeLoginAnswers(form: NativeForm, answers: Record<string, unknown>, sessionId: string) {
   const errors: string[] = [];
   const session = form.sessions.find((item) => item.id === sessionId);
@@ -2754,13 +2835,22 @@ async function submitNativeForm(request: Request, env: Env, formId: string) {
   const finalAnswers = member ? normalizeAnswersRecord({ ...answers, ...memberAnswers(member) }) : answers;
   const errors = member ? validateNativeLoginAnswers(form, finalAnswers, sessionId) : validateNativeAnswers(form, finalAnswers, sessionId);
   if (errors.length) return json({ success: false, message: errors[0], errors }, 400);
-  return createNativeRegistration(env, form, finalAnswers, member?.lineUserId || lineUserId, sessionId, member ? "line_member_claim" : "form", member || undefined);
+  return createNativeRegistration(env, form, finalAnswers, member?.lineUserId || lineUserId, sessionId, member ? "line_member_claim" : "form", member ? registrationIdentityFromCrmMember(member) : undefined);
 }
 
-async function createNativeRegistration(env: Env, form: NativeForm, answers: Record<string, unknown>, lineUserId: string, sessionId: string, source: string, member?: LineLoginMember) {
+async function createNativeRegistration(env: Env, form: NativeForm, answers: Record<string, unknown>, lineUserId: string, sessionId: string, source: string, identity?: RegistrationIdentity) {
   const active = activeRegistrations(await readRegistrationList(env, form.id));
-  if (lineUserId) {
-    const existing = active.find((item) => clean(item.lineUserId).toLowerCase() === clean(lineUserId).toLowerCase());
+  const identityKey = firstClean(identity?.identityKey, answers.registrationIdentityKey);
+  const lowerIdentityKey = clean(identityKey).toLowerCase();
+  const lowerLineUserId = clean(lineUserId).toLowerCase();
+  if (lowerIdentityKey || lowerLineUserId) {
+    const existing = active.find((item) => {
+      const itemAnswers = asRecord(item.answers);
+      const itemIdentityKey = firstClean(item.identityKey, itemAnswers.registrationIdentityKey).toLowerCase();
+      if (lowerIdentityKey && itemIdentityKey === lowerIdentityKey) return true;
+      if (lowerLineUserId && clean(item.lineUserId).toLowerCase() === lowerLineUserId) return true;
+      return false;
+    });
     if (existing) {
       return json({
         success: true,
@@ -2787,18 +2877,21 @@ async function createNativeRegistration(env: Env, form: NativeForm, answers: Rec
   const queryCode = codeToken(8);
   const checkinToken = crypto.randomUUID().replace(/-/g, "");
   const submittedAt = new Date().toISOString();
+  const identityAnswers = identity ? registrationIdentityAnswers(identity) : {};
   const entry: RegistrationEntry = {
     id: registrationId,
     sourceId: registrationId,
     formId: form.id,
     submittedAt,
     activity: form.activity,
-    answers: { ...answers, registrationSource: source, ...(member ? { memberType: member.role, memberNo: member.memberNo, memberName: member.name } : {}) },
+    answers: { ...answers, ...identityAnswers, registrationSource: source, ...(identity ? { memberType: identity.role, memberNo: identity.memberNo, memberName: identity.name, registrationIdentityKind: identity.kind, registrationIdentityKey: identity.identityKey, registrationIdentitySource: identity.source } : {}) },
     status: "active",
     sessionId,
     queryCode,
     checkinToken,
     lineUserId,
+    identityKey: identity?.identityKey,
+    identityKind: identity?.kind,
     payment: initialRegistrationPayment(form.activity)
   };
   const keys = registrationKeys(form.activity, form.id);
@@ -2817,33 +2910,33 @@ async function createNativeRegistration(env: Env, form: NativeForm, answers: Rec
   await writeNativeRegistration(env, entry);
   return json({ success: true, data: { registrationId, queryCode, checkinUrl: nativeCheckinUrl(checkinToken), submittedAt, activity: form.activity, session, payment: entry.payment } }, 201);
 }
-
 async function submitNativeLoginRegistration(request: Request, env: Env, formId: string) {
   if (!env.ASSETS_BUCKET) return json({ success: false, message: "R2 bucket is not configured" }, 503);
   const form = await readNativeForm(env, formId);
   if (!form) return json({ success: false, message: "找不到報名表" }, 404);
   const input = await request.json().catch(() => ({})) as Record<string, unknown>;
   const lineUserId = firstClean(input.lineUserId, input.uid, input.LINE_user_id);
-  if (!lineUserId) return json({ success: false, message: "請透過 LINE Login 取得會員身份" }, 400);
+  if (!lineUserId) return json({ success: false, message: "請透過 LINE Login 取得身份" }, 400);
   const sessionId = clean(input.sessionId || "default");
   const session = form.sessions.find((item) => item.id === sessionId);
   if (!session) return json({ success: false, message: "請選擇有效場次" }, 400);
   const userAnswers = normalizeAnswersRecord(asRecord(input.answers));
-  let member = await resolveLineLoginMember(env, lineUserId);
-  if (!member && nativeAnswerClaimsMember(userAnswers)) {
+  let identity = await resolveNativeRegistrationIdentity(env, lineUserId);
+  if (!identity && nativeAnswerClaimsMember(userAnswers)) {
     try {
-      member = await resolveAndBindNativeRegistrationMember(env, lineUserId, userAnswers);
+      const member = await resolveAndBindNativeRegistrationMember(env, lineUserId, userAnswers);
+      identity = member ? registrationIdentityFromCrmMember(member) : null;
     } catch (error) {
       return json({ success: false, code: "member_bind_failed", message: error instanceof Error ? error.message : "會員資料比對失敗，請確認姓名與會員編號。" }, 400);
     }
   }
-  if (!member) return json({ success: false, code: "member_not_found", message: "此 LINE 帳號尚未綁定會員或廠商會員資料，請先補齊姓名與會員編號完成綁定。" }, 403);
-  const answers = normalizeAnswersRecord({ ...userAnswers, ...memberAnswers(member) });
+  if (!identity) return json({ success: false, code: "registration_identity_not_found", message: "此 LINE 帳號尚未對到 CRM 會員或母站註冊資料，請改填完整報名表。" }, 403);
+  const answers = normalizeAnswersRecord({ ...userAnswers, ...registrationIdentityAnswers(identity) });
   const errors = validateNativeLoginAnswers(form, answers, sessionId);
   if (errors.length) return json({ success: false, message: errors[0], errors }, 400);
-  return createNativeRegistration(env, form, answers, member.lineUserId, sessionId, "line_login", member);
+  const source = identity.kind === "mother-registered" ? "mother_registered_line_login" : "line_login";
+  return createNativeRegistration(env, form, answers, identity.lineUserId, sessionId, source, identity);
 }
-
 async function queryNativeRegistration(request: Request, env: Env) {
   const url = new URL(request.url);
   const queryCode = clean(url.searchParams.get("code"));
