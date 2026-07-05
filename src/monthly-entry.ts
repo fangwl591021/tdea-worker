@@ -6,6 +6,7 @@ import {
   extractTriggerText,
   fixedKeyword,
   isLineActivityStart,
+  isMotherReservedKeyword,
   isMemberCheckinText,
   isMonthlyActivityKeyword,
   lineActivityCreateKeyword,
@@ -3639,6 +3640,7 @@ async function hasActiveLineActivityDraft(events: LineEvent[], env: Env) {
 async function shouldRouteLineWebhookToChild(rawBody: string, env: Env) {
   const events = lineWebhookEventsFromRawBody(rawBody);
   if (!events.length) return false;
+  if (events.some((event) => isMotherReservedKeyword(extractTriggerText(event)))) return false;
   const classified = classifyLineEvents(events);
   if (classified.hasBuiltInKeywordEvents) return true;
   if ((await findCustomKeywordMatches(events, env)).length) return true;

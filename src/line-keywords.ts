@@ -25,6 +25,7 @@ export const motherPointAliases = ["TDEA點數", "TDEA點數查詢", "TDEA查點
 export const memberCheckinKeyword = "會員報到";
 export const memberCheckinAliases = [memberCheckinKeyword, "會員簽到"];
 export const lineActivityCreateKeyword = "TDEA建立活動";
+export const motherReservedKeywords = ["會員打卡", "會員查詢", "會員專區", "TDEA會員"];
 export const lineActivityCreateAliases = ["TDEA新增活動", "TDEA活動上稿", "TDEA製作活動"];
 
 export type BuiltInKeywordKind =
@@ -118,7 +119,7 @@ export function isMemberCheckinText(text: string) {
   const normalized = normalizeKeyword(text);
   const keywords = memberCheckinAliases.map(normalizeKeyword);
   return keywords.some((keyword) => normalized === keyword || normalized.startsWith(keyword))
-    || (normalized.includes("會員") && (normalized.includes("報到") || normalized.includes("打卡") || normalized.includes("簽到")));
+    || (normalized.includes("會員") && (normalized.includes("報到") || normalized.includes("簽到")));
 }
 
 export function parseMemberCheckinKeyword(text: string): MemberCheckinQuery {
@@ -130,6 +131,11 @@ export function parseMemberCheckinKeyword(text: string): MemberCheckinQuery {
   const suffix = raw.replace(/^(會員報到|會員簽到)\s*[+＋:：,，]?\s*/i, "").trim();
   const parts = suffix.split(/[\s,，、]+/).map(clean).filter(Boolean);
   return { active: true, memberNo: clean(parts[0]).toUpperCase(), name: clean(parts.slice(1).join(" ")) };
+}
+
+export function isMotherReservedKeyword(text: string) {
+  const normalized = normalizeKeyword(text);
+  return motherReservedKeywords.some((keyword) => normalized === normalizeKeyword(keyword));
 }
 
 export function isLineActivityStart(text: string) {
