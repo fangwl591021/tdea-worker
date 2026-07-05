@@ -2920,20 +2920,9 @@ async function submitNativeLoginRegistration(request: Request, env: Env, formId:
   const sessionId = clean(input.sessionId || "default");
   const session = form.sessions.find((item) => item.id === sessionId);
   if (!session) return json({ success: false, message: "請選擇有效場次" }, 400);
-  const userAnswers = normalizeAnswersRecord(asRecord(input.answers));
-  let identity = await resolveNativeRegistrationIdentity(env, lineUserId);
-  if (!identity && nativeAnswerClaimsMember(userAnswers)) {
-    try {
-      const member = await resolveAndBindNativeRegistrationMember(env, lineUserId, userAnswers);
-      identity = member ? registrationIdentityFromCrmMember(member) : null;
-    } catch (error) {
-      return json({ success: false, code: "member_bind_failed", message: error instanceof Error ? error.message : "會員資料比對失敗，請確認姓名與會員編號。" }, 400);
-    }
-  }
-  if (!identity) return json({ success: false, code: "registration_identity_not_found", message: "此 LINE 帳號尚未對到 CRM 會員或母站註冊資料，請改填完整報名表。" }, 403);
-  const answers = normalizeAnswersRecord({ ...userAnswers, ...registrationIdentityAnswers(identity) });
-  const errors = validateNativeLoginAnswers(form, answers, sessionId);
-  if (errors.length) return json({ success: false, message: errors[0], errors }, 400);
+  const identity = await resolveNativeRegistrationIdentity(env, lineUserId);
+  if (!identity) return json({ success: false, code: "registration_identity_not_found", message: "快速報名僅限 CRM 會員、廠商會員或母站已註冊者，請改填完整報名表。" }, 403);
+  const answers = registrationIdentityAnswers(identity);
   const source = identity.kind === "mother-registered" ? "mother_registered_line_login" : "line_login";
   return createNativeRegistration(env, form, answers, identity.lineUserId, sessionId, source, identity);
 }

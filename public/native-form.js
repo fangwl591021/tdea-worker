@@ -384,18 +384,15 @@
     </div>`;
   }
 
-  function loginRegisterPanel(mode, sessions, fields) {
+  function loginRegisterPanel(mode, sessions) {
     if (mode !== "member_login" && mode !== "mixed") return "";
-    const extraFields = fields.filter((field) => !isLoginAutoMemberField(field));
     return `<form class="nf-form nf-login-box" data-login-register-box novalidate>
       <div class="nf-ok">CRM 會員、廠商會員或母站註冊者可使用 LINE 快速報名。系統會取得 LINE UID 並比對身分，不需要手動填 LINE ID。</div>
       <div data-login-member-area></div>
       ${sessionFieldHtml(sessions)}
-      ${extraFields.length ? `<div class="nf-ok">身分資料會自動帶入，只需補活動必要欄位。</div>${extraFields.map(fieldHtml).join("")}` : ""}
       <div class="nf-actions"><button class="nf-btn primary" type="button" data-login-register>LINE 快速報名</button></div>
     </form>`;
   }
-
   function loadLiff(options = {}) {
     if (options.login && !lineUserId) liffReady = null;
     if (liffReady) return liffReady;
@@ -540,7 +537,7 @@
         <div class="nf-meta">${activity.courseTime ? `<span class="nf-pill">${esc(activity.courseTime)}</span>` : ""}${activity.deadline ? `<span class="nf-pill">截止 ${esc(activity.deadline)}</span>` : ""}</div>
         ${activity.detailText ? `<div class="nf-detail">${esc(activity.detailText)}</div>` : ""}
         ${autoLoginNotice ? `<div class="nf-alert">${esc(autoLoginNotice)}</div>` : ""}
-        ${loginRegisterPanel(effectiveMode, sessions, fields)}
+        ${loginRegisterPanel(effectiveMode, sessions)}
         ${showFullForm ? `<form class="nf-form" data-native-register novalidate>
           ${sessionFieldHtml(sessions)}
           ${fields.map(fieldHtml).join("")}
@@ -571,22 +568,13 @@
         return alert("無法取得 LINE UID，請從 LINE LIFF 開啟報名頁。");
       }
       const sessionId = loginBox?.querySelector("[name='sessionId']")?.value || sessions[0]?.id || "default";
-      const loginFields = fields.filter((field) => !isLoginAutoMemberField(field));
-      const loginAnswers = loginBox ? collectAnswers(loginBox, loginFields) : {};
-      const fullForm = app.querySelector("[data-native-register]");
-      const claimAnswers = fullForm ? collectAnswers(fullForm, fields) : loginAnswers;
       const memberResponse = await fetch(`${api}/api/native-forms/${encodeURIComponent(id)}/login-member?lineUserId=${encodeURIComponent(uid)}`, { cache: "no-store" });
       const memberResult = await memberResponse.json().catch(() => ({}));
       let member = memberResult.data || null;
-      let answers = loginAnswers;
       if (!memberResponse.ok || !memberResult.success) {
-        const claimError = missingMemberClaimIdentity(claimAnswers);
-        if (claimError) {
-          loginButton.disabled = false;
-          loginButton.textContent = "LINE 快速報名";
-          return alert(memberResult.message || claimError);
-        }
-        answers = claimAnswers;
+        loginButton.disabled = false;
+        loginButton.textContent = "LINE 快速報名";
+        return alert(memberResult.message || "此 LINE 帳號尚未對到 CRM 會員、廠商會員或母站註冊資料，請改填完整表單。");
       } else {
         const memberArea = app.querySelector("[data-login-member-area]");
         if (memberArea) memberArea.innerHTML = memberSummary(member);
@@ -598,7 +586,7 @@
         }
       }
       loginButton.textContent = member ? "送出中..." : "比對並送出中...";
-      const { response: submitResponse, result: submitResult } = await submitLoginRegistration(id, { lineUserId: uid, sessionId, answers });
+      const { response: submitResponse, result: submitResult } = await submitLoginRegistration(id, { lineUserId: uid, sessionId });
       if (!submitResponse.ok || !submitResult.success) {
         loginButton.disabled = false;
         loginButton.textContent = "LINE 快速報名";
