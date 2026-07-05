@@ -3869,6 +3869,43 @@ async function forwardToMotherWebhookWithLog(request: Request, env: Env, rawBody
     throw error;
   }
 }
+async function forwardToMotherWebhookFast(request: Request, env: Env, rawBody: string, ctx?: ExecutionContext) {
+  const startedAt = Date.now();
+  let texts: string[] = [];
+  let eventCount = 0;
+  try {
+    const payload = JSON.parse(rawBody);
+    const events = extractLineEvents(payload);
+    eventCount = events.length;
+    texts = events.map((event) => clean(extractTriggerText(event))).filter(Boolean).slice(0, 5);
+  } catch (_) {}
+  const response = await forwardToMotherWebhook(request, env, rawBody);
+  const logTask = appendLineWebhookLog(env, {
+    at: new Date().toISOString(),
+    mode: "mother-forward",
+    result: response.ok ? "ok" : "bad-status",
+    status: response.status,
+    durationMs: Date.now() - startedAt,
+    hasSignature: Boolean(clean(request.headers.get("x-line-signature"))),
+    texts,
+    eventCount
+  }).then(() => {
+    if (!response.ok || !texts.some((text) => isMemberCheckinText(text))) return null;
+    return syncAiweMembersFromMother(env, { pages: 20, perPage: 100, reason: "member-checkin-forward" })
+      .then((sync) => appendLineWebhookLog(env, {
+        at: new Date().toISOString(),
+        mode: "mother-member-sync",
+        result: sync.success ? "ok" : "failed",
+        durationMs: Date.now() - startedAt,
+        texts,
+        eventCount,
+        sync
+      }));
+  }).catch(() => null);
+  if (ctx) ctx.waitUntil(logTask);
+  else logTask.catch(() => null);
+  return response;
+}
 function lineActivityDraftKey(lineUserId: string) {
   return `line-activity/draft-${encodeURIComponent(lineUserId)}.json`;
 }
@@ -6378,10 +6415,11 @@ export default {
     if (request.method === "GET" && url.pathname === "/api/registrations/export") return exportRegistrationsExcel(request, env);
     const detailMatch = url.pathname.match(/^\/monthly-detail\/([^/]+)$/);
     if (request.method === "GET" && detailMatch) return monthlyDetail(env, decodeURIComponent(detailMatch[1]));
-    if (request.method === "POST" && url.pathname === "/line-webhook") { const rawBody = await request.text(); await appendLineWebhookIngressLog(env, request, rawBody, ctx); const monthly = await handleMonthlyWebhook(request, env, rawBody, ctx); if (monthly) return monthly; if (clean(env.FORWARD_WEBHOOK_URL)) { ctx.waitUntil(forwardToMotherWebhookWithLog(request, env, rawBody).catch(() => undefined)); return forwardToMotherWebhook(request, env, rawBody); } return baseEntry.fetch(rebuildRequest(request, rawBody), env, ctx); }
+    if (request.method === "POST" && url.pathname === "/line-webhook") { const rawBody = await request.text(); if (ctx) ctx.waitUntil(appendLineWebhookIngressLog(env, request, rawBody, ctx)); else await appendLineWebhookIngressLog(env, request, rawBody, ctx); const monthly = await handleMonthlyWebhook(request, env, rawBody, ctx); if (monthly) return monthly; if (clean(env.FORWARD_WEBHOOK_URL)) return forwardToMotherWebhookFast(request, env, rawBody, ctx); return baseEntry.fetch(rebuildRequest(request, rawBody), env, ctx); }
     return baseEntry.fetch(request, env, ctx);
   }
 };
+
 
 
 
