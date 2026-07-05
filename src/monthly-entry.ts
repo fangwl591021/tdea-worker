@@ -3851,62 +3851,6 @@ async function forwardToMotherWebhookWithLog(request: Request, env: Env, rawBody
     throw error;
   }
 }
-function lineTriggerTextsFromRawBody(rawBody: string) {
-  try {
-    return extractLineEvents(JSON.parse(rawBody)).map((event) => clean(extractTriggerText(event))).filter(Boolean);
-  } catch (_) {
-    return [] as string[];
-  }
-}
-
-function shouldTryMotherFirst(rawBody: string) {
-  return lineTriggerTextsFromRawBody(rawBody).length > 0;
-}
-
-async function forwardToMotherWebhookForDecision(request: Request, env: Env, rawBody: string) {
-  const response = await forwardToMotherWebhook(request, env, rawBody);
-  const body = await response.clone().text().catch(() => "");
-  return { response, body };
-}
-
-function motherWebhookDidNotHandle(response: Response, body: string) {
-  if (response.status === 204 || response.status === 404) return true;
-  const text = clean(body);
-  if (!text) return true;
-  try {
-    const data = JSON.parse(text) as Record<string, unknown>;
-    const matched = Array.isArray(data.matched) ? data.matched : [];
-    const mode = clean(data.mode);
-    if (mode === "worker-only" && matched.length === 0) return true;
-    if (data.handled === false || data.matched === false) return true;
-    if (data.forwarded === true && matched.length === 0 && !clean(data.mode)) return true;
-  } catch (_) {}
-  return false;
-}
-
-async function forwardToMotherWebhookFirstOrChild(request: Request, env: Env, rawBody: string, ctx?: ExecutionContext) {
-  if (!clean(env.FORWARD_WEBHOOK_URL) || !shouldTryMotherFirst(rawBody)) {
-    return handleMonthlyWebhook(request, env, rawBody, ctx);
-  }
-  const startedAt = Date.now();
-  const texts = lineTriggerTextsFromRawBody(rawBody).slice(0, 5);
-  const { response, body } = await forwardToMotherWebhookForDecision(request, env, rawBody);
-  const fallbackToChild = response.ok && motherWebhookDidNotHandle(response, body);
-  const logTask = appendLineWebhookLog(env, {
-    at: new Date().toISOString(),
-    mode: "mother-first",
-    result: fallbackToChild ? "fallback-child" : response.ok ? "mother-handled" : "mother-bad-status",
-    status: response.status,
-    durationMs: Date.now() - startedAt,
-    texts,
-    eventCount: texts.length
-  }).catch(() => null);
-  if (ctx) ctx.waitUntil(logTask);
-  else logTask.catch(() => null);
-  if (!fallbackToChild) return response;
-  return handleMonthlyWebhook(request, env, rawBody, ctx);
-}
-
 async function forwardToMotherWebhookFast(request: Request, env: Env, rawBody: string, ctx?: ExecutionContext) {
   const startedAt = Date.now();
   let texts: string[] = [];
@@ -6418,7 +6362,7 @@ export default {
     if (request.method === "GET" && url.pathname === "/api/registrations/export") return exportRegistrationsExcel(request, env);
     const detailMatch = url.pathname.match(/^\/monthly-detail\/([^/]+)$/);
     if (request.method === "GET" && detailMatch) return monthlyDetail(env, decodeURIComponent(detailMatch[1]));
-    if (request.method === "POST" && url.pathname === "/line-webhook") { const rawBody = await request.text(); if (ctx) ctx.waitUntil(appendLineWebhookIngressLog(env, request, rawBody, ctx)); else await appendLineWebhookIngressLog(env, request, rawBody, ctx); const motherFirst = await forwardToMotherWebhookFirstOrChild(request, env, rawBody, ctx); if (motherFirst) return motherFirst; return baseEntry.fetch(rebuildRequest(request, rawBody), env, ctx); }
+    if (request.method === "POST" && url.pathname === "/line-webhook") { const rawBody = await request.text(); if (ctx) ctx.waitUntil(appendLineWebhookIngressLog(env, request, rawBody, ctx)); else await appendLineWebhookIngressLog(env, request, rawBody, ctx); const monthly = await handleMonthlyWebhook(request, env, rawBody, ctx); if (monthly) return monthly; if (clean(env.FORWARD_WEBHOOK_URL)) return forwardToMotherWebhookFast(request, env, rawBody, ctx); return baseEntry.fetch(rebuildRequest(request, rawBody), env, ctx); }
     return baseEntry.fetch(request, env, ctx);
   }
 };
