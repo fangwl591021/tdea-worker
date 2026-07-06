@@ -321,10 +321,7 @@
       memberLineUid(row),
       row.lineUserId,
       row.uid,
-      row.email,
-      row.phone,
-      row.mobile,
-      row.note,
+      row.email,      row.note,
       row.qualification,
       vendor ? row.companyName : row.name,
       vendor ? row.taxId : row.identity,
@@ -342,17 +339,30 @@
     const vendor = type === "vendor";
     return rows.filter((row) => rosterSearchValue(row, vendor).includes(query));
   }
+  function motherRegisterValue(row, keys) {
+    for (const key of keys) {
+      const value = cleanValue(row?.[key]);
+      if (value) return value;
+    }
+    return "";
+  }
   function motherRegisterSearchValue(row) {
     return [
       row.createdAt,
       row.importedAt,
       row.displayName,
+      row.rosterName,
+      row.name,
+      row.memberNo,
+      row.rosterMemberNo,
       row.gender,
       row.birthday,
       row.phone,
       row.email,
       row.city,
       row.category,
+      row.companyName,
+      row.qualification,
       row.lineUserId,
       row.shopId,
       row.clientId,
@@ -1322,15 +1332,22 @@
     const bodyRows = allRows.map(row => {
       const searchText = motherRegisterSearchValue(row);
       const hidden = motherRegisterSearchQuery() && !searchText.includes(motherRegisterSearchQuery());
+      const displayName = motherRegisterValue(row, ["displayName", "rosterName", "name", "nickname"]);
+      const memberNo = motherRegisterValue(row, ["memberNo", "rosterMemberNo", "member_no", "aiweMemberNo"]);
+      const companyName = motherRegisterValue(row, ["companyName", "company", "unit"]);
+      const qualification = motherRegisterValue(row, ["qualification", "memberLevel", "role"]);
+      const source = motherRegisterValue(row, ["source", "rosterType"]);
+      const shopId = motherRegisterValue(row, ["shopId", "shop_id"]);
+      const clientId = motherRegisterValue(row, ["clientId", "client_id"]);
       return `<tr data-mother-register-row data-mother-register-search-text="${esc(searchText)}" ${hidden ? `style="display:none"` : ""}>
-      <td>${esc(formatTime(row.createdAt))}</td>
-      <td><strong>${esc(row.displayName || "-")}</strong><br><span class="muted">${esc(row.gender || "")}${row.birthday ? ` / ${esc(row.birthday)}` : ""}</span></td>
-      <td>${esc(row.phone || "-")}<br><span class="muted">${esc(row.email || "")}</span></td>
-      <td>${esc(row.city || "-")}</td>
-      <td>${esc(row.category || "-")}</td>
+      <td>${esc(row.createdAt ? formatTime(row.createdAt) : "-")}</td>
+      <td><strong>${esc(displayName || "-")}</strong><br><span class="muted">${esc(memberNo || qualification || "")}</span></td>
+      <td>${esc(row.phone || row.mobile || "-")}<br><span class="muted">${esc(cleanFakeEmail(row.email || row.mail || ""))}</span></td>
+      <td>${esc(row.city || companyName || "-")}</td>
+      <td>${esc(row.category || source || "-")}</td>
       <td style="max-width:260px;white-space:normal;word-break:break-all">${esc(row.lineUserId || "-")}</td>
-      <td>${esc(row.shopId || "-")} / ${esc(row.clientId || "-")}</td>
-      <td><span class="badge live">${esc(row.submitStatus || "sent-to-mother")}</span><br><span class="muted">HTTP ${esc(row.motherHttpStatus || "-")}</span></td>
+      <td>${esc(shopId || "-")} / ${esc(clientId || "-")}</td>
+      <td><span class="badge live">${esc(row.submitStatus || "母站名單")}</span><br><span class="muted">${esc(memberNo || source || "-")}</span></td>
     </tr>`;
     }).join("");
     return `<section class="panel"><div class="panel-head"><div><h2 class="panel-title">母站註冊資料</h2><div class="muted">這裡只保存母站註冊表送回資料，不併入會員 CRM，也不改寫名冊。${state.motherRegisterLoadedAt ? ` 最後刷新：${esc(formatTime(state.motherRegisterLoadedAt))}` : ""}</div></div><div class="actions">${search}<div class="field" style="min-width:300px;max-width:520px"><input data-mother-register-capture-url placeholder="貼上母站註冊網址補入"></div><button class="btn" data-capture-mother-register>補入連結</button><span class="badge live" data-mother-register-count>${n(rows.length)} / ${n(allRows.length)} 筆</span><button class="btn" data-load-mother-register ${state.motherRegisterLoading ? "disabled" : ""}>${state.motherRegisterLoading ? "刷新中..." : "刷新資料"}</button></div></div>${allRows.length ? `<div class="table-wrap"><table><thead><tr><th>時間</th><th>姓名</th><th>聯絡</th><th>縣市</th><th>產業類別</th><th>LINE UID</th><th>shop/client</th><th>母站送出</th></tr></thead><tbody>${bodyRows}</tbody></table></div>` : empty("目前沒有母站註冊資料")}</section>`;
@@ -2264,7 +2281,7 @@
     state.motherRegisterLoading = true;
     if (showMessage && state.view === "motherRegister") render();
     try {
-      const response = await fetch(api + "/api/mother-register/records?limit=1000", { headers: adminHeaders(), cache: "no-store" });
+      const response = await fetch(api + "/api/aiwe-members-public", { headers: adminHeaders(), cache: "no-store" });
       const result = await response.json().catch(() => ({}));
       if (!response.ok || !result.success) throw new Error(result.message || "母站註冊資料讀取失敗");
       state.motherRegisterRecords = Array.isArray(result.data) ? result.data : [];
