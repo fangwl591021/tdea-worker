@@ -1328,7 +1328,7 @@
     if (!allRows) return `<section class="panel"><div class="panel-head"><h2 class="panel-title">母站註冊資料</h2><button class="btn" data-load-mother-register ${state.motherRegisterLoading ? "disabled" : ""}>${state.motherRegisterLoading ? "刷新中..." : "刷新資料"}</button></div>${empty(state.motherRegisterLoading ? "正在刷新母站註冊資料..." : "正在載入母站註冊資料...")}</section>`;
     const rows = filterMotherRegisterRows(allRows);
     const query = state.motherRegisterSearch || "";
-    const search = `<div class="field" style="min-width:280px;max-width:480px;margin-left:auto"><input data-mother-register-search value="${esc(query)}" placeholder="搜尋姓名、手機、Email、UID、縣市、產業類別"></div>`;
+    const search = `<div class="field" style="min-width:240px;max-width:420px;margin-left:auto"><input data-mother-register-search value="${esc(query)}" placeholder="搜尋姓名、電話、Email、UID、會員編號"></div>`;
     const bodyRows = allRows.map(row => {
       const searchText = motherRegisterSearchValue(row);
       const hidden = motherRegisterSearchQuery() && !searchText.includes(motherRegisterSearchQuery());
@@ -1337,23 +1337,20 @@
       const companyName = motherRegisterValue(row, ["companyName", "company", "unit"]);
       const qualification = motherRegisterValue(row, ["qualification", "memberLevel", "role"]);
       const source = motherRegisterValue(row, ["source", "rosterType"]);
-      const shopId = motherRegisterValue(row, ["shopId", "shop_id"]);
-      const clientId = motherRegisterValue(row, ["clientId", "client_id"]);
+      const visibleMemberNo = memberNo && !/^U[a-f0-9]{20,}$/i.test(memberNo) ? memberNo : "";
       return `<tr data-mother-register-row data-mother-register-search-text="${esc(searchText)}" ${hidden ? `style="display:none"` : ""}>
-      <td>${esc(row.createdAt ? formatTime(row.createdAt) : "-")}</td>
-      <td><strong>${esc(displayName || "-")}</strong><br><span class="muted">${esc(memberNo || qualification || "")}</span></td>
-      <td class="compact-cell">${esc(row.phone || row.mobile || "-")}</td>
-      <td class="email-cell">${esc(cleanFakeEmail(row.email || row.mail || "-"))}</td>
-      <td>${esc(row.city || companyName || "-")}</td>
-      <td>${esc(row.category || source || "-")}</td>
-      <td class="uid-cell">${esc(shortUid(row.lineUserId || "-"))}</td>
-      <td class="compact-cell">${esc(shopId || "-")}<br><span class="muted">${esc(clientId || "-")}</span></td>
-      <td><span class="badge live">${esc(row.submitStatus || "母站名單")}</span><br><span class="muted">${esc(memberNo || source || "-")}</span></td>
-    </tr>`;
+        <td><strong>${esc(displayName || "-")}</strong></td>
+        <td class="compact-cell">${esc(visibleMemberNo || "-")}</td>
+        <td class="compact-cell">${esc(row.phone || row.mobile || "-")}</td>
+        <td class="email-cell">${esc(cleanFakeEmail(row.email || row.mail || "-"))}</td>
+        <td class="company-cell">${esc(companyName || row.city || "-")}</td>
+        <td class="compact-cell">${esc(qualification || source || "-")}</td>
+        <td class="uid-cell">${esc(shortUid(row.lineUserId || "-"))}</td>
+        <td><span class="badge live">母站名單</span></td>
+      </tr>`;
     }).join("");
-    return `<section class="panel"><div class="panel-head"><div><h2 class="panel-title">母站註冊資料</h2><div class="muted">這裡只保存母站註冊表送回資料，不併入會員 CRM，也不改寫名冊。${state.motherRegisterLoadedAt ? ` 最後刷新：${esc(formatTime(state.motherRegisterLoadedAt))}` : ""}</div></div><div class="actions">${search}<div class="field" style="min-width:240px;max-width:360px"><input data-mother-register-capture-url placeholder="貼上母站註冊網址補入"></div><button class="btn" data-capture-mother-register>補入連結</button><span class="badge live" data-mother-register-count>${n(rows.length)} / ${n(allRows.length)} 筆</span><button class="btn" data-load-mother-register ${state.motherRegisterLoading ? "disabled" : ""}>${state.motherRegisterLoading ? "刷新中..." : "刷新資料"}</button></div></div>${allRows.length ? `<div class="table-wrap mother-register-table"><table><thead><tr><th>時間</th><th>姓名</th><th>電話</th><th>Email</th><th>公司/縣市</th><th>類別</th><th>LINE UID</th><th>來源</th><th>狀態</th></tr></thead><tbody>${bodyRows}</tbody></table></div>` : empty("目前沒有母站註冊資料")}</section>`;
+    return `<section class="panel"><div class="panel-head"><div><h2 class="panel-title">母站註冊資料</h2><div class="muted">這裡只保存母站註冊表送回資料，不併入會員 CRM，也不改寫名冊。${state.motherRegisterLoadedAt ? ` 最後刷新：${esc(formatTime(state.motherRegisterLoadedAt))}` : ""}</div></div><div class="actions">${search}<span class="badge live" data-mother-register-count>${n(rows.length)} / ${n(allRows.length)} 筆</span><button class="btn" data-load-mother-register ${state.motherRegisterLoading ? "disabled" : ""}>${state.motherRegisterLoading ? "刷新中..." : "刷新資料"}</button></div></div>${allRows.length ? `<div class="table-wrap mother-register-table"><table><thead><tr><th>姓名</th><th>會員編號</th><th>電話</th><th>Email</th><th>公司/縣市</th><th>類型</th><th>LINE UID</th><th>來源</th></tr></thead><tbody>${bodyRows}</tbody></table></div>` : empty("目前沒有母站註冊資料")}</section>`;
   }
-
   function downloadMotherRegisterRecords() {
     const rows = filterMotherRegisterRows(state.motherRegisterRecords || []);
     if (!rows.length) return toast(motherRegisterSearchQuery() ? "目前搜尋結果沒有母站註冊資料可下載" : "目前沒有母站註冊資料可下載");
