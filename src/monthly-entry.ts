@@ -2291,7 +2291,9 @@ async function updateLocalPoints(env: Env, lineUserId: string, amount: number, r
   if (externalSync.success !== true || clean(externalSync.code) !== "insert_success") return { success: false, message: clean(externalSync.message) || "mother point insert failed", externalSync, before };
   const after = await queryPointBalance(env, lineUserId) as Record<string, unknown>;
   const createdTs = Date.now();
-  const balanceAfter = after.success === true ? numberValue(after.balance) : numberValue(before.balance) + numericAmount;
+  const expectedBalanceAfter = numberValue(before.balance) + numericAmount;
+  const afterBalance = after.success === true ? numberValue(after.balance) : expectedBalanceAfter;
+  const balanceAfter = after.success === true && afterBalance === expectedBalanceAfter ? afterBalance : expectedBalanceAfter;
   const log: PointLog = { logId: crypto.randomUUID ? crypto.randomUUID() : String(createdTs), lineUserId, type: numericAmount >= 0 ? "EARN" : "SPEND", amount: numericAmount, points: Math.abs(numericAmount), reason, balanceAfter, createdAt: new Date(createdTs).toISOString(), createdTs, source: options.source || "tdea", referenceId: options.referenceId || "", externalSync, externalBalanceSync: after };
   return { success: true, balance: balanceAfter, log, account: { balance: balanceAfter, logs: after.success === true && Array.isArray(after.list) ? pointLogsFromMotherList(after.list as Record<string, unknown>[], lineUserId) : [log], updatedAt: new Date(createdTs).toISOString(), source: "wetw-point", syncedAt: new Date(createdTs).toISOString(), externalRaw: after }, before, externalSync, externalBalanceSync: after };
 }
