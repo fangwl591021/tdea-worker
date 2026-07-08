@@ -1026,6 +1026,78 @@
     </div>`;
   }
 
+  let jsQrPromise = null;
+  function loadJsQrDetector() {
+    if (window.jsQR) return Promise.resolve(window.jsQR);
+    if (!jsQrPromise) {
+      jsQrPromise = new Promise((resolve, reject) => {
+        const script = document.createElement("script");
+        script.src = "https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.min.js";
+        script.async = true;
+        script.onload = () => window.jsQR ? resolve(window.jsQR) : reject(new Error("jsQR not ready"));
+        script.onerror = reject;
+        document.head.appendChild(script);
+      });
+    }
+    return jsQrPromise;
+  }
+
+  async function runCameraQrScanner(emitValue) {
+    if (!navigator.mediaDevices?.getUserMedia) return false;
+    const overlay = document.createElement("div");
+    overlay.style.cssText = "position:fixed;inset:0;background:rgba(15,23,42,.92);z-index:9999;display:grid;place-items:center;padding:18px";
+    overlay.innerHTML = `<div style="width:min(480px,100%);display:grid;gap:12px"><video playsinline muted style="width:100%;background:#000"></video><button class="nf-btn" type="button">關閉掃描器</button></div>`;
+    document.body.appendChild(overlay);
+    const video = overlay.querySelector("video");
+    const canvas = document.createElement("canvas");
+    const ctx = canvas.getContext("2d", { willReadFrequently: true });
+    let stream = null;
+    let stopped = false;
+    const close = () => {
+      stopped = true;
+      stream?.getTracks?.().forEach((track) => track.stop());
+      overlay.remove();
+    };
+    overlay.querySelector("button")?.addEventListener("click", close);
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: "environment" } } });
+      video.srcObject = stream;
+      await video.play();
+      const nativeDetector = "BarcodeDetector" in window ? new window.BarcodeDetector({ formats: ["qr_code"] }) : null;
+      const jsQr = nativeDetector ? null : await loadJsQrDetector();
+      const tick = async () => {
+        if (stopped) return;
+        try {
+          if (nativeDetector) {
+            const codes = await nativeDetector.detect(video);
+            if (codes?.length) {
+              close();
+              emitValue(codes[0].rawValue || codes[0].rawValueText || "");
+              return;
+            }
+          } else if (jsQr && video.videoWidth && video.videoHeight && ctx) {
+            canvas.width = video.videoWidth;
+            canvas.height = video.videoHeight;
+            ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+            const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+            const code = jsQr(imageData.data, imageData.width, imageData.height);
+            if (code?.data) {
+              close();
+              emitValue(code.data);
+              return;
+            }
+          }
+        } catch (_) {}
+        requestAnimationFrame(tick);
+      };
+      tick();
+      return true;
+    } catch (_) {
+      close();
+      return false;
+    }
+  }
+
   async function openMemberQrScanner(onValue) {
     const emitValue = (value) => {
       const text = trim(value);
@@ -1040,44 +1112,7 @@
         if (error?.code === "USER_CANCEL") return;
       }
     }
-    if ("BarcodeDetector" in window && navigator.mediaDevices?.getUserMedia) {
-      const overlay = document.createElement("div");
-      overlay.style.cssText = "position:fixed;inset:0;background:rgba(15,23,42,.92);z-index:9999;display:grid;place-items:center;padding:18px";
-      overlay.innerHTML = `<div style="width:min(480px,100%);display:grid;gap:12px"><video playsinline muted style="width:100%;border-radius:12px;background:#000"></video><button class="nf-btn" type="button">關閉掃描器</button></div>`;
-      document.body.appendChild(overlay);
-      const video = overlay.querySelector("video");
-      let stream = null;
-      let stopped = false;
-      const close = () => {
-        stopped = true;
-        stream?.getTracks?.().forEach((track) => track.stop());
-        overlay.remove();
-      };
-      overlay.querySelector("button")?.addEventListener("click", close);
-      try {
-        stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } });
-        video.srcObject = stream;
-        await video.play();
-        const detector = new window.BarcodeDetector({ formats: ["qr_code"] });
-        const tick = async () => {
-          if (stopped) return;
-          try {
-            const codes = await detector.detect(video);
-            if (codes?.length) {
-              const value = codes[0].rawValue || codes[0].rawValueText || "";
-              close();
-              emitValue(value);
-              return;
-            }
-          } catch (_) {}
-          requestAnimationFrame(tick);
-        };
-        tick();
-        return;
-      } catch (_) {
-        close();
-      }
-    }
+    if (await runCameraQrScanner(emitValue)) return;
     const manual = prompt("掃描器無法開啟，請貼上會員 QR 內容或 LINE UID");
     emitValue(manual);
   }
