@@ -106,9 +106,9 @@
     setFormValue(form, "youtubeUrl", settings.youtubeUrl || activity.youtubeUrl || "");
     setFormValue(form, "registrationMode", settings.registrationMode || activity.registrationMode || "form");
     setFormValue(form, "requireImageUpload", settings.requireImageUpload || "N");
-    setFormValue(form, "genderField", settings.genderField || "required");
-    setFormValue(form, "memberField", settings.memberField || "required");
-    setFormValue(form, "mealField", settings.mealField || "required");
+    setFormValue(form, "genderField", settings.genderField || "none");
+    setFormValue(form, "memberField", settings.memberField || "none");
+    setFormValue(form, "mealField", settings.mealField || "none");
     (Array.isArray(settings.sessions) ? settings.sessions : []).forEach(session => addSession(block, session));
     (Array.isArray(settings.customFields) ? settings.customFields : []).forEach(field => addCustomField(block, field));
   }
@@ -146,18 +146,18 @@
     block.innerHTML = `
       <div class="form-builder-title">報名設定</div>
       <div class="field">
-        <label>活動主圖 / 海報上傳</label>
+        <label>活動主圖附件</label>
         <input name="posterFile" type="file" accept="image/png,image/jpeg,image/webp,image/gif,application/pdf">
-        <small class="form-builder-hint">活動主圖會作為活動卡片、每月活動與說明頁的預設圖片來源。</small>
+        <small class="form-builder-hint">請直接附加圖片檔；上傳完成後系統會自動保存圖片網址。</small>
       </div>
       <div class="field">
-        <label>活動主圖 / 海報連結</label>
-        <input name="posterUrl" type="url" placeholder="若已有圖片網址也可貼上；上傳完成會自動回填">
+        <label>活動主圖網址（系統保存）</label>
+        <input name="posterUrl" type="url" readonly placeholder="上傳活動主圖後系統會自動回填">
       </div>
       <div class="field">
-        <label>活動圖集 / 說明頁輪播圖</label>
-        <textarea name="galleryUrls" placeholder="每行一張圖片網址；活動建立後也可到編輯活動一次上傳多張"></textarea>
-        <small class="form-builder-hint">活動說明頁會使用這些圖片做輪播；每月活動會從活動資料自動帶入。</small>
+        <label>活動圖集附件 / 說明頁輪播圖</label>
+        <textarea name="galleryUrls" readonly placeholder="活動建立後可到編輯活動附加多張圖片；系統會自動保存圖片網址"></textarea>
+        <small class="form-builder-hint">這些圖片用於活動說明頁輪播，每月活動會自動帶入；不需要手填網址。</small>
       </div>
       <div class="field">
         <label>報名表網址</label>
@@ -178,34 +178,35 @@
         <small class="form-builder-hint">LINE Login 會用 LINE UID 比對協會名冊與廠商名冊，符合者直接完成報名。</small>
       </div>
       <div class="field">
-        <label>圖片上傳欄位</label>
+        <label>報名附件上傳欄位</label>
         <select name="requireImageUpload">
           <option value="N">不需要</option>
-          <option value="Y">需要，讓報名者上傳圖片/附件</option>
+          <option value="Y">需要，讓報名者上傳附件</option>
         </select>
       </div>
       <div class="field">
         <label>性別欄位</label>
         <select name="genderField">
-          <option value="required">需要，必填</option>
-          <option value="optional">需要，選填</option>
           <option value="none">不需要</option>
+          <option value="optional">需要，選填</option>
+          <option value="required">需要，必填</option>
         </select>
       </div>
       <div class="field">
         <label>是否為會員</label>
         <select name="memberField">
-          <option value="required">需要，必填</option>
+          <option value="none">不需要</option>
+          <option value="login">由 LINE Login 自動判定</option>
           <option value="optional">需要，選填</option>
-          <option value="login">之後由 Login 自動判定</option>
+          <option value="required">需要，必填</option>
         </select>
       </div>
       <div class="field">
         <label>用餐選項</label>
         <select name="mealField">
-          <option value="required">需要，必填</option>
-          <option value="optional">需要，選填</option>
           <option value="none">不需要</option>
+          <option value="optional">需要，選填</option>
+          <option value="required">需要，必填</option>
         </select>
       </div>
 	      <div class="sessions-block" data-sessions-block>
@@ -226,7 +227,7 @@
       </div>
       <div class="form-schema-preview">
         <strong>預設表單欄位</strong>
-        <span>姓名、手機、Email、公司/單位、會員編號、性別、是否為會員、用餐選項、備註；也可再加自訂欄位。</span>
+        <span>預設只包含姓名、手機、Email、公司/單位、會員編號、備註；性別、會員、用餐、附件欄位可依活動開啟。</span>
       </div>
       <div class="form-upload-status" aria-live="polite"></div>`;
 
@@ -443,9 +444,9 @@
       youtubeUrl: form.youtubeUrl?.value?.trim() || "",
       registrationMode: form.registrationMode?.value || "form",
       requireImageUpload: form.requireImageUpload?.value || "N",
-      genderField: form.genderField?.value || "required",
-      memberField: form.memberField?.value || "required",
-      mealField: form.mealField?.value || "required",
+      genderField: form.genderField?.value || "none",
+      memberField: form.memberField?.value || "none",
+      mealField: form.mealField?.value || "none",
       sessions,
       customFields,
       fields: [
@@ -460,14 +461,14 @@
     if (settings.genderField !== "none") {
       settings.fields.push({ key: "gender", label: "性別", type: "choice", options: ["男", "女", "不便透露"], required: settings.genderField === "required" });
     }
-    if (settings.memberField !== "login") {
+    if (settings.memberField !== "login" && settings.memberField !== "none") {
       settings.fields.push({ key: "isMember", label: "是否為會員", type: "choice", options: ["是", "否", "不確定"], required: settings.memberField === "required" });
     }
     if (settings.mealField !== "none") {
       settings.fields.push({ key: "meal", label: "用餐選項", type: "choice", options: ["葷", "素"], required: settings.mealField === "required" });
     }
     if (settings.requireImageUpload === "Y") {
-      settings.fields.push({ key: "imageUpload", label: "圖片/附件上傳", type: "file", required: false });
+      settings.fields.push({ key: "imageUpload", label: "附件上傳", type: "file", required: false });
     }
     settings.fields.push({ key: "note", label: "備註", type: "paragraph", required: false });
     settings.fields.push(...customFields);

@@ -19,12 +19,12 @@
     "motherRegister"
   ];
   const scriptVersions = [
-    "app.js?v=mother-register-table2",
+    "app.js?v=activity-editor2",
     "line-zone.js?v=access-label1",
     "lottery.js?v=lottery4",
     "activity-types.js?v=types4",
-    "form-builder.js?v=form13",
-    "google-form-engine.js?v=gform16",
+    "form-builder.js?v=form14",
+    "google-form-engine.js?v=gform17",
     "activity-detail.js?v=activity-detail7",
     "uid-column.js?v=uid21",
     "login-access.js?v=login6",

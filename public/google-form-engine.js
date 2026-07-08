@@ -74,9 +74,9 @@
       youtubeUrl: trim(form.youtubeUrl?.value),
       registrationMode: form.registrationMode?.value || "form",
       requireImageUpload: form.requireImageUpload?.value || "N",
-      genderField: form.genderField?.value || "required",
-      memberField: form.memberField?.value || "required",
-      mealField: form.mealField?.value || "required",
+      genderField: form.genderField?.value || "none",
+      memberField: form.memberField?.value || "none",
+      mealField: form.mealField?.value || "none",
       sessions: collectSessions(form),
       customFields: collectCustomFields(form)
     };
@@ -102,7 +102,7 @@
       fields.push({ key: "meal", label: "用餐選項", type: "radio", options: ["葷", "素"], required: settings.mealField === "required" });
     }
     if (settings.requireImageUpload === "Y") {
-      fields.push({ key: "imageUpload", label: "圖片/附件上傳", type: "file", required: false });
+      fields.push({ key: "imageUpload", label: "附件上傳", type: "file", required: false });
     }
     fields.push({ key: "note", label: "備註", type: "paragraph", required: false });
     fields.push(...(settings.customFields || []));

@@ -821,7 +821,7 @@
       return {
         templateMode: "mode1_vendor_visit",
         registrationMode: activity.registrationMode || "member_login",
-        memberField: memberLogin ? "login" : "required",
+        memberField: memberLogin ? "login" : "none",
         genderField: "none",
         mealField: "none",
         requireImageUpload: "N",
@@ -840,13 +840,12 @@
     }
     return {
       registrationMode: activity.registrationMode || "form",
-      memberField: memberLogin ? "login" : "required",
-      genderField: memberLogin ? "none" : "required",
-      mealField: "required",
+      memberField: memberLogin ? "login" : "none",
+      genderField: "none",
+      mealField: "none",
       requireImageUpload: "N",
       fields: memberLogin
         ? [
-            { key: "meal", label: "用餐選項", type: "radio", required: true, options: ["葷", "素"] },
             { key: "note", label: "備註", type: "paragraph", required: false }
           ]
         : [
@@ -855,9 +854,6 @@
             { key: "email", label: "Email", type: "email", required: true },
             { key: "company", label: "公司/單位", type: "text", required: false },
             { key: "memberNo", label: "會員編號", type: "text", required: false },
-            { key: "gender", label: "性別", type: "radio", required: true, options: ["男", "女"] },
-            { key: "isMember", label: "是否為會員", type: "radio", required: true, options: ["是", "否"] },
-            { key: "meal", label: "用餐選項", type: "radio", required: true, options: ["葷", "素"] },
             { key: "note", label: "備註", type: "paragraph", required: false }
           ]
     };
@@ -1613,10 +1609,10 @@
     wrap.className = "activity-extra-fields";
     wrap.innerHTML = `
       <div class="field"><label>詳細說明</label><textarea name="detailText" placeholder="活動介紹、地點、費用、注意事項...">${esc(activity.detailText || "")}</textarea></div>
-      <div class="field"><label>活動主圖</label><input type="file" accept="image/*" data-activity-poster-file><div class="muted">上傳後會寫入報名頁與每月活動主圖。</div></div>
-      <div class="field"><label>圖片網址</label><input name="posterUrl" value="${esc(activity.posterUrl || activity.imageUrl || "")}" placeholder="上傳後自動填入，也可貼圖片網址"></div>
-      <div class="field"><label>活動圖集 / 說明頁輪播圖</label><input type="file" accept="image/*" multiple data-activity-gallery-file><div class="muted">可一次選多張；活動說明頁會用這些圖片做輪播，每月活動會自動帶入張數。</div></div>
-      <div class="field"><label>圖集網址</label><textarea name="galleryUrls" placeholder="每行一張圖片網址；也可直接貼上既有圖片 URL">${esc(cleanUrlList(activity.galleryUrls).join("\n"))}</textarea><div class="actions" style="justify-content:flex-start;margin-top:8px"><button class="btn danger" type="button" data-clear-activity-gallery>清除圖集</button></div></div>
+      <div class="field"><label>活動主圖附件</label><input type="file" accept="image/*" data-activity-poster-file><div class="muted">請直接附加圖片檔；上傳後會寫入報名頁與每月活動主圖。</div></div>
+      <div class="field"><label>活動主圖網址（系統保存）</label><input name="posterUrl" readonly value="${esc(activity.posterUrl || activity.imageUrl || "")}" placeholder="上傳活動主圖後系統會自動回填"></div>
+      <div class="field"><label>活動圖集附件 / 說明頁輪播圖</label><input type="file" accept="image/*" multiple data-activity-gallery-file><div class="muted">可一次選多張；活動說明頁會用這些圖片做輪播，每月活動會自動帶入張數。</div></div>
+      <div class="field"><label>圖集網址（系統保存）</label><textarea name="galleryUrls" readonly placeholder="上傳活動圖集後系統會自動保存圖片網址">${esc(cleanUrlList(activity.galleryUrls).join("\n"))}</textarea><div class="actions" style="justify-content:flex-start;margin-top:8px"><button class="btn danger" type="button" data-clear-activity-gallery>清除圖集</button></div></div>
       <div class="field"><label>報名頁網址</label><input name="nativeFormUrl" value="${esc(activity.nativeFormUrl || "")}" placeholder="系統會自動產生"></div>`;
     insertBefore?.insertAdjacentElement("beforebegin", wrap);
     groupActivityMediaFields(wrap);
@@ -2039,7 +2035,7 @@
         resetSubmitState(af);
       }
     };
-    const ea = document.querySelector("#drawer-activity"); if (ea) ea.onsubmit = async e => { e.preventDefault(); setSubmitState(ea, "儲存中..."); const d = Object.fromEntries(new FormData(ea)); const x = state.data.activities.find(r => r.id === d.id); if (x) { Object.assign(x, { name: d.name, templateMode: d.templateMode || x.templateMode || "custom", type: d.type, typeLabel: formTypeLabel(d), courseTime: d.courseTime, deadline: d.deadline, capacity: Number(d.capacity || 0), checkinPoints: Number(d.checkinPoints || 0), feePoints: Number(d.feePoints || 0), paymentAmount: Number(d.paymentAmount || 0), remittanceInfo: d.remittanceInfo || "", registrationMode: d.registrationMode || "form", reg: Number(d.reg || 0), check: Number(d.check || 0), status: d.status, formUrl: d.formUrl, galleryUrls: cleanUrlList(d.galleryUrls) }); try { const saved = await saveActivityRemote(x); Object.assign(x, saved || {}); } catch (err) { toast(err?.message || "活動儲存失敗"); resetSubmitState(ea); return; } } save(); await finishSubmitState(ea); };
+    // Activity editor submit is handled by the enhanced listener above so registration settings and media remain editable.
     const mf = document.querySelector("#drawer-member"); if (mf) mf.onsubmit = async e => { e.preventDefault(); const type = mf.dataset.type; const d = Object.fromEntries(new FormData(mf)); const rows = state.data[type]; const old = rows.find(r => r.id === d.id); const loginAccess = d.loginAccess === "Y"; const item = { ...d, id: d.id || uid(), loginAccess, allowLogin: loginAccess, canLogin: loginAccess }; old ? Object.assign(old, item) : rows.unshift(item); try { await syncRosterMemberToWorker(type, item); await syncAdminAccessForMember(type, item); state.drawer = ""; save(); state.adminWhitelist = null; render(); toast("名冊與管理權限已儲存"); } catch (err) { toast(err?.message || "名冊儲存失敗"); } };
     const im = document.querySelector("#import-form"); if (im) im.onsubmit = e => { e.preventDefault(); const d = Object.fromEntries(new FormData(im)); const count = importRows(im.dataset.type, d.csv || ""); state.drawer = ""; render(); toast(`已導入 ${count} 筆資料`); };
     const loadRoster = document.querySelector("[data-load-roster]"); if (loadRoster) loadRoster.onclick = () => loadRosterSeed(true);
