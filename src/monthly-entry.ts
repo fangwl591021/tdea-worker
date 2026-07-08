@@ -255,7 +255,17 @@ async function isDynamicAdmin(identity: { email?: string; memberNo?: string; lin
   const whitelist = await readAdminWhitelist(env);
   const rosterWhitelist = await adminWhitelistFromAssociationRoster(env);
   const combinedWhitelist = [...whitelist, ...rosterWhitelist];
-  if (adminWhitelistConfigured(combinedWhitelist)) return adminWhitelistMatches(combinedWhitelist, { email, memberNo, lineUserId });
+  if (adminWhitelistConfigured(combinedWhitelist)) {
+    if (adminWhitelistMatches(combinedWhitelist, { email, memberNo, lineUserId })) return true;
+    if (!lineUserId) return false;
+    const lowerUid = lineUserId.toLowerCase();
+    const rows = await readAiweMembers(env);
+    return rows.some((row) => {
+      if (memberLineUid(row).toLowerCase() !== lowerUid) return false;
+      if (memberRowLoginAccess(row)) return true;
+      return combinedWhitelist.some((record) => record.enabled !== false && clean(record.memberNo) && rowMatchesMemberNo(row, clean(record.memberNo).toUpperCase()));
+    });
+  }
   const records = await readAdminAccess(env);
   return Object.values(records).some((record) => {
     if (record.loginAccess !== true) return false;
@@ -265,7 +275,6 @@ async function isDynamicAdmin(identity: { email?: string; memberNo?: string; lin
     return false;
   });
 }
-
 function loginAccessEnabled(value: unknown) {
   if (value === true) return true;
   const text = clean(value).toLowerCase();
