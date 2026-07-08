@@ -3436,6 +3436,20 @@ function activityIdentity(activity: Record<string, unknown>) {
   return firstClean(activity.activityNo, activity.no, activity.activityId, activity.id);
 }
 
+function activityDateKey(activity: Record<string, unknown>) {
+  const text = [activity.courseTime, activity.deadline, activity.activityDate, activity.date, activity.activityNo, activity.name, activity.id].map((value) => clean(value)).join(" ");
+  const match = text.match(/(20\d{2})[\/\.\-年](\d{1,2})[\/\.\-月](\d{1,2})/) || text.match(/\b(20\d{2})(\d{2})(\d{2})\b/);
+  if (!match) return "9999-99-99";
+  return `${match[1]}-${String(Number(match[2])).padStart(2, "0")}-${String(Number(match[3])).padStart(2, "0")}`;
+}
+
+function activitySortKey(activity: Record<string, unknown>) {
+  return [activityDateKey(activity), clean(activity.courseTime), clean(activity.createdAt), clean(activity.activityNo || activity.id), clean(activity.name)].join("|");
+}
+
+function compareMonthlyActivities(a: Record<string, unknown>, b: Record<string, unknown>) {
+  return activitySortKey(a).localeCompare(activitySortKey(b), "zh-Hant", { numeric: true });
+}
 function pageIdentity(page: MonthlyPage) {
   return firstClean(page.activityNo, page.activityId, page.id);
 }
@@ -3485,6 +3499,7 @@ async function readEffectiveMonthly(env: Env): Promise<MonthlyConfig> {
   const manualPages = (monthly.pages || []).filter(isManualMonthlyPage);
   const activityPages = activities
     .filter((item): item is Record<string, unknown> => Boolean(item) && typeof item === "object" && activityStatusIsOnline(item as Record<string, unknown>))
+    .sort(compareMonthlyActivities)
     .map((item, index) => pageFromActivity(item, index))
     .filter((page): page is MonthlyPage => Boolean(page));
   if (!activityPages.length) return normalizeConfig({ ...monthly, enabled: monthly.enabled !== false && manualPages.length > 0, pages: manualPages });

@@ -93,15 +93,23 @@
     return `${match[1]}-${String(Number(match[2])).padStart(2, "0")}`;
   }
 
+  function activityDateKey(activity) {
+    const text = [activity?.courseTime, activity?.deadline, activity?.activityDate, activity?.date, activity?.activityNo, activity?.name, activity?.id].map((value) => trim(value)).join(" ");
+    const match = text.match(/(20\d{2})[\/\.\-年](\d{1,2})[\/\.\-月](\d{1,2})/) || text.match(/\b(20\d{2})(\d{2})(\d{2})\b/);
+    if (!match) return "9999-99-99";
+    return `${match[1]}-${String(Number(match[2])).padStart(2, "0")}-${String(Number(match[3])).padStart(2, "0")}`;
+  }
+
+  function activitySortKey(activity) {
+    return [activityDateKey(activity), trim(activity?.courseTime), trim(activity?.createdAt), trim(activity?.activityNo || activity?.id), trim(activity?.name)].join("|");
+  }
+
+  function compareActivities(a, b) {
+    return activitySortKey(a).localeCompare(activitySortKey(b), "zh-Hant", { numeric: true });
+  }
   function autoMonthlyActivities() {
     const liveRows = activities().filter(isLiveActivity);
-    return liveRows
-      .sort((a, b) => {
-        const aTime = trim(a.courseTime);
-        const bTime = trim(b.courseTime);
-        return aTime.localeCompare(bTime, "zh-Hant");
-      })
-      .slice(0, 12);
+    return liveRows.sort(compareActivities).slice(0, 12);
   }
 
   function findActivity(value) {
@@ -441,7 +449,7 @@
     if (!main || !config) return;
     selected = Math.max(0, Math.min(selected, Math.max(config.pages.length - 1, 0)));
     const page = config.pages[selected] || blankPage();
-    main.innerHTML = `<div class="topbar"><div><h1>每月活動</h1></div><div class="actions"><button class="btn" data-monthly-json>複製 FLEX JSON</button><button class="btn primary" data-monthly-publish>發布</button></div></div><div class="monthly-workspace"><div class="monthly-left"><section class="panel"><div class="panel-head"><h2 class="panel-title">基本設定</h2></div><div class="monthly-form">${basicFields()}</div></section><section class="panel"><div class="panel-head"><h2 class="panel-title">活動頁數</h2><div class="actions"><button class="btn" data-monthly-add>新增頁</button><button class="btn danger" data-monthly-delete>刪除頁</button></div></div><div class="monthly-pages">${pageButtons()}</div></section><section class="panel"><div class="panel-head"><h2 class="panel-title">第 ${selected + 1} 頁設定</h2></div>${pageForm(page)}</section></div><aside class="panel monthly-preview-panel ${previewCollapsed() ? "is-collapsed" : ""}"><div class="panel-head" data-monthly-preview-head><div class="actions" style="justify-content:flex-start"><button class="monthly-preview-toggle" type="button" data-monthly-preview-toggle>${previewCollapsed() ? "▴" : "▾"}</button><h2 class="panel-title">預覽</h2></div><span class="muted">橫式多頁 FLEX</span></div><div class="monthly-preview-body" data-monthly-preview-wrap>${preview()}</div></aside></div><div class="toast" id="monthly-toast"></div>`;
+    main.innerHTML = `<div class="topbar"><div><h1>每月活動</h1></div><div class="actions"><button class="btn" data-monthly-json>複製 FLEX JSON</button><button class="btn primary" data-monthly-publish>發布</button></div></div><div class="monthly-workspace"><div class="monthly-left"><section class="panel"><div class="panel-head"><h2 class="panel-title">基本設定</h2></div><div class="monthly-form">${basicFields()}</div></section><section class="panel"><div class="panel-head"><h2 class="panel-title">活動頁數</h2><div class="actions"><button class="btn" data-monthly-add>新增頁</button><button class="btn danger" data-monthly-unpublish>下架頁</button></div></div><div class="monthly-pages">${pageButtons()}</div></section><section class="panel"><div class="panel-head"><h2 class="panel-title">第 ${selected + 1} 頁設定</h2></div>${pageForm(page)}</section></div><aside class="panel monthly-preview-panel ${previewCollapsed() ? "is-collapsed" : ""}"><div class="panel-head" data-monthly-preview-head><div class="actions" style="justify-content:flex-start"><button class="monthly-preview-toggle" type="button" data-monthly-preview-toggle>${previewCollapsed() ? "▴" : "▾"}</button><h2 class="panel-title">預覽</h2></div><span class="muted">橫式多頁 FLEX</span></div><div class="monthly-preview-body" data-monthly-preview-wrap>${preview()}</div></aside></div><div class="toast" id="monthly-toast"></div>`;
     bind();
   }
 
@@ -743,6 +751,56 @@
     return config;
   }
 
+  async function saveMonthlyConfig() {
+    const payload = prepareMonthlyPayload();
+    const res = await fetch(`${api}/api/monthly-activity`, { method: "PUT", headers: adminHeaders({ "content-type": "application/json" }), body: JSON.stringify(payload) });
+    const result = await res.json().catch(() => ({}));
+    if (!res.ok || !result.success) throw new Error(result.message || "每月活動儲存失敗");
+    config = result.data;
+    ensureConfigShape();
+    lastAutoPublishSignature = pagesSignature();
+    return config;
+  }
+
+  async function saveActivityStatus(activity, status) {
+    const activityId = trim(activity?.id || activity?.activityId || activity?.activityNo);
+    if (!activityId) throw new Error("找不到活動 ID，無法下架");
+    const payload = { ...activity, status };
+    const res = await fetch(`${api}/api/activities/${encodeURIComponent(activityId)}`, { method: "PUT", headers: adminHeaders({ "content-type": "application/json" }), body: JSON.stringify(payload) });
+    const result = await res.json().catch(() => ({}));
+    if (!res.ok || !result.success) throw new Error(result.message || "活動下架失敗");
+    return result.data || payload;
+  }
+
+  async function unpublishSelectedPage(event) {
+    if (!hasAdminIdentity()) return toast("尚未登入，暫不能下架。請重新登入管理中心。");
+    if (!config.pages.length) return toast("目前沒有可下架頁面");
+    const page = hydratePage(config.pages[selected]);
+    const activity = findActivity(page.activityNo || page.activityId);
+    const label = page.activityName || activity?.name || `第 ${selected + 1} 頁`;
+    if (!confirm(`確定下架「${label}」？\n\n連動活動會改成下架，報名資料仍會保留。`)) return;
+    const button = event?.currentTarget;
+    if (button) button.disabled = true;
+    try {
+      if (activity) {
+        const targetId = trim(activity.id || activity.activityId || activity.activityNo);
+        const updated = await saveActivityStatus(activity, "下架");
+        remoteActivities = remoteActivities.map((item) => {
+          const itemId = trim(item.id || item.activityId || item.activityNo);
+          return itemId === targetId ? { ...item, ...updated, status: "下架" } : item;
+        });
+      }
+      config.pages.splice(selected, 1);
+      selected = Math.max(0, Math.min(selected, config.pages.length - 1));
+      syncPagesFromPublishedActivities({ allowEmpty: true, autoPublish: false });
+      await saveMonthlyConfig();
+      render();
+      toast(activity ? "活動已下架，報名資料保留" : "頁面已移除");
+    } catch (error) {
+      toast(error?.message || "下架失敗");
+      if (button) button.disabled = false;
+    }
+  }
   function scheduleAutoPublish() {
     if (!hasAdminIdentity() || !canAutoPublish()) return;
     clearTimeout(autoPublishTimer);
@@ -789,7 +847,7 @@
     document.querySelector("[data-monthly-enabled]")?.addEventListener("change", (event) => { config.enabled = event.target.checked; });
     bindPageButtons();
     document.querySelector("[data-monthly-add]")?.addEventListener("click", () => { if (config.pages.length >= 12) return toast("LINE carousel 最多 12 頁"); config.pages.push(blankPage()); selected = config.pages.length - 1; render(); });
-    document.querySelector("[data-monthly-delete]")?.addEventListener("click", () => { if (config.pages.length <= 1) return toast("至少保留 1 頁"); config.pages.splice(selected, 1); selected = Math.max(0, selected - 1); render(); });
+    document.querySelector("[data-monthly-unpublish]")?.addEventListener("click", unpublishSelectedPage);
     document.querySelector("[data-monthly-activity]")?.addEventListener("change", (event) => { const page = config.pages[selected]; const activity = findActivity(event.target.value); page.manual = !activity; page.activityNo = activity?.activityNo || ""; page.activityId = activity?.id || ""; if (activity) applyActivityToPage(page, activity); updatePreview(); updatePageLabels(); render(); });
     document.querySelectorAll("[data-monthly-page]").forEach((input) => input.addEventListener("input", () => { const page = config.pages[selected]; page[input.name] = input.value; if (input.name === "activityName") page.detailTitle = input.value; updatePreview(); if (input.name === "imageUrl" || input.name === "activityName") updatePageLabels(); scheduleAutoPublish(); }));
     document.querySelectorAll("[data-monthly-gallery]").forEach((input) => input.addEventListener("input", () => { const page = config.pages[selected]; page.galleryUrls = uniqueUrls([input.value]); updatePreview(); scheduleAutoPublish(); }));

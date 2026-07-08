@@ -33,7 +33,7 @@
     "marquee-manager.js?v=ad-points-a4-1",
     "push-manager.js?v=push6",
     "calendar-manager.js?v=calendar3",
-    "monthly-activity.js?v=monthly-source2",
+    "monthly-activity.js?v=monthly-unpublish1",
     "native-form.js?v=registration-quick1",
     "liff-detail.js?v=liff-detail13",
     "personal-message.js?v=pm4",
