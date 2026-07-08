@@ -827,6 +827,40 @@
     }
   }
 
+  function pageKey(page) {
+    return trim(page?.activityNo || page?.activityId || page?.id || page?.activityName);
+  }
+
+  async function addPublishedActivityPage(event) {
+    const button = event?.currentTarget;
+    if (button) button.disabled = true;
+    try {
+      const existingKeys = new Set((config.pages || []).map(pageKey).filter(Boolean));
+      await loadRemoteActivities();
+      const liveRows = autoMonthlyActivities();
+      if (!liveRows.length) {
+        toast("目前沒有上架活動，請先到活動總覽上架活動。");
+        return;
+      }
+      const beforeCount = (config.pages || []).length;
+      syncPagesFromPublishedActivities({ allowEmpty: true, autoPublish: false });
+      const newIndex = config.pages.findIndex((page) => {
+        const keys = [page.activityNo, page.activityId, page.id, page.activityName].map((value) => trim(value)).filter(Boolean);
+        return keys.length && keys.every((key) => !existingKeys.has(key));
+      });
+      if (newIndex >= 0) {
+        selected = newIndex;
+        render();
+        toast("已加入新的上架活動");
+        return;
+      }
+      selected = Math.max(0, Math.min(selected, Math.max(config.pages.length - 1, 0)));
+      render();
+      toast(config.pages.length > beforeCount ? "已同步上架活動" : "所有上架活動已在每月活動中");
+    } finally {
+      if (button) button.disabled = false;
+    }
+  }
   function bindPageButtons() {
     document.querySelectorAll("[data-monthly-select]").forEach((button) => button.addEventListener("click", () => { selected = Number(button.dataset.monthlySelect || 0); render(); }));
   }
@@ -846,7 +880,7 @@
     document.querySelectorAll("[data-monthly-basic]").forEach((input) => input.addEventListener("input", () => { config[input.name] = input.value; updatePreview(); }));
     document.querySelector("[data-monthly-enabled]")?.addEventListener("change", (event) => { config.enabled = event.target.checked; });
     bindPageButtons();
-    document.querySelector("[data-monthly-add]")?.addEventListener("click", () => { if (config.pages.length >= 12) return toast("LINE carousel 最多 12 頁"); config.pages.push(blankPage()); selected = config.pages.length - 1; render(); });
+    document.querySelector("[data-monthly-add]")?.addEventListener("click", addPublishedActivityPage);
     document.querySelector("[data-monthly-unpublish]")?.addEventListener("click", unpublishSelectedPage);
     document.querySelector("[data-monthly-activity]")?.addEventListener("change", (event) => { const page = config.pages[selected]; const activity = findActivity(event.target.value); page.manual = !activity; page.activityNo = activity?.activityNo || ""; page.activityId = activity?.id || ""; if (activity) applyActivityToPage(page, activity); updatePreview(); updatePageLabels(); render(); });
     document.querySelectorAll("[data-monthly-page]").forEach((input) => input.addEventListener("input", () => { const page = config.pages[selected]; page[input.name] = input.value; if (input.name === "activityName") page.detailTitle = input.value; updatePreview(); if (input.name === "imageUrl" || input.name === "activityName") updatePageLabels(); scheduleAutoPublish(); }));
