@@ -1610,9 +1610,9 @@
     wrap.innerHTML = `
       <div class="field"><label>詳細說明</label><textarea name="detailText" placeholder="活動介紹、地點、費用、注意事項...">${esc(activity.detailText || "")}</textarea></div>
       <div class="field"><label>活動主圖附件</label><input type="file" accept="image/*" data-activity-poster-file><div class="muted">請直接附加圖片檔；上傳後會寫入報名頁與每月活動主圖。</div></div>
-      <div class="field"><label>活動主圖網址（系統保存）</label><input name="posterUrl" readonly value="${esc(activity.posterUrl || activity.imageUrl || "")}" placeholder="上傳活動主圖後系統會自動回填"></div>
-      <div class="field"><label>活動圖集附件 / 說明頁輪播圖</label><input type="file" accept="image/*" multiple data-activity-gallery-file><div class="muted">可一次選多張；活動說明頁會用這些圖片做輪播，每月活動會自動帶入張數。</div></div>
-      <div class="field"><label>圖集網址（系統保存）</label><textarea name="galleryUrls" readonly placeholder="上傳活動圖集後系統會自動保存圖片網址">${esc(cleanUrlList(activity.galleryUrls).join("\n"))}</textarea><div class="actions" style="justify-content:flex-start;margin-top:8px"><button class="btn danger" type="button" data-clear-activity-gallery>清除圖集</button></div></div>
+      <input name="posterUrl" type="hidden" value="${esc(activity.posterUrl || activity.imageUrl || "")}">
+      <div class="field"><label>活動圖集附件 / 說明頁輪播圖</label><input type="file" accept="image/*" multiple data-activity-gallery-file><div class="muted">可一次選多張；活動說明頁會用這些圖片做輪播，每月活動會自動帶入張數。</div><div class="actions" style="justify-content:flex-start;margin-top:8px"><button class="btn danger" type="button" data-clear-activity-gallery>清除圖集</button></div></div>
+      <textarea name="galleryUrls" hidden>${esc(cleanUrlList(activity.galleryUrls).join("\n"))}</textarea>
       <div class="field"><label>報名頁網址</label><input name="nativeFormUrl" value="${esc(activity.nativeFormUrl || "")}" placeholder="系統會自動產生"></div>`;
     insertBefore?.insertAdjacentElement("beforebegin", wrap);
     groupActivityMediaFields(wrap);

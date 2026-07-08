@@ -150,15 +150,8 @@
         <input name="posterFile" type="file" accept="image/png,image/jpeg,image/webp,image/gif,application/pdf">
         <small class="form-builder-hint">請直接附加圖片檔；上傳完成後系統會自動保存圖片網址。</small>
       </div>
-      <div class="field">
-        <label>活動主圖網址（系統保存）</label>
-        <input name="posterUrl" type="url" readonly placeholder="上傳活動主圖後系統會自動回填">
-      </div>
-      <div class="field">
-        <label>活動圖集附件 / 說明頁輪播圖</label>
-        <textarea name="galleryUrls" readonly placeholder="活動建立後可到編輯活動附加多張圖片；系統會自動保存圖片網址"></textarea>
-        <small class="form-builder-hint">這些圖片用於活動說明頁輪播，每月活動會自動帶入；不需要手填網址。</small>
-      </div>
+      <input name="posterUrl" type="hidden">
+      <textarea name="galleryUrls" hidden></textarea>
       <div class="field">
         <label>報名表網址</label>
         <input name="formUrl" type="url" placeholder="可貼既有報名網址；沒有時系統會依報名設定產生">
