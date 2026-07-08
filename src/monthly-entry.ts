@@ -392,22 +392,27 @@ async function updateAdminAccessApi(request: Request, env: Env) {
   if (!env.ASSETS_BUCKET) return json({ success: false, message: "R2 bucket is not configured" }, 503);
   const input = await request.json().catch(() => ({})) as Record<string, unknown>;
   const memberNo = clean(input.memberNo).toUpperCase();
-  const email = clean(input.email).toLowerCase();
-  const lineUserId = firstClean(input.lineUserId, input.lineUid, input.uid, input.LINE_user_id, input.line_user_id);
+  let email = clean(input.email).toLowerCase();
+  let lineUserId = firstClean(input.lineUserId, input.lineUid, input.uid, input.LINE_user_id, input.line_user_id);
+  let name = clean(input.name);
   if (!memberNo) return json({ success: false, message: "Missing memberNo" }, 400);
+  const rows = await readAiweMembers(env);
+  const matchedRows = rows.filter((row) => rowMatchesMemberNo(row, memberNo));
+  const matchedMember = matchedRows[0] ? publicAiweMember(matchedRows[0]) : null;
+  if (!lineUserId && matchedRows[0]) lineUserId = memberLineUid(matchedRows[0]);
+  if (!email && matchedMember?.email) email = clean(matchedMember.email).toLowerCase();
+  if (!name && matchedMember?.rosterName) name = clean(matchedMember.rosterName);
   const records = await readAdminAccess(env);
   records[memberNo] = {
     memberNo,
     email: email || undefined,
     lineUserId: lineUserId || undefined,
-    name: clean(input.name),
+    name,
     loginAccess: Boolean(input.loginAccess),
     updatedAt: new Date().toISOString(),
     updatedBy: adminEmailFromRequest(request)
   };
   await writeAdminAccess(env, records);
-  const rows = await readAiweMembers(env);
-  const matchedRows = rows.filter((row) => rowMatchesMemberNo(row, memberNo));
   if (matchedRows.length) {
     for (const row of matchedRows) {
       row.loginAccess = Boolean(input.loginAccess);
@@ -415,10 +420,10 @@ async function updateAdminAccessApi(request: Request, env: Env) {
       if (email && !clean(row.email)) row.email = email;
     }
     await writeAiweMembers(env, rows);
+    if (lineUserId) await upsertBoundMemberToManagerCrm(env, matchedRows[0], lineUserId);
   }
   return json({ success: true, data: records[memberNo] });
 }
-
 async function readMonthly(env: Env): Promise<MonthlyConfig> {
   const object = env.ASSETS_BUCKET ? await env.ASSETS_BUCKET.get(monthlyKey) : null;
   if (!object) return { enabled: false, keyword: fixedKeyword, month: "", altText: "TDEA 每月活動", detailBaseUrl: defaultLiffBase, pages: [] };

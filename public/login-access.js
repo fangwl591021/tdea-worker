@@ -10,6 +10,15 @@
 
   const normalize = (value) => String(value || "").trim().toUpperCase();
   const clean = (value) => String(value || "").trim();
+  function lineUidFromText(value) {
+    const match = String(value || "").match(/U[0-9a-f]{32}/i);
+    return match ? match[0] : "";
+  }
+
+  function memberLineUserId(member) {
+    return clean(member?.lineUserId || member?.lineUid || member?.uid || member?.LINE_user_id || member?.line_user_id);
+  }
+
   const isNonRosterDomRow = (row) => {
     const first = normalize(row?.children?.[0]?.textContent);
     const second = normalize(row?.children?.[1]?.textContent);
@@ -88,7 +97,7 @@
   async function updateAccess(member, memberNo, loginAccess) {
     if (!hasAdminIdentity()) throw new Error("缺少目前管理者身份，請重新登入後再操作。");
     const targetEmail = clean(member?.email || member?.Email || member?.mail || member?.user_email);
-    const targetLineUserId = clean(member?.lineUserId || member?.lineUid || member?.uid || member?.LINE_user_id || member?.line_user_id);
+    const targetLineUserId = memberLineUserId(member);
 
     const response = await fetch(`${api}/api/admin-access`, {
       method: "POST",
@@ -196,7 +205,8 @@
         try {
           const fresh = loadData();
           fresh.association ||= [];
-          const target = findMember(fresh, memberNo) || member || { memberNo };
+          const source = findMember(fresh, memberNo) || member || { memberNo };
+          const target = { ...source, lineUserId: memberLineUserId(source) || lineUidFromText(row.textContent) };
           const record = await updateAccess(target, memberNo, input.checked);
           target.loginAccess = input.checked;
           if (record?.email) target.email = record.email;
