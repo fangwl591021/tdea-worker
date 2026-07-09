@@ -152,11 +152,8 @@
       </div>
       <input name="posterUrl" type="hidden">
       <textarea name="galleryUrls" hidden></textarea>
-      <div class="field">
-        <label>報名表網址</label>
-        <input name="formUrl" type="url" placeholder="可貼既有報名網址；沒有時系統會依報名設定產生">
-        <small class="form-builder-hint">這裡保存活動報名入口；可以是系統內建報名頁，特殊情況才使用外部表單。</small>
-      </div>
+      <input name="formUrl" type="hidden">
+
       <div class="field">
         <label>YouTube 影片網址</label>
         <input name="youtubeUrl" type="url" placeholder="可放活動介紹、回顧或直播連結">
