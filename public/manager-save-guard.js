@@ -8,12 +8,12 @@
     return method === "PUT" && /\/api\/manager-data(?:\?|$)/.test(url);
   }
 
-  function showSaveError(message) {
-    let notice = document.querySelector("[data-manager-save-error]");
+  function showSaveStatus(message, type = "info", duration = 0) {
+    let notice = document.querySelector("[data-manager-save-status]");
     if (!notice) {
       notice = document.createElement("div");
-      notice.setAttribute("data-manager-save-error", "");
-      notice.setAttribute("role", "alert");
+      notice.setAttribute("data-manager-save-status", "");
+      notice.setAttribute("role", "status");
       notice.style.cssText = [
         "position:fixed",
         "right:20px",
@@ -22,38 +22,55 @@
         "max-width:360px",
         "padding:14px 18px",
         "border-radius:10px",
-        "background:#b42318",
         "color:#fff",
         "font-weight:800",
         "line-height:1.5",
-        "box-shadow:0 10px 30px rgba(0,0,0,.2)"
+        "box-shadow:0 10px 30px rgba(0,0,0,.2)",
+        "transition:opacity .2s ease"
       ].join(";");
       document.body.appendChild(notice);
     }
 
-    notice.textContent = message || "資料儲存失敗，請重新操作。";
+    const backgrounds = {
+      info: "#344054",
+      success: "#067647",
+      error: "#b42318"
+    };
+
+    notice.setAttribute("role", type === "error" ? "alert" : "status");
+    notice.style.background = backgrounds[type] || backgrounds.info;
+    notice.textContent = message;
     notice.hidden = false;
+
     clearTimeout(hideTimer);
-    hideTimer = setTimeout(() => {
-      notice.hidden = true;
-    }, 6000);
+    if (duration > 0) {
+      hideTimer = setTimeout(() => {
+        notice.hidden = true;
+      }, duration);
+    }
   }
 
   window.fetch = async function guardedFetch(input, init) {
     if (!isManagerDataSave(input, init)) return originalFetch(input, init);
 
+    showSaveStatus("資料儲存中…", "info");
+
     try {
       const response = await originalFetch(input, init);
       const result = await response.clone().json().catch(() => ({}));
+
       if (!response.ok || result.success === false) {
         const message = result.message || `資料儲存失敗（${response.status}）`;
         console.error("[manager-data] 儲存失敗", { status: response.status, result });
-        showSaveError(message);
+        showSaveStatus(message, "error", 6000);
+        return response;
       }
+
+      showSaveStatus("資料已儲存", "success", 2200);
       return response;
     } catch (error) {
       console.error("[manager-data] 儲存失敗", error);
-      showSaveError(error?.message || "資料儲存失敗，請檢查網路後重新操作。");
+      showSaveStatus(error?.message || "資料儲存失敗，請檢查網路後重新操作。", "error", 6000);
       throw error;
     }
   };
