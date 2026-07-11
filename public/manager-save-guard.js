@@ -1,6 +1,7 @@
 (() => {
   const originalFetch = window.fetch.bind(window);
   let hideTimer = null;
+  let latestSaveRequest = 0;
 
   function isManagerDataSave(input, init = {}) {
     const url = typeof input === "string" ? input : input?.url || "";
@@ -53,11 +54,14 @@
   window.fetch = async function guardedFetch(input, init) {
     if (!isManagerDataSave(input, init)) return originalFetch(input, init);
 
+    const requestNo = ++latestSaveRequest;
     showSaveStatus("資料儲存中…", "info");
 
     try {
       const response = await originalFetch(input, init);
       const result = await response.clone().json().catch(() => ({}));
+
+      if (requestNo !== latestSaveRequest) return response;
 
       if (!response.ok || result.success === false) {
         const message = result.message || `資料儲存失敗（${response.status}）`;
@@ -69,8 +73,10 @@
       showSaveStatus("資料已儲存", "success", 2200);
       return response;
     } catch (error) {
-      console.error("[manager-data] 儲存失敗", error);
-      showSaveStatus(error?.message || "資料儲存失敗，請檢查網路後重新操作。", "error", 6000);
+      if (requestNo === latestSaveRequest) {
+        console.error("[manager-data] 儲存失敗", error);
+        showSaveStatus(error?.message || "資料儲存失敗，請檢查網路後重新操作。", "error", 6000);
+      }
       throw error;
     }
   };
