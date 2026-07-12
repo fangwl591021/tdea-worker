@@ -4,6 +4,7 @@
   let latestSaveRequest = 0;
   let pendingSaveCount = 0;
   let lastFailedSave = null;
+  let nextRetryCount = 0;
 
   function isManagerDataSave(input, init = {}) {
     const url = typeof input === "string" ? input : input?.url || "";
@@ -88,11 +89,13 @@
     if (!lastFailedSave) return;
     const retry = lastFailedSave;
     lastFailedSave = null;
+    nextRetryCount = retry.retryCount + 1;
     window.fetch(retry.input, retry.init).catch(() => {});
   }
 
-  function showSaveFailure(message) {
-    showSaveStatus(message, "error", 0, {
+  function showSaveFailure(message, retryCount = 0) {
+    const retryNote = retryCount > 0 ? `（已重試 ${retryCount} 次）` : "";
+    showSaveStatus(`${message}${retryNote}`, "error", 0, {
       label: "再次儲存",
       onClick: retryLastFailedSave
     });
@@ -109,10 +112,12 @@
 
     const retryInput = input instanceof Request ? input.clone() : input;
     const retryInit = init ? { ...init } : init;
+    const retryCount = nextRetryCount;
+    nextRetryCount = 0;
     const requestNo = ++latestSaveRequest;
     pendingSaveCount += 1;
     lastFailedSave = null;
-    showSaveStatus("資料儲存中…", "info");
+    showSaveStatus(retryCount > 0 ? `重新儲存中…（第 ${retryCount} 次）` : "資料儲存中…", "info");
 
     const slowTimer = setTimeout(() => {
       if (requestNo === latestSaveRequest) {
@@ -135,20 +140,20 @@
 
       if (!response.ok || result.success === false) {
         const message = result.message || `資料儲存失敗（${response.status}）`;
-        lastFailedSave = { input: retryInput, init: retryInit };
-        console.error("[manager-data] 儲存失敗", { status: response.status, result });
-        showSaveFailure(message);
+        lastFailedSave = { input: retryInput, init: retryInit, retryCount };
+        console.error("[manager-data] 儲存失敗", { status: response.status, result, retryCount });
+        showSaveFailure(message, retryCount);
         return response;
       }
 
       lastFailedSave = null;
-      showSaveStatus("資料已儲存", "success", 2200);
+      showSaveStatus(retryCount > 0 ? `資料已儲存（重試 ${retryCount} 次後成功）` : "資料已儲存", "success", 2200);
       return response;
     } catch (error) {
       if (requestNo === latestSaveRequest) {
-        lastFailedSave = { input: retryInput, init: retryInit };
-        console.error("[manager-data] 儲存失敗", error);
-        showSaveFailure(error?.message || "資料儲存失敗，請檢查網路後重新操作。");
+        lastFailedSave = { input: retryInput, init: retryInit, retryCount };
+        console.error("[manager-data] 儲存失敗", { error, retryCount });
+        showSaveFailure(error?.message || "資料儲存失敗，請檢查網路後重新操作。", retryCount);
       }
       throw error;
     } finally {
