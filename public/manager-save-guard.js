@@ -13,6 +13,12 @@
     return method === "PUT" && /\/api\/manager-data(?:\?|$)/.test(url);
   }
 
+  function createErrorCode() {
+    const timePart = Date.now().toString(36).slice(-5).toUpperCase();
+    const randomPart = Math.random().toString(36).slice(2, 5).toUpperCase();
+    return `MS-${timePart}${randomPart}`;
+  }
+
   function showSaveStatus(message, type = "info", duration = 0, action = null) {
     let notice = document.querySelector("[data-manager-save-status]");
     if (!notice) {
@@ -96,8 +102,10 @@
 
   function showSaveFailure(message, retryCount = 0) {
     if (retryCount >= maxRetryCount) {
+      const errorCode = createErrorCode();
       lastFailedSave = null;
-      showSaveStatus(`${message}（已重試 ${retryCount} 次）請保留此畫面並聯絡管理人員。`, "error");
+      console.error("[manager-data] 最終儲存失敗", { errorCode, retryCount, message });
+      showSaveStatus(`${message}（已重試 ${retryCount} 次）請保留此畫面並聯絡管理人員。錯誤編號：${errorCode}`, "error");
       return;
     }
 
