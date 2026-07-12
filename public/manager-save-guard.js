@@ -3,6 +3,7 @@
   let hideTimer = null;
   let latestSaveRequest = 0;
   let pendingSaveCount = 0;
+  let lastFailedSave = null;
 
   function isManagerDataSave(input, init = {}) {
     const url = typeof input === "string" ? input : input?.url || "";
@@ -10,7 +11,7 @@
     return method === "PUT" && /\/api\/manager-data(?:\?|$)/.test(url);
   }
 
-  function showSaveStatus(message, type = "info", duration = 0) {
+  function showSaveStatus(message, type = "info", duration = 0, action = null) {
     let notice = document.querySelector("[data-manager-save-status]");
     if (!notice) {
       notice = document.createElement("div");
@@ -42,15 +43,52 @@
 
     notice.setAttribute("role", type === "error" ? "alert" : "status");
     notice.style.background = backgrounds[type] || backgrounds.info;
-    notice.textContent = message;
-    notice.hidden = false;
+    notice.replaceChildren();
 
+    const text = document.createElement("span");
+    text.textContent = message;
+    notice.appendChild(text);
+
+    if (action?.label && typeof action.onClick === "function") {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.textContent = action.label;
+      button.style.cssText = [
+        "display:block",
+        "margin-top:10px",
+        "padding:8px 14px",
+        "border:0",
+        "border-radius:7px",
+        "background:#fff",
+        "color:#7a271a",
+        "font-weight:900",
+        "cursor:pointer"
+      ].join(";");
+      button.addEventListener("click", action.onClick, { once: true });
+      notice.appendChild(button);
+    }
+
+    notice.hidden = false;
     clearTimeout(hideTimer);
     if (duration > 0) {
       hideTimer = setTimeout(() => {
         notice.hidden = true;
       }, duration);
     }
+  }
+
+  function retryLastFailedSave() {
+    if (!lastFailedSave) return;
+    const retry = lastFailedSave;
+    lastFailedSave = null;
+    window.fetch(retry.input, retry.init).catch(() => {});
+  }
+
+  function showSaveFailure(message) {
+    showSaveStatus(message, "error", 0, {
+      label: "再次儲存",
+      onClick: retryLastFailedSave
+    });
   }
 
   window.addEventListener("beforeunload", (event) => {
@@ -62,8 +100,11 @@
   window.fetch = async function guardedFetch(input, init) {
     if (!isManagerDataSave(input, init)) return originalFetch(input, init);
 
+    const retryInput = input instanceof Request ? input.clone() : input;
+    const retryInit = init ? { ...init } : init;
     const requestNo = ++latestSaveRequest;
     pendingSaveCount += 1;
+    lastFailedSave = null;
     showSaveStatus("資料儲存中…", "info");
 
     const slowTimer = setTimeout(() => {
@@ -87,17 +128,20 @@
 
       if (!response.ok || result.success === false) {
         const message = result.message || `資料儲存失敗（${response.status}）`;
+        lastFailedSave = { input: retryInput, init: retryInit };
         console.error("[manager-data] 儲存失敗", { status: response.status, result });
-        showSaveStatus(message, "error", 6000);
+        showSaveFailure(message);
         return response;
       }
 
+      lastFailedSave = null;
       showSaveStatus("資料已儲存", "success", 2200);
       return response;
     } catch (error) {
       if (requestNo === latestSaveRequest) {
+        lastFailedSave = { input: retryInput, init: retryInit };
         console.error("[manager-data] 儲存失敗", error);
-        showSaveStatus(error?.message || "資料儲存失敗，請檢查網路後重新操作。", "error", 6000);
+        showSaveFailure(error?.message || "資料儲存失敗，請檢查網路後重新操作。");
       }
       throw error;
     } finally {
