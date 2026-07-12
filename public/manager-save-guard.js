@@ -105,7 +105,7 @@
           button.style.opacity = "1";
           console.error("[manager-data] 提示操作失敗", error);
         }
-      }, { once: true });
+      });
       notice.appendChild(button);
     }
 
