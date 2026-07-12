@@ -64,7 +64,14 @@
         "font-weight:900",
         "cursor:pointer"
       ].join(";");
-      button.addEventListener("click", action.onClick, { once: true });
+      button.addEventListener("click", () => {
+        if (button.disabled) return;
+        button.disabled = true;
+        button.textContent = "重新儲存中…";
+        button.style.cursor = "wait";
+        button.style.opacity = ".7";
+        action.onClick();
+      }, { once: true });
       notice.appendChild(button);
     }
 
