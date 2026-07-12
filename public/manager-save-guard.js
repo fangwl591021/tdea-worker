@@ -19,6 +19,23 @@
     return `MS-${timePart}${randomPart}`;
   }
 
+  async function copyText(value) {
+    if (navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(value);
+      return;
+    }
+
+    const area = document.createElement("textarea");
+    area.value = value;
+    area.setAttribute("readonly", "");
+    area.style.cssText = "position:fixed;left:-9999px;top:0";
+    document.body.appendChild(area);
+    area.select();
+    const copied = document.execCommand("copy");
+    area.remove();
+    if (!copied) throw new Error("無法複製錯誤資訊");
+  }
+
   function showSaveStatus(message, type = "info", duration = 0, action = null) {
     let notice = document.querySelector("[data-manager-save-status]");
     if (!notice) {
@@ -72,13 +89,22 @@
         "font-weight:900",
         "cursor:pointer"
       ].join(";");
-      button.addEventListener("click", () => {
+      button.addEventListener("click", async () => {
         if (button.disabled) return;
         button.disabled = true;
-        button.textContent = "重新儲存中…";
+        button.textContent = action.pendingLabel || "處理中…";
         button.style.cursor = "wait";
         button.style.opacity = ".7";
-        action.onClick();
+        try {
+          await action.onClick();
+          if (action.doneLabel) button.textContent = action.doneLabel;
+        } catch (error) {
+          button.disabled = false;
+          button.textContent = action.label;
+          button.style.cursor = "pointer";
+          button.style.opacity = "1";
+          console.error("[manager-data] 提示操作失敗", error);
+        }
       }, { once: true });
       notice.appendChild(button);
     }
@@ -97,21 +123,36 @@
     const retry = lastFailedSave;
     lastFailedSave = null;
     nextRetryCount = retry.retryCount + 1;
-    window.fetch(retry.input, retry.init).catch(() => {});
+    return window.fetch(retry.input, retry.init).catch(() => {});
   }
 
   function showSaveFailure(message, retryCount = 0) {
     if (retryCount >= maxRetryCount) {
       const errorCode = createErrorCode();
+      const occurredAt = new Date().toLocaleString("zh-TW", { hour12: false });
+      const errorInfo = [
+        "TDEA 管理資料儲存失敗",
+        `錯誤編號：${errorCode}`,
+        `發生時間：${occurredAt}`,
+        `重試次數：${retryCount}`,
+        `錯誤訊息：${message}`,
+        `頁面網址：${location.href}`
+      ].join("\n");
       lastFailedSave = null;
-      console.error("[manager-data] 最終儲存失敗", { errorCode, retryCount, message });
-      showSaveStatus(`${message}（已重試 ${retryCount} 次）請保留此畫面並聯絡管理人員。錯誤編號：${errorCode}`, "error");
+      console.error("[manager-data] 最終儲存失敗", { errorCode, occurredAt, retryCount, message, url: location.href });
+      showSaveStatus(`${message}（已重試 ${retryCount} 次）請保留此畫面並聯絡管理人員。錯誤編號：${errorCode}`, "error", 0, {
+        label: "複製錯誤資訊",
+        pendingLabel: "複製中…",
+        doneLabel: "已複製",
+        onClick: () => copyText(errorInfo)
+      });
       return;
     }
 
     const retryNote = retryCount > 0 ? `（已重試 ${retryCount} 次）` : "";
     showSaveStatus(`${message}${retryNote}`, "error", 0, {
       label: "再次儲存",
+      pendingLabel: "重新儲存中…",
       onClick: retryLastFailedSave
     });
   }
