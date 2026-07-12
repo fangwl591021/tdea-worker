@@ -64,10 +64,18 @@
       }
     }, 4000);
 
+    const timeoutWarningTimer = setTimeout(() => {
+      if (requestNo === latestSaveRequest) {
+        console.warn("[manager-data] 儲存超過 15 秒仍未完成");
+        showSaveStatus("儲存時間過久，請先不要關閉頁面；系統仍在等待結果。", "error");
+      }
+    }, 15000);
+
     try {
       const response = await originalFetch(input, init);
       const result = await response.clone().json().catch(() => ({}));
       clearTimeout(slowTimer);
+      clearTimeout(timeoutWarningTimer);
 
       if (requestNo !== latestSaveRequest) return response;
 
@@ -82,6 +90,7 @@
       return response;
     } catch (error) {
       clearTimeout(slowTimer);
+      clearTimeout(timeoutWarningTimer);
       if (requestNo === latestSaveRequest) {
         console.error("[manager-data] 儲存失敗", error);
         showSaveStatus(error?.message || "資料儲存失敗，請檢查網路後重新操作。", "error", 6000);
