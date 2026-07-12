@@ -6,6 +6,7 @@
   let pendingSaveCount = 0;
   let lastFailedSave = null;
   let nextRetryCount = 0;
+  let preserveRetryButton = false;
 
   function isManagerDataSave(input, init = {}) {
     const url = typeof input === "string" ? input : input?.url || "";
@@ -123,6 +124,7 @@
     const retry = lastFailedSave;
     lastFailedSave = null;
     nextRetryCount = retry.retryCount + 1;
+    preserveRetryButton = true;
     return window.fetch(retry.input, retry.init).catch(() => {});
   }
 
@@ -170,10 +172,14 @@
     const retryInit = init ? { ...init } : init;
     const retryCount = nextRetryCount;
     nextRetryCount = 0;
+    const keepCurrentRetryButton = preserveRetryButton && retryCount > 0;
+    preserveRetryButton = false;
     const requestNo = ++latestSaveRequest;
     pendingSaveCount += 1;
     lastFailedSave = null;
-    showSaveStatus(retryCount > 0 ? `重新儲存中…（第 ${retryCount} 次）` : "資料儲存中…", "info");
+    if (!keepCurrentRetryButton) {
+      showSaveStatus(retryCount > 0 ? `重新儲存中…（第 ${retryCount} 次）` : "資料儲存中…", "info");
+    }
 
     const slowTimer = setTimeout(() => {
       if (requestNo === latestSaveRequest) {
