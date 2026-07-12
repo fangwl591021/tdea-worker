@@ -2,6 +2,7 @@
   const originalFetch = window.fetch.bind(window);
   let hideTimer = null;
   let latestSaveRequest = 0;
+  let pendingSaveCount = 0;
 
   function isManagerDataSave(input, init = {}) {
     const url = typeof input === "string" ? input : input?.url || "";
@@ -52,10 +53,17 @@
     }
   }
 
+  window.addEventListener("beforeunload", (event) => {
+    if (pendingSaveCount <= 0) return;
+    event.preventDefault();
+    event.returnValue = "";
+  });
+
   window.fetch = async function guardedFetch(input, init) {
     if (!isManagerDataSave(input, init)) return originalFetch(input, init);
 
     const requestNo = ++latestSaveRequest;
+    pendingSaveCount += 1;
     showSaveStatus("資料儲存中…", "info");
 
     const slowTimer = setTimeout(() => {
@@ -74,8 +82,6 @@
     try {
       const response = await originalFetch(input, init);
       const result = await response.clone().json().catch(() => ({}));
-      clearTimeout(slowTimer);
-      clearTimeout(timeoutWarningTimer);
 
       if (requestNo !== latestSaveRequest) return response;
 
@@ -89,13 +95,15 @@
       showSaveStatus("資料已儲存", "success", 2200);
       return response;
     } catch (error) {
-      clearTimeout(slowTimer);
-      clearTimeout(timeoutWarningTimer);
       if (requestNo === latestSaveRequest) {
         console.error("[manager-data] 儲存失敗", error);
         showSaveStatus(error?.message || "資料儲存失敗，請檢查網路後重新操作。", "error", 6000);
       }
       throw error;
+    } finally {
+      clearTimeout(slowTimer);
+      clearTimeout(timeoutWarningTimer);
+      pendingSaveCount = Math.max(0, pendingSaveCount - 1);
     }
   };
 })();
