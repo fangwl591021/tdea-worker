@@ -34,6 +34,7 @@
 
     const backgrounds = {
       info: "#344054",
+      warning: "#b54708",
       success: "#067647",
       error: "#b42318"
     };
@@ -57,9 +58,16 @@
     const requestNo = ++latestSaveRequest;
     showSaveStatus("資料儲存中…", "info");
 
+    const slowTimer = setTimeout(() => {
+      if (requestNo === latestSaveRequest) {
+        showSaveStatus("連線較慢，資料仍在儲存…", "warning");
+      }
+    }, 4000);
+
     try {
       const response = await originalFetch(input, init);
       const result = await response.clone().json().catch(() => ({}));
+      clearTimeout(slowTimer);
 
       if (requestNo !== latestSaveRequest) return response;
 
@@ -73,6 +81,7 @@
       showSaveStatus("資料已儲存", "success", 2200);
       return response;
     } catch (error) {
+      clearTimeout(slowTimer);
       if (requestNo === latestSaveRequest) {
         console.error("[manager-data] 儲存失敗", error);
         showSaveStatus(error?.message || "資料儲存失敗，請檢查網路後重新操作。", "error", 6000);
