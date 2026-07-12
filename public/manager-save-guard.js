@@ -1,5 +1,6 @@
 (() => {
   const originalFetch = window.fetch.bind(window);
+  const maxRetryCount = 3;
   let hideTimer = null;
   let latestSaveRequest = 0;
   let pendingSaveCount = 0;
@@ -94,6 +95,12 @@
   }
 
   function showSaveFailure(message, retryCount = 0) {
+    if (retryCount >= maxRetryCount) {
+      lastFailedSave = null;
+      showSaveStatus(`${message}（已重試 ${retryCount} 次）請保留此畫面並聯絡管理人員。`, "error");
+      return;
+    }
+
     const retryNote = retryCount > 0 ? `（已重試 ${retryCount} 次）` : "";
     showSaveStatus(`${message}${retryNote}`, "error", 0, {
       label: "再次儲存",
