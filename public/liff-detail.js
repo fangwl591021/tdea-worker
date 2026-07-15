@@ -10,7 +10,8 @@
   const trim = (value) => String(value ?? "").trim();
 
   function meaningfulText(value) {
-    const text = trim(value);
+    let text = trim(value);
+    text = text.replace(/\s*請至活動編輯補上完整活動介紹[\s\S]*$/g, "").trim();
     return text.replace(/[,\s/\\|._\-，、。；;:：]+/g, "").length ? text : "";
   }
 
@@ -76,7 +77,7 @@
     try {
       const res = await fetch(`${api}/api/native-forms/${encodeURIComponent(formId)}`, { cache: "no-store" });
       const result = await res.json();
-      return meaningfulText(result.data?.activity?.detailText);
+      return meaningfulText(result.data?.activity?.detailText || result.data?.activity?.description || result.data?.settings?.detailText || result.data?.settings?.description);
     } catch (_) {
       return "";
     }

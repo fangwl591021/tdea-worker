@@ -35,7 +35,7 @@
     "calendar-manager.js?v=calendar3",
     "monthly-activity.js?v=monthly-add-sync1",
     "native-form.js?v=registration-quick1",
-    "liff-detail.js?v=liff-detail13",
+    "liff-detail.js?v=liff-detail14",
     "personal-message.js?v=pm4",
     "keyword-extra.js?v=kw2",
     "line-monitor-link.js?v=monitor-hidden2"
@@ -150,7 +150,7 @@
 
   function publicScriptVersions() {
     const params = searchParams();
-    if (params.has("monthlyDetail") || params.has("monthlyShare") || params.has("close")) return ["liff-detail.js?v=liff-detail13"];
+    if (params.has("monthlyDetail") || params.has("monthlyShare") || params.has("close")) return ["liff-detail.js?v=liff-detail14"];
     if (params.has("personalMessages")) return ["personal-message.js?v=pm4"];
     return ["native-form.js?v=registration-quick1"];
   }
