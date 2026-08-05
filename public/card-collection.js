@@ -1,4 +1,14 @@
 ﻿(() => {
+  if (!document.querySelector('link[data-card-collection-style]')) {
+    const style = document.createElement("link");
+    style.rel = "stylesheet";
+    style.dataset.cardCollectionStyle = "1";
+    style.href = new URL(
+      "card-collection.css?v=card2",
+      document.currentScript?.src || location.href
+    ).href;
+    document.head.appendChild(style);
+  }
   const api = "https://tdeawork.fangwl591021.workers.dev";
   const liffId = "2005868456-2jmxqyFU";
   const app = document.getElementById("app");
@@ -637,3 +647,4 @@
 
   start();
 })();
+
