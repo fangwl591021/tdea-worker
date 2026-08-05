@@ -1,3 +1,12 @@
+﻿import {
+  archiveContactCard,
+  createManualContactCard,
+  finishCardCollectionReward,
+  getCardCollectionSettings,
+  listContactCards,
+  prepareCardCollectionReward,
+  updateCardCollectionSettings
+} from "./card-collection";
 import baseEntry from "./roster-sync-entry4";
 import {
   calendarKeyword,
@@ -6931,6 +6940,185 @@ export default {
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
     const url = new URL(request.url);
     if (request.method === "OPTIONS") return new Response(null, { status: 204, headers });
+
+    if (request.method === "GET" && url.pathname === "/api/card-collection/settings") {
+      return json({ success: true, data: await getCardCollectionSettings(env) });
+    }
+
+    if (request.method === "GET" && url.pathname === "/api/admin/card-collection/settings") {
+      const guard = await requireAdmin(request, env);
+      if (guard) return guard;
+      return json({ success: true, data: await getCardCollectionSettings(env) });
+    }
+
+    if (request.method === "PUT" && url.pathname === "/api/admin/card-collection/settings") {
+      const guard = await requireAdmin(request, env);
+      if (guard) return guard;
+
+      const input = await request.json().catch(() => ({})) as Record<string, unknown>;
+      const updatedBy =
+        adminEmailFromRequest(request) ||
+        adminMemberNoFromRequest(request) ||
+        adminLineUserIdFromRequest(request) ||
+        "admin";
+
+      const result = await updateCardCollectionSettings(
+        env,
+        {
+          collectionEnabled: input.collectionEnabled !== false,
+          rewardEnabled: input.rewardEnabled === true,
+          rewardPoints: Number(input.rewardPoints || 0),
+          dailyRewardLimit: Number(input.dailyRewardLimit || 0)
+        },
+        updatedBy
+      );
+
+      return json({ success: true, ...result });
+    }
+
+    if (request.method === "GET" && url.pathname === "/api/card-collection/cards") {
+      const lineUserId = adminLineUserIdFromRequest(request);
+      if (!lineUserId) {
+        return json(
+          { success: false, message: "缺少 LINE 使用者身份" },
+          401
+        );
+      }
+
+      return json({
+        success: true,
+        data: await listContactCards(env, lineUserId)
+      });
+    }
+
+    if (request.method === "POST" && url.pathname === "/api/card-collection/cards") {
+      const lineUserId = adminLineUserIdFromRequest(request);
+      if (!lineUserId) {
+        return json(
+          { success: false, message: "缺少 LINE 使用者身份" },
+          401
+        );
+      }
+
+      const input = await request.json().catch(() => ({})) as Record<string, unknown>;
+
+      try {
+        const result = await createManualContactCard(env, lineUserId, {
+          displayName: clean(input.displayName),
+          companyName: clean(input.companyName),
+          jobTitle: clean(input.jobTitle),
+          mobile: clean(input.mobile),
+          email: clean(input.email),
+          lineUrl: clean(input.lineUrl),
+          websiteUrl: clean(input.websiteUrl),
+          address: clean(input.address),
+          note: clean(input.note)
+        });
+
+        if (!result.created || result.duplicate) {
+          return json({
+            success: true,
+            created: false,
+            duplicate: true,
+            data: result.card,
+            reward: { status: "not_awarded", points: 0 }
+          });
+        }
+
+        const prepared = await prepareCardCollectionReward(env, result.card);
+        let reward: Record<string, unknown> = {
+          status: prepared.eligible ? "pending" : prepared.reason,
+          points: prepared.points
+        };
+
+        if (prepared.eligible) {
+          const pointResult = await insertMemberPoint(env, {
+            lineUserId,
+            eventName: "收藏名片成功",
+            eventContent: `TDEA 名片收藏：${result.card.displayName}`,
+            points: prepared.points,
+            remark: `TDEA card collection ${result.card.id}`
+          });
+
+          const pointSuccess = Boolean(
+            (pointResult as Record<string, unknown>).success
+          );
+
+          await finishCardCollectionReward(
+            env,
+            lineUserId,
+            result.card.id,
+            pointSuccess,
+            pointSuccess
+              ? ""
+              : clean(
+                  (pointResult as Record<string, unknown>).message ||
+                    "收藏贈點失敗"
+                )
+          );
+
+          reward = {
+            status: pointSuccess ? "completed" : "failed",
+            points: prepared.points,
+            result: pointResult
+          };
+        }
+
+        return json(
+          {
+            success: true,
+            created: true,
+            duplicate: false,
+            data: result.card,
+            reward
+          },
+          201
+        );
+      } catch (error) {
+        const message =
+          error instanceof Error ? error.message : String(error);
+        const code =
+          error && typeof error === "object" && "code" in error
+            ? String((error as { code?: unknown }).code || "")
+            : "";
+
+        return json(
+          { success: false, code, message },
+          code === "collection_disabled" ? 403 : 400
+        );
+      }
+    }
+
+    const cardDeleteMatch = url.pathname.match(
+      /^\/api\/card-collection\/cards\/([^/]+)$/
+    );
+
+    if (request.method === "DELETE" && cardDeleteMatch) {
+      const lineUserId = adminLineUserIdFromRequest(request);
+      if (!lineUserId) {
+        return json(
+          { success: false, message: "缺少 LINE 使用者身份" },
+          401
+        );
+      }
+
+      try {
+        const card = await archiveContactCard(
+          env,
+          lineUserId,
+          decodeURIComponent(cardDeleteMatch[1])
+        );
+        return json({ success: true, data: card });
+      } catch (error) {
+        return json(
+          {
+            success: false,
+            message: error instanceof Error ? error.message : String(error)
+          },
+          404
+        );
+      }
+    }
 	    const uploadMatch = url.pathname.match(/^\/api\/uploads\/(.+)$/);
 	    if ((request.method === "GET" || request.method === "HEAD") && uploadMatch) return getUploadedFile(env, decodeURIComponent(uploadMatch[1]));
       if (request.method === "GET" && url.pathname === "/api/line-keywords/effective") return json({ success: true, data: effectiveLineKeywords(), source: "src/line-keywords.ts" });
@@ -7034,6 +7222,7 @@ export default {
     return baseEntry.fetch(request, env, ctx);
   }
 };
+
 
 
 

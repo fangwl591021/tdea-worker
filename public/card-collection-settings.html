@@ -1,0 +1,161 @@
+﻿<!doctype html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>TDEA 名片收藏設定</title>
+  <style>
+    body{margin:0;background:#f4f6f8;color:#101828;font-family:system-ui,-apple-system,"Segoe UI","Noto Sans TC",sans-serif}
+    main{max-width:720px;margin:0 auto;padding:24px}
+    .card{background:#fff;border-radius:16px;padding:22px;box-shadow:0 8px 24px rgba(16,24,40,.08)}
+    h1{margin:0 0 8px;font-size:24px}
+    .hint{color:#667085;margin-bottom:22px}
+    .row{display:flex;align-items:center;justify-content:space-between;gap:20px;padding:16px 0;border-bottom:1px solid #eaecf0}
+    .row:last-child{border-bottom:0}
+    label strong{display:block;margin-bottom:4px}
+    label span{font-size:13px;color:#667085}
+    input[type=number],input[type=text]{width:180px;padding:10px;border:1px solid #d0d5dd;border-radius:8px;font-size:16px}
+    input[type=checkbox]{width:22px;height:22px}
+    button{width:100%;margin-top:20px;padding:13px;border:0;border-radius:10px;background:#067647;color:#fff;font-size:16px;font-weight:800;cursor:pointer}
+    button:disabled{opacity:.6;cursor:wait}
+    #status{margin-top:14px;padding:12px;border-radius:8px;display:none}
+    #status.ok{display:block;background:#ecfdf3;color:#067647}
+    #status.error{display:block;background:#fef3f2;color:#b42318}
+  </style>
+</head>
+<body>
+<main>
+  <section class="card">
+    <h1>TDEA 名片收藏設定</h1>
+    <div class="hint">設定由業主決定是否開放收藏及收藏贈點。</div>
+
+    <div class="row">
+      <label>
+        <strong>開放名片收藏</strong>
+        <span>關閉後會員不能新增名片，既有資料仍保留。</span>
+      </label>
+      <input id="collectionEnabled" type="checkbox">
+    </div>
+
+    <div class="row">
+      <label>
+        <strong>收藏成功贈點</strong>
+        <span>關閉後不建立新贈點，也不追溯補發。</span>
+      </label>
+      <input id="rewardEnabled" type="checkbox">
+    </div>
+
+    <div class="row">
+      <label>
+        <strong>每張有效名片贈點</strong>
+        <span>只有新收藏且非重複名片才贈點。</span>
+      </label>
+      <input id="rewardPoints" type="number" min="0" max="100000">
+    </div>
+
+    <div class="row">
+      <label>
+        <strong>每日贈點上限</strong>
+        <span>填 0 表示不限制次數。</span>
+      </label>
+      <input id="dailyRewardLimit" type="number" min="0" max="1000">
+    </div>
+
+    <div class="row">
+      <label>
+        <strong>管理員 Email</strong>
+        <span>須為 TDEA 後台授權管理員。</span>
+      </label>
+      <input id="adminEmail" type="text" autocomplete="email">
+    </div>
+
+    <button id="save">儲存設定</button>
+    <div id="status"></div>
+  </section>
+</main>
+
+<script>
+(() => {
+  const apiBase = "https://tdeawork.fangwl591021.workers.dev";
+  const $ = (id) => document.getElementById(id);
+  const status = (message, type = "ok") => {
+    $("status").textContent = message;
+    $("status").className = type;
+  };
+
+  async function request(path, options = {}) {
+    const email = $("adminEmail").value.trim();
+    const response = await fetch(apiBase + path, {
+      ...options,
+      headers: {
+        "content-type": "application/json",
+        "x-admin-email": email,
+        ...(options.headers || {})
+      }
+    });
+    const result = await response.json().catch(() => ({}));
+    if (!response.ok || result.success === false) {
+      throw new Error(result.message || "操作失敗");
+    }
+    return result;
+  }
+
+  async function load() {
+    const savedEmail = localStorage.getItem("tdea-card-admin-email") || "";
+    $("adminEmail").value = savedEmail;
+
+    try {
+      const result = await request("/api/admin/card-collection/settings");
+      const settings = result.data || {};
+      $("collectionEnabled").checked = settings.collectionEnabled !== false;
+      $("rewardEnabled").checked = settings.rewardEnabled === true;
+      $("rewardPoints").value = Number(settings.rewardPoints || 0);
+      $("dailyRewardLimit").value = Number(settings.dailyRewardLimit || 0);
+    } catch (error) {
+      status(error.message, "error");
+    }
+  }
+
+  $("save").addEventListener("click", async () => {
+    const button = $("save");
+    button.disabled = true;
+    button.textContent = "儲存中…";
+
+    try {
+      localStorage.setItem(
+        "tdea-card-admin-email",
+        $("adminEmail").value.trim()
+      );
+
+      const result = await request(
+        "/api/admin/card-collection/settings",
+        {
+          method: "PUT",
+          body: JSON.stringify({
+            collectionEnabled: $("collectionEnabled").checked,
+            rewardEnabled: $("rewardEnabled").checked,
+            rewardPoints: Number($("rewardPoints").value || 0),
+            dailyRewardLimit: Number($("dailyRewardLimit").value || 0)
+          })
+        }
+      );
+
+      const cancelled = Number(result.cancelledRewards || 0);
+      status(
+        cancelled
+          ? `設定已儲存，並取消 ${cancelled} 筆尚未完成的待發點。`
+          : "設定已儲存。"
+      );
+    } catch (error) {
+      status(error.message, "error");
+    } finally {
+      button.disabled = false;
+      button.textContent = "儲存設定";
+    }
+  });
+
+  load();
+})();
+</script>
+</body>
+</html>
