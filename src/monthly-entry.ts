@@ -1,4 +1,5 @@
-﻿import {
+﻿import { recognizeBusinessCard } from "./card-collection-ocr";
+import {
   archiveContactCard,
   createManualContactCard,
   finishCardCollectionReward,
@@ -6941,6 +6942,62 @@ export default {
     const url = new URL(request.url);
     if (request.method === "OPTIONS") return new Response(null, { status: 204, headers });
 
+    if (request.method === "POST" && url.pathname === "/api/card-collection/ocr") {
+      const lineUserId = adminLineUserIdFromRequest(request);
+
+      if (!lineUserId) {
+        return json(
+          { success: false, message: "缺少 LINE 使用者身份" },
+          401
+        );
+      }
+
+      try {
+        const settings = await getCardCollectionSettings(env);
+
+        if (!settings.collectionEnabled) {
+          return json(
+            {
+              success: false,
+              code: "collection_disabled",
+              message: "業主目前已關閉名片收藏功能"
+            },
+            403
+          );
+        }
+
+        const input = await request.json().catch(() => ({})) as Record<
+          string,
+          unknown
+        >;
+
+        const imageDataUrl = clean(input.imageDataUrl);
+
+        if (!imageDataUrl) {
+          return json(
+            { success: false, message: "請上傳名片圖片" },
+            400
+          );
+        }
+
+        const result = await recognizeBusinessCard(env, imageDataUrl);
+
+        return json({
+          success: true,
+          data: result
+        });
+      } catch (error) {
+        return json(
+          {
+            success: false,
+            message: error instanceof Error
+              ? error.message
+              : String(error)
+          },
+          400
+        );
+      }
+    }
     if (request.method === "GET" && url.pathname === "/api/card-collection/settings") {
       return json({ success: true, data: await getCardCollectionSettings(env) });
     }
@@ -7222,6 +7279,7 @@ export default {
     return baseEntry.fetch(request, env, ctx);
   }
 };
+
 
 
 
