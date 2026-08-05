@@ -53,3 +53,28 @@ button,input,textarea{font:inherit}
   .cc-shell{padding-left:10px;padding-right:10px}
   .cc-card{border-radius:13px;padding:14px}
 }
+
+.cc-source-actions{
+  margin-top:4px;
+}
+.cc-file-button{
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  text-align:center;
+}
+.cc-file-button input{
+  display:none;
+}
+.cc-upload-hint{
+  margin:10px 0 0;
+  text-align:center;
+  color:#667085;
+  font-size:13px;
+}
+.cc-stage.active{
+  display:block;
+  margin-top:16px;
+  padding-top:16px;
+  border-top:1px solid #e4e7ec;
+}

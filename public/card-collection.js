@@ -167,15 +167,30 @@
         <section class="cc-card">
           <h2>新增名片</h2>
 
-          <label class="cc-upload">
-            <input
-              type="file"
-              accept="image/jpeg,image/png,image/webp"
-              capture="environment"
-              data-card-file
-            >
-            📷 拍照或選擇名片圖片
-          </label>
+          <div class="cc-actions cc-source-actions">
+            <label class="cc-button primary cc-file-button">
+              <input
+                type="file"
+                accept="image/jpeg,image/png,image/webp"
+                capture="environment"
+                data-card-file
+              >
+              📷 拍照
+            </label>
+
+            <label class="cc-button secondary cc-file-button">
+              <input
+                type="file"
+                accept="image/jpeg,image/png,image/webp"
+                data-card-file
+              >
+              🖼️ 上傳圖片
+            </label>
+          </div>
+
+          <p class="cc-upload-hint">
+            選擇圖片後會顯示名片裁切器。
+          </p>
 
           <div class="cc-stage" data-card-stage>
             <div class="cc-crop">
@@ -227,7 +242,6 @@
             ${field("jobTitle", "職稱")}
             ${field("mobile", "電話")}
             ${field("email", "Email", "email")}
-            ${field("lineUrl", "LINE 連結", "url")}
             ${field("websiteUrl", "網站", "url")}
             ${field("address", "地址")}
 
@@ -264,8 +278,10 @@
   }
 
   function bindEvents() {
-    document.querySelector("[data-card-file]")
-      ?.addEventListener("change", handleFile);
+    document.querySelectorAll("[data-card-file]")
+      .forEach(input => {
+        input.addEventListener("change", handleFile);
+      });
 
     document.querySelector("[data-card-zoom]")
       ?.addEventListener("input", event => {
@@ -418,10 +434,6 @@
 
       const section = document.querySelector("[data-form-section]");
       section.hidden = false;
-      section.scrollIntoView({
-        behavior: "smooth",
-        block: "start"
-      });
 
       showStatus(
         "辨識完成，請檢查姓名、電話與 Email。",
@@ -445,13 +457,12 @@
       "jobTitle",
       "mobile",
       "email",
-      "lineUrl",
       "websiteUrl",
       "address",
       "note"
     ].forEach(name => {
       const input = form.elements.namedItem(name);
-      if (input) input.value = clean(data[name]);
+      if (input) input.value = name === "lineUrl" ? "" : clean(data[name]);
     });
   }
 
@@ -465,9 +476,10 @@
     submit.textContent = "收藏中…";
 
     try {
-      const payload = Object.fromEntries(
-        new FormData(form).entries()
-      );
+      const payload = {
+        ...Object.fromEntries(new FormData(form).entries()),
+        lineUrl: ""
+      };
 
       const result = await request(
         "/api/card-collection/cards",
@@ -500,8 +512,10 @@
     state.rotation = 0;
     state.zoom = 1;
 
-    const file = document.querySelector("[data-card-file]");
-    if (file) file.value = "";
+    document.querySelectorAll("[data-card-file]")
+      .forEach(file => {
+        file.value = "";
+      });
 
     document
       .querySelector("[data-card-stage]")
@@ -647,4 +661,6 @@
 
   start();
 })();
+
+
 
