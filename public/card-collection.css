@@ -78,3 +78,34 @@ button,input,textarea{font:inherit}
   padding-top:16px;
   border-top:1px solid #e4e7ec;
 }
+
+.cc-crop{
+  position:relative;
+  width:100%;
+  aspect-ratio:5/3;
+  background:#101828;
+  border-radius:12px;
+  overflow:hidden;
+}
+.cc-crop canvas{
+  position:absolute;
+  inset:0;
+  width:100%;
+  height:100%;
+  display:block;
+}
+.cc-crop-hint{
+  margin-top:10px;
+  text-align:center;
+  color:#667085;
+  font-size:13px;
+}
+
+[data-card-canvas]{
+  z-index:1;
+}
+[data-card-overlay]{
+  z-index:2;
+  pointer-events:none;
+  background:transparent;
+}

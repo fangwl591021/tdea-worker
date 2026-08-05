@@ -212,7 +212,7 @@
               <canvas
                 width="1200"
                 height="720"
-                data-card-base
+                data-card-canvas
               ></canvas>
               <canvas
                 width="1200"
@@ -689,6 +689,7 @@
 
   start();
 })();
+
 
 
 
