@@ -19,10 +19,25 @@
     image: null,
     rotation: 0,
     zoom: 1,
-    cards: []
+    cards: [],
+    cropQuad: null,
+    dragHandle: -1,
+    dragPointerId: null,
+    displayRect: null
   };
 
   const clean = value => String(value ?? "").trim();
+
+  function normalizeWebsite(value) {
+    const text = clean(value);
+    if (!text) return "";
+    if (/^https?:\/\//i.test(text)) return text;
+    if (/^www\./i.test(text)) return `https://${text}`;
+    if (/^[a-z0-9][a-z0-9.-]+\.[a-z]{2,}(?:\/.*)?$/i.test(text)) {
+      return `https://${text}`;
+    }
+    return text;
+  }
 
   const esc = value => clean(value).replace(/[&<>"']/g, ch => ({
     "&": "&amp;",
@@ -197,8 +212,16 @@
               <canvas
                 width="1200"
                 height="720"
-                data-card-canvas
+                data-card-base
               ></canvas>
+              <canvas
+                width="1200"
+                height="720"
+                data-card-overlay
+              ></canvas>
+            </div>
+            <div class="cc-crop-hint">
+              請拖曳四個角點，框住名片四邊。
             </div>
 
             <div class="cc-controls">
@@ -476,8 +499,13 @@
     submit.textContent = "收藏中…";
 
     try {
+      const rawPayload = Object.fromEntries(
+        new FormData(form).entries()
+      );
+
       const payload = {
-        ...Object.fromEntries(new FormData(form).entries()),
+        ...rawPayload,
+        websiteUrl: normalizeWebsite(rawPayload.websiteUrl),
         lineUrl: ""
       };
 
@@ -661,6 +689,9 @@
 
   start();
 })();
+
+
+
 
 
 
