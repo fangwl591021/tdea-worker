@@ -1,4 +1,4 @@
-(() => {
+﻿(() => {
   const api = "https://tdeawork.fangwl591021.workers.dev";
   const adminLiffId = "2005868456-2jmxqyFU";
   const adminLiffUrl = `https://liff.line.me/${adminLiffId}?adminLogin=1`;
@@ -16,7 +16,8 @@
     "personalMessages",
     "close",
     "marquee",
-    "motherRegister"
+    "motherRegister",
+    "cardCollection"
   ];
   const scriptVersions = [
     "app.js?v=activity-editor4",
@@ -152,6 +153,7 @@
     const params = searchParams();
     if (params.has("monthlyDetail") || params.has("monthlyShare") || params.has("close")) return ["liff-detail.js?v=liff-detail14"];
     if (params.has("personalMessages")) return ["personal-message.js?v=pm4"];
+    if (params.has("cardCollection")) return ["card-collection.js?v=card1"];
     return ["native-form.js?v=registration-quick1"];
   }
 
@@ -326,3 +328,5 @@
 
   boot().catch((error) => renderLogin(error.message || "入口載入失敗"));
 })();
+
+

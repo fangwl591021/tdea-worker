@@ -1,4 +1,4 @@
-<!doctype html>
+﻿<!doctype html>
 <html lang="zh-Hant">
 <head>
   <meta charset="utf-8">
@@ -6,12 +6,13 @@
   <title>TDEA 管理中心</title>
   <link rel="stylesheet" href="public/styles.css?v=mother-table2">
   <link rel="stylesheet" href="public/sidebar.css?v=admin-avatar1">
+  <link rel="stylesheet" href="public/card-collection.css?v=card1">
 </head>
 <body>
   <div id="app"></div>
   <script>
     (() => {
-      const publicKeys = ["register", "query", "memberQr", "calendar", "checkin", "redeem", "redeemSession", "monthlyDetail", "personalMessages", "close", "marquee"];
+      const publicKeys = ["register", "query", "memberQr", "calendar", "checkin", "redeem", "redeemSession", "monthlyDetail", "personalMessages", "close", "marquee", "cardCollection"];
       const params = new URLSearchParams(location.search);
       const state = params.get("liff.state");
       if (state) {
@@ -41,3 +42,4 @@
   <script src="/tdea-worker/public/admin-login.js?v=admin-entry25"></script>
 </body>
 </html>
+
