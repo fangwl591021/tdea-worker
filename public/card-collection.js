@@ -460,6 +460,14 @@
 
       fillForm(result.data || {});
 
+      const websiteInput = document.querySelector('input[name="websiteUrl"]');
+      if (websiteInput) {
+        const rawWebsite = String(result.data?.websiteUrl || "").trim();
+        websiteInput.value = rawWebsite && !/^https?:\/\//i.test(rawWebsite)
+          ? `https://${rawWebsite.replace(/^\/+/, "")}`
+          : rawWebsite;
+      }
+
       const section = document.querySelector("[data-form-section]");
       section.hidden = false;
 
@@ -515,6 +523,14 @@
         websiteUrl: normalizeWebsite(rawPayload.websiteUrl),
         lineUrl: ""
       };
+
+      const websiteField = form.elements.namedItem("websiteUrl");
+      if (websiteField) {
+        const rawWebsite = String(websiteField.value || "").trim();
+        websiteField.value = rawWebsite && !/^https?:\/\//i.test(rawWebsite)
+          ? `https://${rawWebsite.replace(/^\/+/, "")}`
+          : rawWebsite;
+      }
 
       const result = await request(
         "/api/card-collection/cards",
@@ -696,6 +712,8 @@
 
   start();
 })();
+
+
 
 
 
