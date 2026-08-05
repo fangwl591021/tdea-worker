@@ -330,6 +330,11 @@
     document.querySelector("[data-card-form]")
       ?.addEventListener("submit", saveCard);
 
+    document.querySelector('input[name="websiteUrl"]')
+      ?.addEventListener("blur", event => {
+        event.target.value = normalizeWebsite(event.target.value);
+      });
+
     document.querySelector("[data-card-list]")
       ?.addEventListener("click", handleListClick);
   }
@@ -474,18 +479,20 @@
     const form = document.querySelector("[data-card-form]");
     if (!form) return;
 
-    [
-      "displayName",
-      "companyName",
-      "jobTitle",
-      "mobile",
-      "email",
-      "websiteUrl",
-      "address",
-      "note"
-    ].forEach(name => {
+    const values = {
+      displayName: clean(data.displayName),
+      companyName: clean(data.companyName),
+      jobTitle: clean(data.jobTitle),
+      mobile: clean(data.mobile),
+      email: clean(data.email),
+      websiteUrl: normalizeWebsite(data.websiteUrl),
+      address: clean(data.address),
+      note: clean(data.note)
+    };
+
+    Object.entries(values).forEach(([name, value]) => {
       const input = form.elements.namedItem(name);
-      if (input) input.value = name === "lineUrl" ? "" : clean(data[name]);
+      if (input) input.value = value;
     });
   }
 
@@ -689,6 +696,7 @@
 
   start();
 })();
+
 
 
 

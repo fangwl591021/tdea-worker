@@ -153,7 +153,7 @@
     const params = searchParams();
     if (params.has("monthlyDetail") || params.has("monthlyShare") || params.has("close")) return ["liff-detail.js?v=liff-detail14"];
     if (params.has("personalMessages")) return ["personal-message.js?v=pm4"];
-    if (params.has("cardCollection")) return ["card-collection.js?v=card1"];
+    if (params.has("cardCollection")) return ["card-collection.js?v=card10"];
     return ["native-form.js?v=registration-quick1"];
   }
 
@@ -328,5 +328,6 @@
 
   boot().catch((error) => renderLogin(error.message || "入口載入失敗"));
 })();
+
 
 
