@@ -1,4 +1,5 @@
-﻿export type TdeaMemberType =
+﻿import { findIdentityCrmMemberByMemberNo } from "./identity-crm-adapter";
+export type TdeaMemberType =
   | "general"
   | "association"
   | "vendor";
@@ -409,7 +410,7 @@ export function buildVerifiedCrmIdentityProfile(
       expectedType
     );
 
-  if (!verified.success) {
+  if (verified.success === false) {
     throw new Error(verified.message);
   }
 
@@ -456,3 +457,81 @@ export function buildVerifiedCrmIdentityProfile(
     updatedAt: now
   };
 }
+
+
+export async function registerIdentityProfile(
+  env: IdentityEnv,
+  input: TdeaIdentityInput
+): Promise<TdeaIdentityProfile> {
+  const validated = validateIdentityInput(input);
+
+  if (!validated.success) {
+    throw new Error(validated.message);
+  }
+
+  const existing = await getIdentityProfile(
+    env,
+    validated.data.lineUserId
+  );
+
+  if (existing) {
+    return existing;
+  }
+
+  if (validated.data.memberType === "general") {
+    const profile = buildGeneralIdentityProfile(
+      validated
+    );
+
+    await saveIdentityProfile(env, profile);
+    return profile;
+  }
+
+  const crmMember =
+    await findIdentityCrmMemberByMemberNo(
+      env,
+      validated.data.memberType,
+      validated.data.memberNo
+    );
+
+  if (!crmMember) {
+    throw new Error("查無此會員編號");
+  }
+
+  const verification =
+    verifyIdentityAgainstCrmMember(
+      input,
+      crmMember,
+      validated.data.memberType
+    );
+
+  if (verification.success === false) {
+    throw new Error(verification.message);
+  }
+
+  const existingBoundUid =
+    String(
+      crmMember.lineUserId || ""
+    ).trim();
+
+  if (
+    existingBoundUid &&
+    existingBoundUid.toLowerCase() !==
+      validated.data.lineUserId.toLowerCase()
+  ) {
+    throw new Error(
+      "此會員編號已綁定其他 LINE 帳號，請聯絡協會處理"
+    );
+  }
+
+  const profile =
+    buildVerifiedCrmIdentityProfile(
+      input,
+      crmMember
+    );
+
+  await saveIdentityProfile(env, profile);
+
+  return profile;
+}
+

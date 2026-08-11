@@ -1,4 +1,5 @@
 import baseEntry from "./roster-sync-entry4";
+import { handleIdentityApi } from "./identity-api";
 import {
   calendarKeyword,
   classifyLineEvents,
@@ -6966,6 +6967,10 @@ export default {
 	    if (request.method === "GET" && url.pathname === "/api/line-webhook/status") return lineWebhookStatusApi(request, env);
 	    if (request.method === "GET" && url.pathname === "/api/line-webhook/logs") return lineWebhookLogsApi(request, env);
 	    if (url.pathname === "/api/activities" || url.pathname === "/api/activities/archived" || /^\/api\/activities\/[^/]+(?:\/restore)?$/.test(url.pathname)) return activityRecordsApi(request, env, url);
+	    if (url.pathname.startsWith("/api/identity/")) {
+	      const identityResponse = await handleIdentityApi(request, env);
+	      if (identityResponse) return identityResponse;
+	    }
 	    if (request.method === "GET" && url.pathname === "/api/manager-data") return json({ success: true, data: await readManagerData(env) });
 	    if ((request.method === "PUT" || request.method === "POST") && url.pathname === "/api/manager-data") {
 	      const guard = await requireAdmin(request, env);
