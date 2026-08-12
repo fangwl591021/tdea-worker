@@ -2896,6 +2896,37 @@ async function getPointAccountApi(request: Request, env: Env, lineUserId: string
   return json({ success: true, data: await getUnifiedPointAccount(env, lineUserId, { autoImport: true }) });
 }
 
+async function initializeRosterPointsApi(request: Request, env: Env) {
+  const guard = await requireAdmin(request, env);
+  if (guard) return guard;
+  if (!env.TDEA_DESIGN || !env.TDEA_INTERNAL_SECRET) return json({ success: false, message: "TDEA-DESIGN point service is not configured" }, 503);
+  const managerData = await readManagerDataRaw(env);
+  if (!managerData) return json({ success: false, message: "CRM 名冊尚未建立" }, 404);
+  const rows = [
+    ...(Array.isArray(managerData.association) ? managerData.association as Array<Record<string, unknown>> : []),
+    ...(Array.isArray(managerData.vendor) ? managerData.vendor as Array<Record<string, unknown>> : [])
+  ];
+  const members = rows.map((row) => ({
+    memberNo: firstClean(row.memberNo, row.rosterMemberNo, row["會員編號"]),
+    lineUserId: firstClean(explicitMemberLineUid(row), memberLineUid(row)),
+    name: firstClean(row.name, row.rosterName, row["姓名"]),
+    phone: firstClean(row.phone, row.mobile, row.tel, row["手機"]),
+    email: firstClean(row.email, row.mail, row["email"]),
+    pointBalance: Object.prototype.hasOwnProperty.call(row, "pointBalance") ? Number(row.pointBalance) : null
+  }));
+  const response = await env.TDEA_DESIGN.fetch("https://tdea-design.internal/internal/tdea/points/initialize", {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      "x-tdea-internal-secret": env.TDEA_INTERNAL_SECRET
+    },
+    body: JSON.stringify({ members })
+  });
+  const result = await response.json().catch(() => ({})) as Record<string, unknown>;
+  if (!response.ok || result.success !== true) return json({ success: false, message: clean(result.error) || "TDEA-DESIGN 名冊點數初始化失敗", detail: result }, response.status || 502);
+  return json({ success: true, rosterCount: rows.length, data: result });
+}
+
 async function adjustMemberPointApi(request: Request, env: Env) {
   const guard = await requireAdmin(request, env);
   if (guard) return guard;
@@ -7247,6 +7278,7 @@ export default {
 	    const redeemMatch = url.pathname.match(/^\/api\/redeem\/([^/]+)(?:\/use)?$/);
 	    if (redeemMatch && request.method === "GET") return getRedeemRequest(request, env, decodeURIComponent(redeemMatch[1]));
 	    if (redeemMatch && request.method === "POST") return confirmRedeemRequest(request, env, decodeURIComponent(redeemMatch[1]));
+	    if (request.method === "POST" && url.pathname === "/api/points/initialize-roster") return initializeRosterPointsApi(request, env);
 	    if (request.method === "POST" && url.pathname === "/api/points/adjust") return adjustMemberPointApi(request, env);
 	    if (request.method === "GET" && url.pathname === "/api/points/ledger") return listPointLedgerApi(request, env);
 	    if (request.method === "POST" && url.pathname === "/api/member-points/batch") return queryMemberPointBatchApi(request, env);
