@@ -57,8 +57,8 @@ jobs:
         run: |
           git diff --stat
           git diff -- public/app.js | sed -n '1,220p'
-          if git diff -- public/app.js | grep -q '此操作會寫入母站點數'; then exit 1; fi
-          if git diff -- public/app.js | grep -q '^+.*loadPointLedger(false)'; then exit 1; fi
+          if grep -q '此操作會寫入母站點數' public/app.js; then exit 1; fi
+          if grep -q '正在讀取母站點數' public/app.js; then exit 1; fi
 
       - name: Commit patch and remove one-time workflow
         shell: bash
