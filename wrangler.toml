@@ -8,6 +8,10 @@ assets = { directory = "./public", binding = "ASSETS", not_found_handling = "sin
 binding = "ASSETS_BUCKET"
 bucket_name = "assets-bucket"
 
+[[services]]
+binding = "TDEA_DESIGN"
+service = "tdea-design"
+
 [vars]
 ADMIN_EMAILS = "admin@example.com,fangwl591021@gmail.com"
 AIWE_WP_USER = "fangwl591021@gmail.com"
