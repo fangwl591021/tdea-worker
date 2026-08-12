@@ -1,3 +1,4 @@
+import { handleCardCollectionApi } from "./card-collection-api";
 import baseEntry from "./roster-sync-entry4";
 import { handleIdentityApi } from "./identity-api";
 import {
@@ -2238,20 +2239,191 @@ async function mapWithConcurrency<T, R>(items: T[], concurrency: number, worker:
   return results;
 }
 
+async function resolvePointBatchLineUserId(
+  env: Env,
+  input: { lineUserId?: unknown; memberNo?: unknown }
+) {
+  const directUid = firstClean(input.lineUserId);
+  if (validLineUid(directUid)) return directUid;
+
+  const memberNo = clean(input.memberNo).toUpperCase();
+  if (!memberNo) return "";
+
+  // 1. ?? CRM / AIWE ??
+  const managerData = await readManagerData(env).catch(() => null);
+
+  const rosterRows = [
+    ...(Array.isArray(managerData?.association)
+      ? managerData.association.map(asRecord)
+      : []),
+    ...(Array.isArray(managerData?.vendor)
+      ? managerData.vendor.map(asRecord)
+      : [])
+  ];
+
+  const aiweRows = await readAiweMembers(env).catch(
+    () => [] as Array<Record<string, unknown>>
+  );
+
+  const localMatches = [...aiweRows, ...rosterRows].filter((row) =>
+    rowMatchesMemberNo(row, memberNo)
+  );
+
+  for (const row of localMatches) {
+    const uid = firstClean(
+      explicitMemberLineUid(row),
+      memberLineUid(row)
+    );
+
+    if (validLineUid(uid)) return uid;
+  }
+
+  // 2. ????????
+  const motherRows = await readMotherRegisterRecords(env).catch(
+    () => [] as Array<Record<string, unknown>>
+  );
+
+  for (const record of motherRows) {
+    const raw = asRecord(record.raw);
+
+    const motherMemberNo = firstClean(
+      record.memberNo,
+      record.rosterMemberNo,
+      record.member_no,
+      record.user_login,
+      record.account,
+      raw.memberNo,
+      raw.rosterMemberNo,
+      raw.member_no,
+      raw.member_number,
+      raw.member_id,
+      raw.user_login,
+      raw.account,
+      raw.username
+    ).toUpperCase();
+
+    if (!motherMemberNo || motherMemberNo !== memberNo) {
+      continue;
+    }
+
+    const uid = firstClean(
+      record.lineUserId,
+      record.LINE_user_id,
+      record.line_userid,
+      record.line_user_id,
+      record.uid,
+      raw.LINE_user_id,
+      raw.lineUserId,
+      raw.line_userid,
+      raw.line_user_id,
+      raw.uid,
+      raw.user_line_id
+    );
+
+    if (validLineUid(uid)) return uid;
+  }
+
+  return "";
+}
+
 async function queryMemberPointBatchApi(request: Request, env: Env) {
   const guard = await requireAdmin(request, env);
   if (guard) return guard;
+
   const input = await request.json().catch(() => ({})) as Record<string, unknown>;
-  const rawIds = Array.isArray(input.lineUserIds) ? input.lineUserIds : [];
-  const lineUserIds = Array.from(new Set(rawIds.map((item) => clean(item)).filter(Boolean))).slice(0, 1000);
-  const data = await mapWithConcurrency(lineUserIds, 6, async (lineUserId) => {
-    try {
-      const result = await queryPointBalance(env, lineUserId) as Record<string, unknown>;
-      return { lineUserId, success: result.success === true, balance: result.success === true ? numberValue(result.balance) : null, cached: false, syncedAt: new Date().toISOString(), message: result.success === true ? "" : clean(result.message) || clean(result.code) || "mother point query failed", source: "wetw-point/query-user-point-list" };
-    } catch (error) {
-      return { lineUserId, success: false, balance: null, cached: false, syncedAt: "", message: String((error as Error).message || error || "mother point query failed") };
+
+  const rawMembers = Array.isArray(input.members)
+    ? input.members.map(asRecord)
+    : [];
+
+  const legacyLineUserIds = Array.isArray(input.lineUserIds)
+    ? input.lineUserIds
+    : [];
+
+  const members = rawMembers.length
+    ? rawMembers
+        .map((row) => ({
+          memberNo: firstClean(
+            row.memberNo,
+            row.rosterMemberNo,
+            row.member_no,
+            row.user_login
+          ).toUpperCase(),
+          lineUserId: firstClean(
+            row.lineUserId,
+            row.lineUid,
+            row.uid,
+            row.LINE_user_id
+          )
+        }))
+        .filter((row) => row.memberNo || row.lineUserId)
+        .slice(0, 1000)
+    : legacyLineUserIds
+        .map((value) => ({
+          memberNo: "",
+          lineUserId: clean(value)
+        }))
+        .filter((row) => row.lineUserId)
+        .slice(0, 1000);
+
+  const data = await mapWithConcurrency(
+    members,
+    6,
+    async (member) => {
+      const lineUserId = await resolvePointBatchLineUserId(env, member);
+
+      if (!lineUserId) {
+        return {
+          memberNo: member.memberNo,
+          lineUserId: "",
+          success: false,
+          balance: null,
+          message: "?????? LINE UID",
+          source: "member-number-fallback"
+        };
+      }
+
+      try {
+        const result = await queryPointBalance(
+          env,
+          lineUserId
+        ) as Record<string, unknown>;
+
+        return {
+          memberNo: member.memberNo,
+          lineUserId,
+          success: result.success === true,
+          balance: result.success === true
+            ? numberValue(result.balance)
+            : null,
+          message: result.success === true
+            ? ""
+            : clean(result.message) ||
+              clean(result.code) ||
+              "mother point query failed",
+          source: member.lineUserId
+            ? "line-user-id"
+            : "member-number-fallback"
+        };
+      } catch (error) {
+        return {
+          memberNo: member.memberNo,
+          lineUserId,
+          success: false,
+          balance: null,
+          message: String(
+            (error as Error).message ||
+            error ||
+            "mother point query failed"
+          ),
+          source: member.lineUserId
+            ? "line-user-id"
+            : "member-number-fallback"
+        };
+      }
     }
-  });
+  );
+
   return json({ success: true, data });
 }
 
@@ -5432,6 +5604,16 @@ function motherRegisterRecordFromWetw(row: Record<string, unknown>, meta: { shop
     email: firstClean(row.email, row.user_email),
     city: firstClean(row.city, row.county, row.address_city),
     category: firstClean(row.category, row.industry, row.business_category, row.user_category),
+    pointBalance: numberValue(
+      firstClean(
+        row.Point,
+        row.point,
+        row.points,
+        row.point_balance,
+        row.pointBalance,
+        row.system_point
+      )
+    ),
     submitStatus: "imported-from-mother",
     motherHttpStatus: meta.httpStatus,
     motherMessage: "母站 wetw 名單同步",
@@ -6931,6 +7113,10 @@ async function monthlyDetail(env: Env, id: string) {
 export default {
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
     const url = new URL(request.url);
+    const cardCollectionResponse =
+      await handleCardCollectionApi(request, env);
+    if (cardCollectionResponse) return cardCollectionResponse;
+
     if (request.method === "OPTIONS") return new Response(null, { status: 204, headers });
 	    const uploadMatch = url.pathname.match(/^\/api\/uploads\/(.+)$/);
 	    if ((request.method === "GET" || request.method === "HEAD") && uploadMatch) return getUploadedFile(env, decodeURIComponent(uploadMatch[1]));

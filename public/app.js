@@ -5,6 +5,7 @@
   const api = "https://tdeawork.fangwl591021.workers.dev";
   const liffBase = "https://liff.line.me/2005868456-2jmxqyFU";
   const nativeLiffBase = "https://liff.line.me/2005868456-cfANNVou";
+  const appScriptBase = new URL(".", document.currentScript?.src || location.href).href;
   const autoSyncKey = "tdea-auto-sync-registrations";
   const sidebarCollapsedKey = "tdea-sidebar-collapsed";
   const labels = {
@@ -25,6 +26,11 @@
   let lineDraftAutoImporting = false;
   let lineDraftLastAutoImport = 0;
   let rosterCleanupApplied = false;
+  const rosterPointLoading = { association: false, vendor: false };
+  const rosterPointLoadedAt = { association: 0, vendor: 0 };
+  let rosterImportPreview = null;
+  let sheetJsPromise = null;
+
 
   function sidebarCollapsed() { return localStorage.getItem(sidebarCollapsedKey) === "Y"; }
   function setSidebarCollapsed(value) { localStorage.setItem(sidebarCollapsedKey, value ? "Y" : "N"); }
@@ -231,6 +237,25 @@
         keepalive: true
       });
     } catch (_) {}
+  }
+  async function saveManagerDataRemoteChecked() {
+    if (!hasAdminIdentity()) throw new Error("請先登入管理員再匯入名冊");
+    if (!managerDataHasContent(state.data)) throw new Error("沒有可儲存的名冊資料");
+    clearTimeout(managerDataSaveTimer);
+    managerDataSaveTimer = null;
+    const payload = { ...state.data };
+    delete payload.activities;
+    ["association", "vendor"].forEach((name) => {
+      if (Array.isArray(payload[name]) && payload[name].length === 0) delete payload[name];
+    });
+    const response = await fetch(api + "/api/manager-data", {
+      method: "PUT",
+      headers: adminHeaders({ "content-type": "application/json" }),
+      body: JSON.stringify(payload)
+    });
+    const result = await response.json().catch(() => ({}));
+    if (!response.ok || result.success !== true) throw new Error(result.message || "名冊儲存失敗");
+    return result;
   }
   async function loadActivitiesRemote() {
     const response = await fetch(api + "/api/activities", { headers: adminHeaders(), cache: "no-store" });
@@ -1104,7 +1129,7 @@
 
   function nav(id, text) { return `<button class="${state.view === id ? "active" : ""}" data-nav="${id}" title="${esc(text)}">${text}</button>`; }
   function actions() {
-    if (state.view === "association") return `<button class="btn" data-import="association">匯入 CSV</button><button class="btn primary" data-drawer="association:new">新增協會會員</button>`;
+    if (state.view === "association") return `<button class="btn" data-import="association">匯入名冊</button><button class="btn primary" data-drawer="association:new">新增協會會員</button>`;
     if (state.view === "vendor") return `<button class="btn" data-import="vendor">匯入 CSV</button><button class="btn primary" data-drawer="vendor:new">新增廠商會員</button>`;
     if (state.view === "creator") return `<button class="btn" data-import-line-drafts>匯入 LINE 草稿</button><button class="btn" data-reset>清空表單</button>`;
     if (state.view === "redeem") return `<button class="btn" data-load-redeem>刷新紀錄</button>`;
@@ -1153,6 +1178,168 @@
     return `<div class="table-wrap"><table><thead><tr><th>活動名稱</th><th>類型</th><th>課程時間</th><th>封存時間</th><th>封存者</th><th>狀態</th><th>操作</th></tr></thead><tbody>${rows.map(x => `<tr><td><strong>${esc(x.name || x.activityNo || x.id)}</strong></td><td>${esc(activityTypeLabel(x))}</td><td>${esc(x.courseTime || "-")}</td><td>${esc(formatTime(x.deletedAt || x.updatedAt || ""))}</td><td>${esc(x.deletedBy || "-")}</td><td><span class="badge off">${esc(x.status || "已封存")}</span></td><td><button class="link" data-restore-activity="${esc(x.id)}">恢復</button></td></tr>`).join("")}</tbody></table></div>`;
   }
 
+  function rosterPointText(row) {
+    if (typeof row.pointBalance !== "number" || !Number.isFinite(row.pointBalance)) return "-";
+    return row.pointBalance.toLocaleString("zh-TW");
+  }
+  async function loadRosterPointBalances(type, force = false) {
+    if (type !== "association" && type !== "vendor") return;
+    if (rosterPointLoading[type]) return;
+
+    const now = Date.now();
+    if (
+      !force &&
+      rosterPointLoadedAt[type] &&
+      now - rosterPointLoadedAt[type] < 5 * 60 * 1000
+    ) {
+      return;
+    }
+
+    const rows = visibleRosterRows(type);
+    if (!rows.length) return;
+
+    rosterPointLoading[type] = true;
+
+    rows.forEach((row) => {
+      row.motherPointLoading = true;
+      row.motherPointError = "";
+    });
+
+    try {
+      // ??????????????? UID ????
+      if (force) motherRosterMapPromise = null;
+      const motherMap = await loadMotherRosterMap();
+
+      const members = rows.map((row) => {
+        const memberNo = rosterMemberKey(row);
+
+        let lineUserId = memberLineUid(row);
+
+        if (!lineUserId && memberNo) {
+          const remote = motherMap.get(memberNo);
+
+          lineUserId = validLineUid(
+            remote?.lineUserId ||
+            remote?.LINE_user_id ||
+            remote?.uid
+          );
+
+          // ? resolveMemberLineUidFromMother() ???
+          // ??????? CRM row?
+          if (lineUserId) {
+            row.lineUserId = lineUserId;
+
+            if (!row.LINE_user_id) {
+              row.LINE_user_id = lineUserId;
+            }
+
+            if (!row.uid) {
+              row.uid = lineUserId;
+            }
+          }
+        }
+
+        return {
+          memberNo,
+          lineUserId
+        };
+      });
+
+      // ??? UID ???????? CRM?
+      if (members.some((item) => item.lineUserId)) {
+        queueManagerDataSave();
+      }
+
+      const response = await fetch(
+        api + "/api/member-points/batch",
+        {
+          method: "POST",
+          headers: adminHeaders({
+            "content-type": "application/json"
+          }),
+          body: JSON.stringify({ members }),
+          cache: "no-store"
+        }
+      );
+
+      const result = await response.json().catch(() => ({}));
+
+      if (!response.ok || result.success !== true) {
+        throw new Error(
+          result.message || "??????????"
+        );
+      }
+
+      const results = Array.isArray(result.data)
+        ? result.data
+        : [];
+
+      const byMemberNo = new Map();
+      const byUid = new Map();
+
+      results.forEach((item) => {
+        const memberNo = String(
+          item.memberNo || ""
+        ).trim().toUpperCase();
+
+        const lineUserId = String(
+          item.lineUserId || ""
+        ).trim().toLowerCase();
+
+        if (memberNo) byMemberNo.set(memberNo, item);
+        if (lineUserId) byUid.set(lineUserId, item);
+      });
+
+      rows.forEach((row) => {
+        const memberNo = rosterMemberKey(row);
+
+        const lineUserId = String(
+          memberLineUid(row) || ""
+        ).trim().toLowerCase();
+
+        const pointResult =
+          byMemberNo.get(memberNo) ||
+          byUid.get(lineUserId);
+
+        row.motherPointLoading = false;
+
+        if (pointResult?.success === true) {
+          row.pointBalance = Number(
+            pointResult.balance || 0
+          );
+
+          row.motherPointSuccess = true;
+          row.motherPointError = "";
+        } else {
+          row.motherPointSuccess = false;
+
+          row.motherPointError = lineUserId
+            ? (
+                pointResult?.message ||
+                "????????"
+              )
+            : "??????????? LINE UID";
+        }
+      });
+
+      rosterPointLoadedAt[type] = Date.now();
+
+    } catch (error) {
+      rows.forEach((row) => {
+        row.motherPointLoading = false;
+        row.motherPointSuccess = false;
+
+        row.motherPointError =
+          error?.message ||
+          "????????";
+      });
+
+    } finally {
+      rosterPointLoading[type] = false;
+      render();
+    }
+  }
+
   function members(type) {
     const allRows = visibleRosterRows(type), vendor = type === "vendor";
     const rows = filterRosterRows(type, allRows);
@@ -1160,13 +1347,13 @@
     const query = state.rosterSearch?.[type] || "";
     const search = `<div class="field" style="min-width:280px;max-width:460px;margin-left:auto"><input data-roster-search="${type}" value="${esc(query)}" placeholder="搜尋${title}：編號、名稱、UID、電話、Email"></div>`;
     const count = `<span class="muted" data-roster-count="${type}">${rows.length} / ${allRows.length} 筆</span>`;
-    if (!allRows.length) return `<section class="panel"><div class="panel-head"><h2 class="panel-title">${title}</h2><button class="btn" data-import="${type}">匯入 CSV</button></div>${empty(`目前沒有${title}資料`)}</section>`;
+    if (!allRows.length) return `<section class="panel"><div class="panel-head"><h2 class="panel-title">${title}</h2>${vendor ? `<button class="btn" data-import="${type}">匯入 CSV</button>` : ""}</div>${empty(`目前沒有${title}資料`)}</section>`;
     const body = `<div class="table-wrap"><table><thead><tr><th>會員編號</th><th>${vendor ? "公司名稱" : "姓名"}</th><th>LINE UID</th><th>點數</th><th>${vendor ? "統編" : "身分"}</th><th>${vendor ? "聯絡窗口" : "性別"}</th><th>資格</th><th>管理權限</th><th>備註</th><th>操作</th></tr></thead><tbody>${allRows.map(x => {
       const searchText = rosterSearchValue(x, vendor);
       const hidden = rosterSearchQuery(type) && !searchText.includes(rosterSearchQuery(type));
-      return `<tr data-roster-row="${type}" data-roster-search-text="${esc(searchText)}" ${hidden ? `style="display:none"` : ""}><td>${esc(x.memberNo)}</td><td><strong>${esc(vendor ? x.companyName : x.name)}</strong></td><td>${esc(shortUid(memberLineUid(x)))}</td><td>${esc(x.pointBalance ?? x.points ?? "")}</td><td>${esc(vendor ? x.taxId : x.identity)}</td><td>${esc(vendor ? x.contact : x.gender)}</td><td><span class="badge ${x.qualification === "Y" ? "live" : "off"}">${esc(x.qualification)}</span></td><td><label class="sync-toggle"><input type="checkbox" data-member-login-toggle="${type}:${x.id}" ${memberLoginAllowed(x) ? "checked" : ""}> 允許登入</label></td><td>${esc(x.note)}</td><td><button class="link" data-drawer="${type}:${x.id}">CRM 檔案</button><span class="muted"> / </span><button class="link danger-link" data-delete-member="${type}:${x.id}">刪除</button></td></tr>`;
+      return `<tr data-roster-row="${type}" data-roster-search-text="${esc(searchText)}" ${hidden ? `style="display:none"` : ""}><td>${esc(x.memberNo)}</td><td><strong>${esc(vendor ? x.companyName : x.name)}</strong></td><td>${esc(shortUid(memberLineUid(x)))}</td><td>${esc(rosterPointText(x, type))}</td><td>${esc(vendor ? x.taxId : x.identity)}</td><td>${esc(vendor ? x.contact : x.gender)}</td><td><span class="badge ${x.qualification === "Y" ? "live" : "off"}">${esc(x.qualification)}</span></td><td><label class="sync-toggle"><input type="checkbox" data-member-login-toggle="${type}:${x.id}" ${memberLoginAllowed(x) ? "checked" : ""}> 允許登入</label></td><td>${esc(x.note)}</td><td><button class="link" data-drawer="${type}:${x.id}">CRM 檔案</button><span class="muted"> / </span><button class="link danger-link" data-delete-member="${type}:${x.id}">刪除</button></td></tr>`;
     }).join("")}</tbody></table></div>`;
-    return `<section class="panel"><div class="panel-head"><h2 class="panel-title">${title}</h2><div class="actions">${search}${count}<button class="btn" data-import="${type}">匯入 CSV</button><button class="btn" data-export>匯出備份</button></div></div>${body}</section>`;
+    return `<section class="panel"><div class="panel-head"><h2 class="panel-title">${title}</h2><div class="actions">${search}${count}${vendor ? `<button class="btn" data-import="${type}">匯入 CSV</button>` : ""}<button class="btn" data-export>匯出備份</button></div></div>${body}</section>`;
   }
 
   function adminWhitelist() {
@@ -1487,20 +1674,102 @@
   function importForm(type) {
     const vendor = type === "vendor";
     const sample = vendor ? "會員編號,公司名稱,統編,負責人,聯絡窗口,會員資格,備註" : "會員編號,身分,姓名,性別,會員資格,備註";
-    return `<form class="form-grid" id="import-form" data-type="${type}"><div class="field"><label>CSV 內容</label><textarea name="csv" placeholder="${sample}"></textarea></div><div class="muted">可從 Google Sheets 複製含標題列的資料貼上；沒有標題列時會依提示順序導入。</div><button class="btn primary" type="submit">導入名冊</button></form>`;
+    if (vendor) return `<form class="form-grid" id="import-form" data-type="${type}"><div class="field"><label>CSV 內容</label><textarea name="csv" placeholder="${sample}"></textarea></div><div class="muted">可從 Google Sheets 複製含標題列的資料貼上；沒有標題列時會依提示順序導入。</div><button class="btn primary" type="submit">導入名冊</button></form>`;
+    return `<form class="form-grid" id="import-form" data-type="${type}">
+      <div class="field"><label class="btn primary" style="display:flex;min-height:64px;align-items:center;justify-content:center;font-size:18px;cursor:pointer">上傳 Excel / CSV<input type="file" accept=".xlsx,.xls,.csv" data-roster-file hidden></label><div class="muted" style="text-align:center">支援 Excel (.xlsx / .xls) 與 CSV</div></div>
+      <section class="panel" data-roster-preview hidden><div class="panel-head"><div><h3 class="panel-title">匯入預覽</h3><div class="muted" data-roster-file-name></div><div class="muted" data-roster-row-count></div></div></div><div class="table-wrap"><table><thead><tr><th>會員編號</th><th>姓名</th><th>point</th></tr></thead><tbody data-roster-preview-rows></tbody></table></div></section>
+      <button class="btn primary" type="button" data-confirm-roster-import disabled>確認匯入名冊</button>
+      <details style="border-top:1px solid #e5e7eb;padding-top:14px"><summary style="cursor:pointer;font-weight:800">進階方式：貼上 CSV / Google Sheets 內容</summary><div class="field" style="margin-top:14px"><label>CSV / Google Sheets 內容</label><textarea name="csv" placeholder="${sample}"></textarea></div><div class="muted">可貼上含標題列的 CSV 或 Google Sheets 資料。</div><button class="btn" type="submit" style="margin-top:12px">導入貼上內容</button></details>
+    </form>`;
   }
 
+  function loadSheetJs() {
+    if (window.XLSX) return Promise.resolve(window.XLSX);
+    if (sheetJsPromise) return sheetJsPromise;
+    sheetJsPromise = new Promise((resolve, reject) => {
+      const script = document.createElement("script");
+      script.src = new URL("vendor/xlsx.full.min.js", appScriptBase).href;
+      script.onload = () => window.XLSX ? resolve(window.XLSX) : reject(new Error("Excel 解析器載入失敗"));
+      script.onerror = () => reject(new Error("Excel 解析器載入失敗"));
+      document.head.appendChild(script);
+    }).catch(error => { sheetJsPromise = null; throw error; });
+    return sheetJsPromise;
+  }
+
+  function rowsToImportText(rows) {
+    return rows.map(row => row.map(value => {
+      const text = String(value ?? "");
+      return /[\t\r\n"]/.test(text) ? `"${text.replaceAll('"', '""')}"` : text;
+    }).join("\t")).join("\n");
+  }
+
+  function firstSheetRows(data, XLSX = window.XLSX) {
+    const workbook = XLSX.read(data, { type: "array" });
+    const firstSheet = workbook.SheetNames[0];
+    if (!firstSheet) return [];
+    return XLSX.utils.sheet_to_json(workbook.Sheets[firstSheet], { header: 1, raw: false, defval: "" });
+  }
+
+  function rosterPreviewRows(text) {
+    const rows = parseCsv(text);
+    if (rows.length < 2) return [];
+    const header = rows[0].map(value => String(value || "").replace(/^\uFEFF/, "").trim().toLowerCase());
+    const column = aliases => header.findIndex(value => aliases.some(alias => value === alias || value.includes(alias)));
+    const memberNoIndex = column(["會員編號", "memberno", "member_no", "member"]);
+    const nameIndex = column(["姓名", "name"]);
+    const pointIndex = column(["pointbalance", "points", "point", "點數"]);
+    return rows.slice(1).filter(row => row.some(value => String(value || "").trim())).map(row => ({
+      memberNo: memberNoIndex >= 0 ? String(row[memberNoIndex] || "").trim() : "",
+      name: nameIndex >= 0 ? String(row[nameIndex] || "").trim() : "",
+      point: pointIndex >= 0 ? String(row[pointIndex] ?? "").trim() : ""
+    }));
+  }
+
+  async function readRosterFile(file) {
+    const extension = String(file?.name || "").split(".").pop().toLowerCase();
+    if (extension === "csv") return file.text();
+    if (!['xlsx', 'xls'].includes(extension)) throw new Error("請選擇 .xlsx、.xls 或 .csv 檔案");
+    const XLSX = await loadSheetJs();
+    return rowsToImportText(firstSheetRows(await file.arrayBuffer(), XLSX));
+  }
+
+  function parseGoogleSheetUrl(value) {
+    let url;
+    try { url = new URL(String(value || "").trim()); } catch (_) { throw new Error("Google Sheet 網址格式不正確"); }
+    const match = url.hostname === "docs.google.com" ? url.pathname.match(/^\/spreadsheets\/d\/([^/]+)/) : null;
+    if (url.protocol !== "https:" || !match?.[1]) throw new Error("Google Sheet 網址格式不正確");
+    const hashParams = new URLSearchParams(String(url.hash || "").replace(/^#/, ""));
+    const gid = url.searchParams.get("gid") || hashParams.get("gid") || "0";
+    if (!/^\d+$/.test(gid)) throw new Error("Google Sheet 網址格式不正確");
+    const spreadsheetId = match[1];
+    return { spreadsheetId, gid, exportUrl: `https://docs.google.com/spreadsheets/d/${encodeURIComponent(spreadsheetId)}/export?format=csv&gid=${encodeURIComponent(gid)}` };
+  }
+
+  async function readGoogleSheet(value, fetcher = fetch) {
+    const source = parseGoogleSheetUrl(value);
+    let response;
+    try { response = await fetcher(source.exportUrl); } catch (_) { throw new Error("無法讀取此 Google Sheet，請確認共用權限為『知道連結的使用者可查看』，或改用 Excel 上傳。"); }
+    if (response.status === 401 || response.status === 403) throw new Error("此 Google Sheet 無法直接讀取。\n請將檔案下載為 Excel / CSV 後使用下方『上傳 Excel / CSV』匯入。");
+    if (!response.ok) throw new Error("無法讀取此 Google Sheet，請確認共用權限為『知道連結的使用者可查看』，或改用 Excel 上傳。");
+    const text = await response.text();
+    const contentType = response.headers?.get?.("content-type") || "";
+    if (contentType.includes("text/html") || /^\s*<!doctype html/i.test(text)) throw new Error("無法讀取此 Google Sheet，請確認共用權限為『知道連結的使用者可查看』，或改用 Excel 上傳。");
+    const rows = rosterPreviewRows(text);
+    if (!rows.length) throw new Error("工作表沒有可匯入資料");
+    return { source, text, rows };
+  }
   function field(label, name, value = "", placeholder = "", required = false, type = "text") { return `<div class="field"><label>${label}</label><input name="${name}" type="${type}" value="${esc(value)}" placeholder="${esc(placeholder)}" ${required ? "required" : ""}></div>`; }
   function select(label, name, options, value = "") { return `<div class="field"><label>${label}</label><select name="${name}">${options.map(o => { const optionValue = Array.isArray(o) ? o[0] : o; const optionLabel = Array.isArray(o) ? o[1] : o; return `<option value="${esc(optionValue)}" ${optionValue === value ? "selected" : ""}>${esc(optionLabel)}</option>`; }).join("")}</select></div>`; }
   function hidden(name, value = "") { return `<input type="hidden" name="${name}" value="${esc(value)}">`; }
   function empty(text) { return `<div class="empty">${esc(text)}</div>`; }
   function parseCsv(text) {
+    const delimiter = String(text || "").split(/\r?\n/, 1)[0].includes("\t") ? "\t" : ",";
     const rows = []; let row = [], cell = "", quote = false;
     for (let i = 0; i < text.length; i++) {
       const ch = text[i], next = text[i + 1];
       if (ch === '"' && quote && next === '"') { cell += '"'; i++; continue; }
       if (ch === '"') { quote = !quote; continue; }
-      if (ch === "," && !quote) { row.push(cell.trim()); cell = ""; continue; }
+      if (ch === delimiter && !quote) { row.push(cell.trim()); cell = ""; continue; }
       if ((ch === "\n" || ch === "\r") && !quote) { if (ch === "\r" && next === "\n") i++; row.push(cell.trim()); if (row.some(Boolean)) rows.push(row); row = []; cell = ""; continue; }
       cell += ch;
     }
@@ -1508,13 +1777,67 @@
   }
   function importRows(type, text) {
     const rows = parseCsv(text); if (!rows.length) return 0;
-    const head = rows[0].map(x => x.toLowerCase());
+    const head = rows[0].map(x => x.replace(/^\uFEFF/, "").trim().toLowerCase());
     const hasHead = head.some(x => x.includes("會員") || x.includes("姓名") || x.includes("公司") || x.includes("member"));
     const data = hasHead ? rows.slice(1) : rows;
     const idx = (names, fallback) => hasHead ? Math.max(head.findIndex(h => names.some(n => h.includes(n))), fallback) : fallback;
     const vendor = type === "vendor";
-    const mapped = data.map(c => vendor ? { id: uid(), memberNo: c[idx(["會員編號", "member"], 0)] || "", companyName: c[idx(["公司", "company"], 1)] || "", taxId: c[idx(["統編", "tax"], 2)] || "", owner: c[idx(["負責人", "owner"], 3)] || "", contact: c[idx(["窗口", "contact"], 4)] || "", qualification: c[idx(["資格"], 5)] || "Y", note: c[idx(["備註", "note"], 6)] || "" } : { id: uid(), memberNo: c[idx(["會員編號", "member"], 0)] || "", identity: c[idx(["身分", "identity"], 1)] || "", name: c[idx(["姓名", "name"], 2)] || "", gender: c[idx(["性別", "gender"], 3)] || "", qualification: c[idx(["資格"], 4)] || "Y", note: c[idx(["備註", "note"], 5)] || "" }).filter(x => vendor ? x.companyName || x.memberNo : x.name || x.memberNo);
-    state.data[type] = mapped.concat(state.data[type]); save(); return mapped.length;
+    if (vendor) {
+      const mapped = data.map(c => ({ id: uid(), memberNo: c[idx(["會員編號", "member"], 0)] || "", companyName: c[idx(["公司", "company"], 1)] || "", taxId: c[idx(["統編", "tax"], 2)] || "", owner: c[idx(["負責人", "owner"], 3)] || "", contact: c[idx(["窗口", "contact"], 4)] || "", qualification: c[idx(["資格"], 5)] || "Y", note: c[idx(["備註", "note"], 6)] || "" })).filter(x => x.companyName || x.memberNo);
+      state.data[type] = mapped.concat(state.data[type]); save(); return mapped.length;
+    }
+
+    const memberIdx = (names, fallback) => {
+      if (!hasHead) return fallback;
+      const found = head.findIndex(h => names.some(name => h === name || h.includes(name)));
+      return found >= 0 ? found : -1;
+    };
+    const valueAt = (cells, names, fallback = -1) => {
+      const position = memberIdx(names, fallback);
+      return position >= 0 ? String(cells[position] ?? "").trim() : "";
+    };
+    const parseImportedPoint = (value) => {
+      const raw = String(value ?? "").trim();
+      if (!raw) return undefined;
+      const parsed = Number(raw.replace(/,/g, ""));
+      return Number.isFinite(parsed) ? parsed : undefined;
+    };
+    const existingRows = state.data[type] || [];
+    const byMemberNo = new Map(existingRows.map(row => [String(row.memberNo || "").trim().toUpperCase(), row]).filter(([memberNo]) => memberNo));
+    const fillFields = ["name", "role", "phone", "email", "jobTitle", "gender", "qualification", "note"];
+    let importedCount = 0;
+    data.forEach(cells => {
+      const memberNo = valueAt(cells, ["會員編號", "memberno", "member_no", "member"], 0).toUpperCase();
+      if (!memberNo) return;
+      const imported = {
+        memberNo,
+        role: valueAt(cells, ["身分", "identity", "role"], 1),
+        name: valueAt(cells, ["姓名", "name"], 2),
+        phone: valueAt(cells, ["手機", "電話", "phone", "mobile"]),
+        email: valueAt(cells, ["email", "電子郵件", "信箱"]),
+        jobTitle: valueAt(cells, ["本職", "職稱", "jobtitle", "job_title"]),
+        gender: valueAt(cells, ["性別", "gender"], 3),
+        qualification: valueAt(cells, ["會員資格", "資格", "qualification"], 4),
+        note: valueAt(cells, ["備註", "note"], 5)
+      };
+      const pointPosition = memberIdx(["pointbalance", "points", "point", "點數"], -1);
+      const pointBalance = parseImportedPoint(pointPosition >= 0 ? cells[pointPosition] : "");
+      const existing = byMemberNo.get(memberNo);
+      if (existing) {
+        fillFields.forEach(fieldName => {
+          if (String(existing[fieldName] ?? "").trim() === "" && imported[fieldName] !== "") existing[fieldName] = imported[fieldName];
+        });
+        if (pointBalance !== undefined) existing.pointBalance = pointBalance;
+      } else {
+        const created = { id: uid(), ...imported };
+        if (!created.qualification) created.qualification = "Y";
+        if (pointBalance !== undefined) created.pointBalance = pointBalance;
+        existingRows.unshift(created);
+        byMemberNo.set(memberNo, created);
+      }
+      importedCount++;
+    });
+    save(); return importedCount;
   }
 
   async function deleteActivity(rowId) {
@@ -2037,7 +2360,84 @@
     };
     // Activity editor submit is handled by the enhanced listener above so registration settings and media remain editable.
     const mf = document.querySelector("#drawer-member"); if (mf) mf.onsubmit = async e => { e.preventDefault(); const type = mf.dataset.type; const d = Object.fromEntries(new FormData(mf)); const rows = state.data[type]; const old = rows.find(r => r.id === d.id); const loginAccess = d.loginAccess === "Y"; const item = { ...d, id: d.id || uid(), loginAccess, allowLogin: loginAccess, canLogin: loginAccess }; old ? Object.assign(old, item) : rows.unshift(item); try { await syncRosterMemberToWorker(type, item); await syncAdminAccessForMember(type, item); state.drawer = ""; save(); state.adminWhitelist = null; render(); toast("名冊與管理權限已儲存"); } catch (err) { toast(err?.message || "名冊儲存失敗"); } };
-    const im = document.querySelector("#import-form"); if (im) im.onsubmit = e => { e.preventDefault(); const d = Object.fromEntries(new FormData(im)); const count = importRows(im.dataset.type, d.csv || ""); state.drawer = ""; render(); toast(`已導入 ${count} 筆資料`); };
+    const im = document.querySelector("#import-form"); if (im) {
+      im.onsubmit = e => { e.preventDefault(); const d = Object.fromEntries(new FormData(im)); const count = importRows(im.dataset.type, d.csv || ""); state.drawer = ""; rosterImportPreview = null; render(); toast(`已導入 ${count} 筆資料`); };
+      const rosterFile = im.querySelector("[data-roster-file]");
+      const googleSheetUrl = im.querySelector("[data-google-sheet-url]");
+      const readGoogleSheetButton = im.querySelector("[data-read-google-sheet]");
+      const confirmRoster = im.querySelector("[data-confirm-roster-import]");
+      if (rosterFile && confirmRoster) {
+        if (googleSheetUrl && readGoogleSheetButton) readGoogleSheetButton.onclick = async () => {
+          const preview = im.querySelector("[data-roster-preview]");
+          rosterImportPreview = null;
+          confirmRoster.disabled = true;
+          readGoogleSheetButton.disabled = true;
+          readGoogleSheetButton.textContent = "讀取中...";
+          try {
+            const result = await readGoogleSheet(googleSheetUrl.value);
+            rosterImportPreview = { type: im.dataset.type, text: result.text, fileName: result.source.exportUrl, rows: result.rows };
+            if (preview) preview.hidden = false;
+            const fileName = im.querySelector("[data-roster-file-name]");
+            const rowCount = im.querySelector("[data-roster-row-count]");
+            const body = im.querySelector("[data-roster-preview-rows]");
+            if (fileName) fileName.textContent = `工作表來源：${result.source.spreadsheetId}（gid=${result.source.gid}）`;
+            if (rowCount) rowCount.textContent = `讀取筆數：${result.rows.length}`;
+            if (body) body.innerHTML = result.rows.slice(0, 5).map(row => `<tr><td>${esc(row.memberNo)}</td><td>${esc(row.name)}</td><td>${esc(row.point)}</td></tr>`).join("");
+            confirmRoster.disabled = false;
+          } catch (error) {
+            if (preview) preview.hidden = true;
+            toast(error?.message || "無法讀取此 Google Sheet，請確認共用權限為『知道連結的使用者可查看』，或改用 Excel 上傳。");
+          } finally {
+            readGoogleSheetButton.disabled = false;
+            readGoogleSheetButton.textContent = "讀取 Google Sheet";
+          }
+        };
+        rosterFile.onchange = async () => {
+          const file = rosterFile.files?.[0];
+          const preview = im.querySelector("[data-roster-preview]");
+          rosterImportPreview = null;
+          confirmRoster.disabled = true;
+          if (!file) { if (preview) preview.hidden = true; return; }
+          confirmRoster.textContent = "讀取中...";
+          try {
+            const text = await readRosterFile(file);
+            const rows = rosterPreviewRows(text);
+            if (!rows.length) throw new Error("名冊沒有可匯入的資料");
+            rosterImportPreview = { type: im.dataset.type, text, fileName: file.name, rows };
+            if (preview) preview.hidden = false;
+            const fileName = im.querySelector("[data-roster-file-name]");
+            const rowCount = im.querySelector("[data-roster-row-count]");
+            const body = im.querySelector("[data-roster-preview-rows]");
+            if (fileName) fileName.textContent = `檔名：${file.name}`;
+            if (rowCount) rowCount.textContent = `讀取筆數：${rows.length}`;
+            if (body) body.innerHTML = rows.slice(0, 5).map(row => `<tr><td>${esc(row.memberNo)}</td><td>${esc(row.name)}</td><td>${esc(row.point)}</td></tr>`).join("");
+            confirmRoster.disabled = false;
+          } catch (error) {
+            if (preview) preview.hidden = true;
+            toast(error?.message || "名冊檔案讀取失敗");
+          } finally {
+            confirmRoster.textContent = "確認匯入名冊";
+          }
+        };
+        confirmRoster.onclick = async () => {
+          if (!rosterImportPreview || rosterImportPreview.type !== im.dataset.type) return;
+          confirmRoster.disabled = true;
+          confirmRoster.textContent = "名冊儲存中...";
+          try {
+            const count = importRows(im.dataset.type, rosterImportPreview.text);
+            await saveManagerDataRemoteChecked();
+            rosterImportPreview = null;
+            state.drawer = "";
+            render();
+            toast(`已導入並儲存 ${count} 筆資料`);
+          } catch (error) {
+            confirmRoster.disabled = false;
+            confirmRoster.textContent = "確認匯入名冊";
+            toast(error?.message || "名冊儲存失敗");
+          }
+        };
+      }
+    }
     const loadRoster = document.querySelector("[data-load-roster]"); if (loadRoster) loadRoster.onclick = () => loadRosterSeed(true);
     const worker = document.querySelector("[data-worker]"); if (worker) worker.onclick = async () => { try { const r = await fetch(api + "/api/activities"); const j = await r.json(); toast(j.success ? "Worker API 連線正常" : "Worker API 回應異常"); } catch (_) { toast("Worker API 無法連線"); } };
     document.querySelectorAll("[data-load-mother-register]").forEach(b => b.onclick = async () => { if (state.motherRegisterLoading) return; b.disabled = true; b.textContent = "刷新中..."; await loadMotherRegisterRecords(true); });
