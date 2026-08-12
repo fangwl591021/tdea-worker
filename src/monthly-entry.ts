@@ -24,7 +24,7 @@ import {
   vendorCardKeyword
 } from "./line-keywords";
 
-type Env = { ADMIN_EMAILS?: string; ADMIN_LOGIN_USER?: string; ADMIN_LOGIN_PASSWORD?: string; ASSETS_BUCKET?: R2Bucket; LINE_CHANNEL_SECRET?: string; LINE_CHANNEL_ACCESS_TOKEN?: string; FORWARD_WEBHOOK_URL?: string; GOOGLE_FORMS_SCRIPT_URL?: string; GOOGLE_FORMS_SHARED_SECRET?: string; OPNFORM_API_BASE?: string; OPNFORM_PUBLIC_BASE?: string; OPNFORM_API_TOKEN?: string; OPNFORM_WORKSPACE_ID?: string; OPNFORM_WEBHOOK_SECRET?: string; WETW_POINT_API_KEY?: string; WETW_MEMBER_API_KEY?: string; WETW_TDEA_SHOP_ID?: string; WETW_TDEA_CLIENT_ID?: string; WETW_SHOP_ID?: string; WETW_POINT_TYPE?: string; TDEA_POINT_EXTERNAL_SYNC?: string; TDEA_ADMIN_LINE_USER_IDS?: string; AIWE_WP_USER?: string; AIWE_WP_APP_PASSWORD?: string; OPENAI_API_KEY?: string; OPENAI_MODEL?: string };
+type Env = { ADMIN_EMAILS?: string; ADMIN_LOGIN_USER?: string; ADMIN_LOGIN_PASSWORD?: string; ASSETS_BUCKET?: R2Bucket; LINE_CHANNEL_SECRET?: string; LINE_CHANNEL_ACCESS_TOKEN?: string; FORWARD_WEBHOOK_URL?: string; GOOGLE_FORMS_SCRIPT_URL?: string; GOOGLE_FORMS_SHARED_SECRET?: string; OPNFORM_API_BASE?: string; OPNFORM_PUBLIC_BASE?: string; OPNFORM_API_TOKEN?: string; OPNFORM_WORKSPACE_ID?: string; OPNFORM_WEBHOOK_SECRET?: string; WETW_POINT_API_KEY?: string; WETW_MEMBER_API_KEY?: string; WETW_TDEA_SHOP_ID?: string; WETW_TDEA_CLIENT_ID?: string; WETW_SHOP_ID?: string; WETW_POINT_TYPE?: string; TDEA_POINT_EXTERNAL_SYNC?: string; TDEA_ADMIN_LINE_USER_IDS?: string; TDEA_DESIGN_LOOKUP_SECRET?: string; AIWE_WP_USER?: string; AIWE_WP_APP_PASSWORD?: string; OPENAI_API_KEY?: string; OPENAI_MODEL?: string };
 type LineEvent = { type?: string; replyToken?: string; message?: { type?: string; id?: string; text?: string }; postback?: { data?: string }; source?: { type?: string; userId?: string; groupId?: string; roomId?: string } };
 type MonthlyPage = { id?: string; manual?: boolean; activityNo?: string; activityId?: string; activityName?: string; imageUrl?: string; galleryUrls?: string[]; formImageUrl?: string; detailTitle?: string; detailText?: string; detailUrl?: string; formUrl?: string; shareUrl?: string; order?: number };
 type MonthlyConfig = { enabled?: boolean; keyword?: string; month?: string; altText?: string; detailBaseUrl?: string; pages?: MonthlyPage[]; updatedAt?: string };
@@ -5230,7 +5230,7 @@ function normalizeMotherRegisterFields(input: Record<string, unknown>) {
   const displayName = clean(input.display_name || input.name);
   const gender = clean(input.gender);
   const birthday = clean(input.birthday);
-  const phone = phoneDigits(input.phone);
+  const phone = normalizedPhoneForLookup(input.phone);
   const email = clean(input.email).toLowerCase();
   const city = clean(input.city);
   const category = clean(input.category);
@@ -5511,6 +5511,99 @@ async function captureMotherRegisterFormApi(request: Request, env: Env) {
       shopId: record.shopId,
       clientId: record.clientId,
       source: record.source
+    }
+  });
+}
+async function secureTextEqual(leftValue: unknown, rightValue: unknown) {
+  const encoder = new TextEncoder();
+  const [left, right] = await Promise.all([
+    crypto.subtle.digest("SHA-256", encoder.encode(clean(leftValue))),
+    crypto.subtle.digest("SHA-256", encoder.encode(clean(rightValue)))
+  ]);
+  const leftBytes = new Uint8Array(left);
+  const rightBytes = new Uint8Array(right);
+  let difference = 0;
+  for (let index = 0; index < leftBytes.length; index += 1) difference |= leftBytes[index] ^ rightBytes[index];
+  return difference === 0;
+}
+
+function normalizedBirthdayForMatch(value: unknown) {
+  const text = clean(value);
+  const gregorian = text.match(/^(\d{4})[-\/]?(\d{2})[-\/]?(\d{2})/);
+  if (gregorian) return [gregorian[1], gregorian[2], gregorian[3]].join("-");
+  const digits = text.replace(/\D/g, "");
+  if (!/^\d{6,7}$/.test(digits)) return text;
+  const yearLength = digits.length - 4;
+  const year = Number(digits.slice(0, yearLength)) + 1911;
+  return [String(year), digits.slice(yearLength, yearLength + 2), digits.slice(-2)].join("-");
+}
+
+function normalizedPhoneForLookup(value: unknown) {
+  const digits = phoneDigits(value);
+  return digits.startsWith("8869") ? "0" + digits.slice(3) : digits;
+}
+
+function rosterQualificationActive(row: Record<string, unknown>) {
+  return firstClean(row.qualification, row.memberQualification, row.status).toUpperCase() === "Y";
+}
+
+async function tdeaDesignMemberLookupApi(request: Request, env: Env) {
+  const configuredSecret = clean(env.TDEA_DESIGN_LOOKUP_SECRET);
+  if (!configuredSecret) return json({ success: false, message: "Member lookup is not configured" }, 503);
+  if (!await secureTextEqual(request.headers.get("x-tdea-design-key"), configuredSecret)) {
+    return json({ success: false, message: "Unauthorized" }, 401);
+  }
+
+  const input = asRecord(await request.json().catch(() => ({})));
+  const memberType = clean(input.memberType).toLowerCase();
+  const fullName = clean(input.fullName);
+  const phone = normalizedPhoneForLookup(input.phone);
+  const birthday = normalizedBirthdayForMatch(input.birthday);
+  if (!["general", "association", "vendor"].includes(memberType)) {
+    return json({ success: false, message: "會員類型不正確" }, 400);
+  }
+  if (!fullName) return json({ success: false, message: "請填寫姓名" }, 400);
+
+  if (memberType === "general") {
+    if (!phone || !birthday) return json({ success: false, message: "一般會員必須填寫行動電話與生日，以核對母站註冊資料" }, 400);
+    const rows = await readMotherRegisterRecords(env);
+    const match = rows.find((row) =>
+      normalizedNameForMatch(firstClean(row.displayName, row.name, row.nickname)) === normalizedNameForMatch(fullName) &&
+      normalizedPhoneForLookup(firstClean(row.phone, row.mobile, row.tel)) === phone &&
+      normalizedBirthdayForMatch(firstClean(row.birthday, row.birthDate, row.birth_date)) === birthday
+    );
+    if (!match) return json({ success: false, message: "母站註冊資料查無姓名、行動電話與生日一致的紀錄，請先完成母站註冊或確認資料" }, 404);
+    return json({
+      success: true,
+      match: {
+        memberType,
+        memberNumber: "",
+        rosterName: firstClean(match.displayName, match.name, fullName),
+        source: "mother-register"
+      }
+    });
+  }
+
+  const memberNumber = firstClean(input.memberNumber).toUpperCase();
+  if (!memberNumber) return json({ success: false, message: "協會會員與廠商會員必須填寫會員編號" }, 400);
+  const managerData = await readManagerData(env) as Record<string, unknown> | null;
+  const rosterRows = managerData?.[memberType];
+  const rows = Array.isArray(rosterRows) ? rosterRows as Array<Record<string, unknown>> : [];
+  const match = rows.find((row) =>
+    managerRosterMemberKeys(row).includes(memberNumber) &&
+    rowMatchesMemberName(row, fullName)
+  );
+  if (!match) return json({ success: false, message: "會員編號與姓名無法在 TDEA CRM 名冊中完成核對" }, 404);
+  if (!rosterQualificationActive(match)) return json({ success: false, message: "此會員目前不是有效會員資格，請聯絡協會確認" }, 409);
+  return json({
+    success: true,
+    match: {
+      memberType,
+      memberNumber,
+      rosterName: memberType === "vendor"
+        ? firstClean(match.companyName, match.name, match.rosterName, fullName)
+        : firstClean(match.name, match.rosterName, match.memberName, fullName),
+      source: memberType === "vendor" ? "vendor-crm" : "association-crm"
     }
   });
 }
@@ -6931,6 +7024,7 @@ export default {
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
     const url = new URL(request.url);
     if (request.method === "OPTIONS") return new Response(null, { status: 204, headers });
+    if (request.method === "POST" && url.pathname === "/api/internal/tdea-design/member-lookup") return tdeaDesignMemberLookupApi(request, env);
 	    const uploadMatch = url.pathname.match(/^\/api\/uploads\/(.+)$/);
 	    if ((request.method === "GET" || request.method === "HEAD") && uploadMatch) return getUploadedFile(env, decodeURIComponent(uploadMatch[1]));
       if (request.method === "GET" && url.pathname === "/api/line-keywords/effective") return json({ success: true, data: effectiveLineKeywords(), source: "src/line-keywords.ts" });
