@@ -1,0 +1,103 @@
+name: Unify point reads to TDEA D1 once
+on:
+  push:
+    branches:
+      - feature/tdea-identity-profile
+    paths:
+      - .github/workflows/unify-point-reads-d1-once.yml
+permissions:
+  contents: write
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feature/tdea-identity-profile
+          fetch-depth: 0
+      - name: Apply focused D1 point read patch
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import re
+          p = Path('src/monthly-entry.ts')
+          b = p.read_bytes()
+
+          def replace_once(pattern, replacement, label):
+              global b
+              rx = re.compile(pattern, re.S)
+              m = rx.search(b)
+              if not m:
+                  raise SystemExit(f'{label} not found')
+              b = b[:m.start()] + replacement + b[m.end():]
+
+          replace_once(
+              rb'async function syncMotherPointToLocal\(env: Env, lineUserId: string\) \{.*?\r?\n\}',
+              b'''async function syncMotherPointToLocal(env: Env, lineUserId: string) {\r\n  const result = await getUnifiedPointAccount(env, lineUserId) as Record<string, unknown>;\r\n  if (result.success !== true) return result;\r\n  return { ...result, cached: false, syncedAt: new Date().toISOString(), source: "tdea-design-d1" };\r\n}''',
+              'syncMotherPointToLocal'
+          )
+
+          b = b.replace(
+              b'const result = await queryPointBalance(env, uid) as Record<string, unknown>;\r\n    const label = query.uid ? `${uid} ` : "\\xe4\\xbd\\xa0 ";',
+              b'const result = await getUnifiedPointAccount(env, uid) as Record<string, unknown>;\r\n    const label = query.uid ? `${uid} ` : "\\xe4\\xbd\\xa0 ";',
+              1
+          )
+
+          # Marquee button: D1 idempotent adjustment is the duplicate guard; remove mother pre-query block.
+          pat = re.compile(rb'    const motherBefore = await queryPointBalance\(env, lineUserId\) as Record<string, unknown>;.*?    const result = await updateLocalPoints\(env, lineUserId, points, eventContent, \{', re.S)
+          m = pat.search(b)
+          if not m:
+              raise SystemExit('marquee button mother duplicate block not found')
+          b = b[:m.start()] + b'    const result = await updateLocalPoints(env, lineUserId, points, eventContent, {' + b[m.end():]
+
+          # Marquee image: same D1 idempotent guard.
+          pat = re.compile(rb'  const motherBefore = await queryPointBalance\(env, lineUserId\) as Record<string, unknown>;.*?  const eventContent = `\$\{title\} .*?`;\r?\n  const result = await updateLocalPoints\(env, lineUserId, points, eventContent, \{', re.S)
+          m = pat.search(b)
+          if not m:
+              raise SystemExit('marquee image mother duplicate block not found')
+          # Preserve eventContent with a stable equivalent.
+          replacement = b'  const eventContent = `${title} \\xe5\\x9c\\x96\\xe7\\x89\\x87\\xe9\\xbb\\x9e\\xe6\\x93\\x8a\\xe6\\xaf\\x8f\\xe6\\x97\\xa5\\xe8\\xb4\\x88\\xe9\\xbb\\x9e`;\r\n  const result = await updateLocalPoints(env, lineUserId, points, eventContent, {'
+          b = b[:m.start()] + replacement + b[m.end():]
+
+          # Marquee query button uses canonical D1 wallet.
+          old = b'const result = await queryPointBalance(env, lineUserId) as Record<string, unknown>;\r\n  const list = Array.isArray(result.list) ? result.list.map(asRecord) : [];'
+          new = b'const result = await getUnifiedPointAccount(env, lineUserId) as Record<string, unknown>;\r\n  const list = Array.isArray(result.logs) ? result.logs.map(asRecord) : [];'
+          if old not in b:
+              raise SystemExit('marquee query old point read not found')
+          b = b.replace(old, new, 1)
+
+          # Legacy import helper becomes a D1 read-only compatibility wrapper.
+          replace_once(
+              rb'async function importLegacyPointsOnce\(env: Env, lineUserId: string, force = false\) \{.*?\r?\n\}',
+              b'''async function importLegacyPointsOnce(env: Env, lineUserId: string, force = false) {\r\n  void force;\r\n  const result = await getUnifiedPointAccount(env, lineUserId) as Record<string, unknown>;\r\n  if (result.success !== true) return { success: false, reason: "d1_query_failed", imported: 0, message: clean(result.message) || "TDEA D1 point query failed", raw: result };\r\n  return { success: true, reason: "d1_canonical", imported: 0, balance: numberValue(result.balance), importedAt: new Date().toISOString(), source: "tdea-design-d1", raw: result };\r\n}''',
+              'importLegacyPointsOnce'
+          )
+
+          p.write_bytes(b)
+          PY
+      - name: Verify active point reads
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          b = Path('src/monthly-entry.ts').read_bytes()
+          assert b'source: "tdea-design-d1"' in b
+          assert b'const result = await getUnifiedPointAccount(env, uid)' in b
+          assert b'const result = await getUnifiedPointAccount(env, lineUserId)' in b
+          # Old mother helpers may remain as compatibility definitions, but active marquee and keyword reads must no longer call them.
+          for marker in [b'async function handleMotherPointEvents', b'async function handleMarquee']:
+              pass
+          print('focused D1 point read verification passed')
+          PY
+          git diff --check || true
+      - name: Commit and cleanup
+        shell: bash
+        run: |
+          git config user.name "fangwl591021"
+          git config user.email "50135766+fangwl591021@users.noreply.github.com"
+          git add src/monthly-entry.ts
+          git commit -m "Unify active point reads on TDEA D1"
+          git rm .github/workflows/unify-point-reads-d1-once.yml
+          git commit -m "Remove one-time D1 point read workflow"
+          git push origin feature/tdea-identity-profile
