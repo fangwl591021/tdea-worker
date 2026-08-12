@@ -45,7 +45,7 @@ type NativeField = { key: string; label: string; type: string; required?: boolea
 type NativeSession = { id: string; name: string; startTime?: string; endTime?: string; capacity?: number; status?: string };
 type NativeForm = { id: string; provider: "native_form"; activity: Record<string, unknown>; settings: Record<string, unknown>; fields: NativeField[]; sessions: NativeSession[]; formUrl: string; createdAt: string; updatedAt: string };
 type LineLoginMember = { rosterType: "association" | "vendor"; memberNo: string; name: string; role: string; lineUserId: string; company?: string; phone?: string; email?: string; gender?: string; raw: Record<string, unknown> };
-type RegistrationIdentity = { kind: "crm-member" | "mother-registered"; rosterType: "association" | "vendor" | "mother"; memberNo: string; name: string; role: string; lineUserId: string; identityKey: string; source: string; company?: string; phone?: string; email?: string; gender?: string; raw: Record<string, unknown> };
+type RegistrationIdentity = { kind: "crm-member" | "mother-registered"; rosterType: "general" | "association" | "vendor" | "mother"; memberNo: string; name: string; role: string; lineUserId: string; identityKey: string; source: string; company?: string; phone?: string; email?: string; gender?: string; raw: Record<string, unknown> };
 type PointLog = { logId: string; lineUserId: string; type: "EARN" | "SPEND"; amount: number; points: number; reason: string; balanceAfter: number; createdAt: string; createdTs: number; source?: string; referenceId?: string; externalSync?: unknown; externalBalanceSync?: unknown };
 type PointAccount = { balance: number; logs: PointLog[]; updatedAt?: string; source?: string; syncedAt?: string; externalRaw?: unknown };
 type RedeemMode = "fixed" | "manual" | "rate";
@@ -2503,7 +2503,40 @@ async function getUnifiedPointAccount(env: Env, lineUserId: string, options: { a
       referenceId: clean(entry.event_reference)
     };
   });
-  return { success: true, balance: numberValue(result.balance), logs, source: "tdea-design-d1", userId: clean(result.userId) };
+  return { success: true, balance: numberValue(result.balance), logs, source: "tdea-design-d1", userId: clean(result.userId), registered: result.registered === true, member: asRecord(result.member) };
+}
+
+
+function registrationIdentityFromTdeaMember(member: Record<string, unknown>, lineUserId: string): RegistrationIdentity {
+  const memberType = ["association", "vendor"].includes(clean(member.memberType)) ? clean(member.memberType) : "general";
+  const memberNo = firstClean(member.rosterMemberNumber, member.companyMemberNumber, member.memberNumber);
+  const name = firstClean(member.fullName, member.displayName, "TDEA 會員");
+  const role = memberType === "association" ? "協會會員" : memberType === "vendor" ? "廠商會員" : "一般會員";
+  return {
+    kind: "crm-member",
+    rosterType: memberType as "general" | "association" | "vendor",
+    memberNo,
+    name,
+    role,
+    lineUserId,
+    identityKey: `tdea:${firstClean(member.userId, lineUserId)}`,
+    source: "tdea-design",
+    company: "",
+    phone: clean(member.phone),
+    email: clean(member.email),
+    gender: clean(member.gender),
+    raw: member
+  };
+}
+
+async function resolveTdeaRegisteredIdentity(env: Env, lineUserId: string) {
+  const account = await getUnifiedPointAccount(env, lineUserId) as Record<string, unknown>;
+  if (account.success !== true) return { success: false, registered: false, message: clean(account.message) || "TDEA 會員服務讀取失敗" };
+  const member = asRecord(account.member);
+  if (account.registered !== true || !clean(member.profileCompletedAt)) {
+    return { success: true, registered: false, member };
+  }
+  return { success: true, registered: true, member, identity: registrationIdentityFromTdeaMember(member, lineUserId) };
 }
 
 async function syncCheckinPoints(env: Env, entry: RegistrationEntry) {
@@ -2917,11 +2950,13 @@ async function getNativeLoginMember(request: Request, env: Env, formId: string) 
   const url = new URL(request.url);
   const lineUserId = firstClean(url.searchParams.get("lineUserId"), url.searchParams.get("uid"), url.searchParams.get("LINE_user_id"));
   if (!lineUserId) return json({ success: false, message: "缺少 LINE UID" }, 400);
-  const identity = await resolveNativeRegistrationIdentity(env, lineUserId);
-  if (!identity) return json({ success: false, code: "registration_identity_not_found", message: "此 LINE 帳號尚未對到 CRM 會員或母站註冊資料" }, 404);
-  return json({ success: true, data: publicRegistrationIdentity(identity) });
+  const resolved = await resolveTdeaRegisteredIdentity(env, lineUserId);
+  if (resolved.success !== true) return json({ success: false, code: "member_service_unavailable", message: clean(resolved.message) || "會員服務暫時無法使用" }, 502);
+  if (resolved.registered !== true || !resolved.identity) {
+    return json({ success: false, code: "registration_required", message: "尚未完成 TDEA 會員註冊，請先註冊後再報名活動。", registerUrl: "https://liff.line.me/2005868456-3Ip8H1Bx" }, 403);
+  }
+  return json({ success: true, data: publicRegistrationIdentity(resolved.identity), member: resolved.member });
 }
-
 function validateNativeAnswers(form: NativeForm, answers: Record<string, unknown>, sessionId: string) {
   const errors: string[] = [];
   const session = form.sessions.find((item) => item.id === sessionId);
@@ -2961,28 +2996,24 @@ function validateNativeLoginAnswers(form: NativeForm, answers: Record<string, un
 async function submitNativeForm(request: Request, env: Env, formId: string) {
   if (!env.ASSETS_BUCKET) return json({ success: false, message: "R2 bucket is not configured" }, 503);
   const form = await readNativeForm(env, formId);
-  if (!form) return json({ success: false, message: "?曆??啣?”" }, 404);
-  if (nativeRegistrationMode(form.settings || {}) === "member_login") {
-    return json({ success: false, message: "此活動僅允許 CRM 會員、廠商會員或母站已註冊者使用 LINE 快速報名。", code: "quick_registration_required" }, 403);
-  }
+  if (!form) return json({ success: false, message: "找不到報名表" }, 404);
   const input = await request.json().catch(() => ({})) as Record<string, unknown>;
   const rawAnswers = asRecord(input.answers);
   const answers = normalizeAnswersRecord(rawAnswers);
   const lineUserId = firstClean(input.lineUserId, rawAnswers.LINE_user_id, rawAnswers.lineUserId, rawAnswers.line_user_id, rawAnswers.uid, rawAnswers.UID);
-  if (lineUserId) answers.LINE_user_id = lineUserId;
-  const sessionId = clean(input.sessionId || "default");
-  let member: LineLoginMember | null = null;
-  try {
-    member = await resolveAndBindNativeRegistrationMember(env, lineUserId, answers);
-  } catch (error) {
-    return json({ success: false, message: error instanceof Error ? error.message : "?鞈?瘥?憭望?" }, 400);
+  if (!lineUserId) return json({ success: false, code: "line_login_required", message: "請先使用 LINE 登入後再報名活動。" }, 401);
+  const resolved = await resolveTdeaRegisteredIdentity(env, lineUserId);
+  if (resolved.success !== true) return json({ success: false, code: "member_service_unavailable", message: clean(resolved.message) || "會員服務暫時無法使用" }, 502);
+  if (resolved.registered !== true || !resolved.identity) {
+    return json({ success: false, code: "registration_required", message: "尚未完成 TDEA 會員註冊，請先註冊後再報名活動。", registerUrl: "https://liff.line.me/2005868456-3Ip8H1Bx" }, 403);
   }
-  const finalAnswers = member ? normalizeAnswersRecord({ ...answers, ...memberAnswers(member) }) : answers;
-  const errors = member ? validateNativeLoginAnswers(form, finalAnswers, sessionId) : validateNativeAnswers(form, finalAnswers, sessionId);
+  const identity = resolved.identity as RegistrationIdentity;
+  const sessionId = clean(input.sessionId || "default");
+  const finalAnswers = normalizeAnswersRecord({ ...answers, ...registrationIdentityAnswers(identity) });
+  const errors = validateNativeLoginAnswers(form, finalAnswers, sessionId);
   if (errors.length) return json({ success: false, message: errors[0], errors }, 400);
-  return createNativeRegistration(env, form, finalAnswers, member?.lineUserId || lineUserId, sessionId, member ? "line_member_claim" : "form", member ? registrationIdentityFromCrmMember(member) : undefined);
+  return createNativeRegistration(env, form, finalAnswers, lineUserId, sessionId, "tdea_registered", identity);
 }
-
 async function createNativeRegistration(env: Env, form: NativeForm, answers: Record<string, unknown>, lineUserId: string, sessionId: string, source: string, identity?: RegistrationIdentity) {
   const active = activeRegistrations(await readRegistrationList(env, form.id));
   const identityKey = firstClean(identity?.identityKey, answers.registrationIdentityKey);

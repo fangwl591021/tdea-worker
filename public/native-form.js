@@ -486,109 +486,74 @@
     return trim(settings.registrationMode || "form");
   }
 
+  function isRegistrationProfileField(field) {
+    const key = trim(field?.key || "").toLowerCase().replace(/[\s_-]+/g, "");
+    const label = trim(field?.label || "").toLowerCase().replace(/[\s_-]+/g, "");
+    const text = key + "|" + label;
+    return [
+      "name", "fullname", "membername", "姓名", "全名",
+      "phone", "mobile", "tel", "telephone", "手機", "電話", "行動電話",
+      "email", "mail", "電子郵件", "信箱",
+      "company", "companyname", "unit", "公司", "單位", "公司單位",
+      "memberno", "membernumber", "rostermemberno", "會員編號",
+      "membertype", "role", "身分", "身份",
+      "lineuserid", "lineuid", "lineid", "uid"
+    ].some((token) => text.includes(token));
+  }
+
   async function showRegister(id) {
     renderLoading("載入報名表...");
     const response = await fetch(`${api}/api/native-forms/${encodeURIComponent(id)}`, { cache: "no-store" });
     const result = await response.json().catch(() => ({}));
     if (!response.ok || !result.success) return renderError(result.message || "找不到報名表");
-    const form = result.data;
+    const form = result.data || {};
     const activity = form.activity || {};
     const sessions = Array.isArray(form.sessions) ? form.sessions : [];
     const fields = Array.isArray(form.fields) ? form.fields : [];
+    const activityFields = fields.filter((field) => !isRegistrationProfileField(field));
     const image = activity.posterUrl || activity.imageUrl || "";
-    const mode = registrationMode(form);
-    let effectiveMode = mode;
-    let showFullForm = mode === "form";
-    let autoLoginNotice = "";
 
-    if (formId) {
-      renderLoading("正在比對會員名冊...");
-      const uid = await loadLiff({ login: true });
-      if (uid && mode === "member_login") {
-        const memberResponse = await fetch(`${api}/api/native-forms/${encodeURIComponent(id)}/login-member?lineUserId=${encodeURIComponent(uid)}`, { cache: "no-store" });
-        const memberResult = await memberResponse.json().catch(() => ({}));
-        if (memberResponse.ok && memberResult.success) {
-          const member = memberResult.data || {};
-          autoLoginNotice = `已確認 ${member.name || member.role || "LINE 身分"}，請確認場次後送出快速報名。`;
-        } else if (mode === "member_login") {
-          autoLoginNotice = memberResult.message || "此 LINE 帳號尚未對到 CRM 會員、廠商會員或母站註冊資料，無法使用此活動報名。";
-        }
-      } else if (!uid && (mode === "member_login" || mode === "mixed")) {
-        if (mode === "member_login") {
-          autoLoginNotice = "未取得 LINE UID，請從 LINE LIFF 開啟並登入後再報名。";
-        } else {
-          effectiveMode = "form";
-          showFullForm = true;
-          autoLoginNotice = "未取得 LINE UID，已切換為完整表單報名。";
-        }
+    renderLoading("確認 TDEA 會員註冊狀態...");
+    const uid = await loadLiff({ login: true });
+    if (!uid) return renderError("無法取得 LINE UID，請從 LINE 開啟活動報名頁並完成登入。");
+
+    const memberResponse = await fetch(`${api}/api/native-forms/${encodeURIComponent(id)}/login-member?lineUserId=${encodeURIComponent(uid)}`, { cache: "no-store" });
+    const memberResult = await memberResponse.json().catch(() => ({}));
+    if (!memberResponse.ok || !memberResult.success) {
+      if (memberResult.code === "registration_required") {
+        const registerUrl = memberResult.registerUrl || "https://liff.line.me/2005868456-3Ip8H1Bx";
+        renderShell(`<section class="nf-card">
+          ${image ? `<img class="nf-hero" src="${esc(image)}" alt="">` : ""}
+          <div class="nf-body">
+            <h1 class="nf-title">${esc(activity.name || "活動報名")}</h1>
+            <div class="nf-alert">${esc(memberResult.message || "尚未完成 TDEA 會員註冊，請先註冊後再報名活動。")}</div>
+            <div class="nf-detail">活動報名採 TDEA 會員制。完成註冊後，系統會自動辨識一般會員、協會會員或廠商會員，不需要再次填寫身份資料。</div>
+            <div class="nf-actions"><a class="nf-btn primary" href="${esc(registerUrl)}">立即註冊</a><button class="nf-btn" type="button" data-reload-registration>我已完成註冊</button></div>
+          </div>
+        </section>`);
+        app.querySelector("[data-reload-registration]")?.addEventListener("click", () => showRegister(id));
+        return;
       }
+      return renderError(memberResult.message || "會員資料讀取失敗");
     }
 
+    const member = memberResult.data || {};
     renderShell(`<section class="nf-card">
-      ${image ? `<img class="nf-hero" src="${esc(image)}" alt="${esc(activity.name || "")}">` : ""}
+      ${image ? `<img class="nf-hero" src="${esc(image)}" alt="">` : ""}
       <div class="nf-body">
         <h1 class="nf-title">${esc(activity.name || "活動報名")}</h1>
         <div class="nf-meta">${activity.courseTime ? `<span class="nf-pill">${esc(activity.courseTime)}</span>` : ""}${activity.deadline ? `<span class="nf-pill">截止 ${esc(activity.deadline)}</span>` : ""}</div>
         ${activity.detailText ? `<div class="nf-detail">${esc(activity.detailText)}</div>` : ""}
-        ${autoLoginNotice ? `<div class="nf-alert">${esc(autoLoginNotice)}</div>` : ""}
-        ${loginRegisterPanel(effectiveMode, sessions)}
-        ${showFullForm ? `<form class="nf-form" data-native-register novalidate>
+        <div class="nf-ok">已完成會員驗證，以下身份資料由 TDEA 會員中心自動帶入。</div>
+        ${memberSummary(member)}
+        <form class="nf-form" data-native-register novalidate>
           ${sessionFieldHtml(sessions)}
-          ${fields.map(fieldHtml).join("")}
-          <div class="nf-actions"><button class="nf-btn primary" type="submit">送出報名</button><a class="nf-btn" href="?query=1">報名查詢/取消</a></div>
-        </form>` : effectiveMode === "mixed" ? `<details class="nf-form">
-          <summary class="nf-btn">非會員或無法快速報名，改填完整表單</summary>
-          <form class="nf-form" data-native-register novalidate>
-            ${sessionFieldHtml(sessions)}
-            ${fields.map(fieldHtml).join("")}
-            <div class="nf-actions"><button class="nf-btn primary" type="submit">送出報名</button><a class="nf-btn" href="?query=1">報名查詢/取消</a></div>
-          </form>
-        </details>` : `<div class="nf-actions"><a class="nf-btn" href="?query=1">報名查詢/取消</a></div>`}
+          ${activityFields.map(fieldHtml).join("")}
+          <div class="nf-actions"><button class="nf-btn primary" type="submit">確認報名</button><a class="nf-btn" href="?query=1">報名查詢/取消</a></div>
+        </form>
       </div>
     </section>`);
 
-    const loginButton = app.querySelector("[data-login-register]");
-    loginButton?.addEventListener("click", async (event) => {
-      event.preventDefault();
-      const loginBox = app.querySelector("[data-login-register-box]");
-      const requiredError = loginBox ? validateVisibleRequired(loginBox) : "";
-      if (requiredError) return alert(requiredError);
-      loginButton.disabled = true;
-      loginButton.textContent = "取得 LINE 身分中...";
-      const uid = await loadLiff({ login: true });
-      if (!uid) {
-        loginButton.disabled = false;
-        loginButton.textContent = "LINE 快速報名";
-        return alert("無法取得 LINE UID，請從 LINE LIFF 開啟報名頁。");
-      }
-      const sessionId = loginBox?.querySelector("[name='sessionId']")?.value || sessions[0]?.id || "default";
-      const memberResponse = await fetch(`${api}/api/native-forms/${encodeURIComponent(id)}/login-member?lineUserId=${encodeURIComponent(uid)}`, { cache: "no-store" });
-      const memberResult = await memberResponse.json().catch(() => ({}));
-      let member = memberResult.data || null;
-      if (!memberResponse.ok || !memberResult.success) {
-        loginButton.disabled = false;
-        loginButton.textContent = "LINE 快速報名";
-        const fallbackMessage = mode === "member_login" ? "此 LINE 帳號尚未對到 CRM 會員、廠商會員或母站註冊資料，無法使用此活動報名。" : "此 LINE 帳號尚未對到 CRM 會員、廠商會員或母站註冊資料，請改填完整表單。";
-        return alert(memberResult.message || fallbackMessage);
-      } else {
-        const memberArea = app.querySelector("[data-login-member-area]");
-        if (memberArea) memberArea.innerHTML = memberSummary(member);
-        const memberNoLine = member.memberNo ? `\n會員編號：${member.memberNo}` : "";
-        if (!confirm(`確認以 ${member.name || member.role || "LINE 身分"} 報名？\n身分：${member.role || "-"}${memberNoLine}`)) {
-          loginButton.disabled = false;
-          loginButton.textContent = "LINE 快速報名";
-          return;
-        }
-      }
-      loginButton.textContent = member ? "送出中..." : "比對並送出中...";
-      const { response: submitResponse, result: submitResult } = await submitLoginRegistration(id, { lineUserId: uid, sessionId });
-      if (!submitResponse.ok || !submitResult.success) {
-        loginButton.disabled = false;
-        loginButton.textContent = "LINE 快速報名";
-        return alert(submitResult.message || "報名失敗");
-      }
-      renderReceipt(submitResult);
-    });
     const registerForm = app.querySelector("[data-native-register]");
     registerForm?.addEventListener("submit", async (event) => {
       event.preventDefault();
@@ -596,27 +561,19 @@
       if (requiredError) return alert(requiredError);
       const submit = registerForm.querySelector("button[type='submit']");
       submit.disabled = true;
-      submit.textContent = "送出中...";
-      const uid = await loadLiff({ login: true });
-      const answers = collectAnswers(registerForm, fields);
-      if (uid) answers.LINE_user_id = uid;
-      const sessionId = registerForm.elements.sessionId?.value || "default";
-      const claimError = missingMemberClaimIdentity(answers);
-      if (claimError) {
-        submit.disabled = false;
-        submit.textContent = "送出報名";
-        return alert(claimError);
-      }
-      const payload = { sessionId, lineUserId: uid || "", answers };
+      submit.textContent = "報名中...";
+      const answers = collectAnswers(registerForm, activityFields);
+      const sessionId = registerForm.elements.sessionId?.value || sessions[0]?.id || "default";
       const submitResponse = await fetch(`${api}/api/native-forms/${encodeURIComponent(id)}`, {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify(payload)
+        body: JSON.stringify({ sessionId, lineUserId: uid, answers })
       });
       const submitResult = await submitResponse.json().catch(() => ({}));
       if (!submitResponse.ok || !submitResult.success) {
         submit.disabled = false;
-        submit.textContent = "送出報名";
+        submit.textContent = "確認報名";
+        if (submitResult.code === "registration_required") return showRegister(id);
         return alert(submitResult.message || "報名失敗");
       }
       renderReceipt(submitResult);
