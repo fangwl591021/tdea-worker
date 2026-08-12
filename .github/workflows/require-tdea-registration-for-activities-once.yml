@@ -15,6 +15,21 @@ jobs:
         with:
           ref: feature/tdea-identity-profile
           fetch-depth: 0
+      - name: Normalize patch script UTF-8 literals
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          p = Path('.github/scripts/patch-registration-gate.py')
+          s = p.read_text(encoding='utf-8')
+          s = s.replace("helper = br'''", "helper = r'''")
+          s = s.replace("helper + b'\\r\\n' + marker", "helper.encode('utf-8') + b'\\r\\n' + marker")
+          s = s.replace("new_get = br'''", "new_get = r'''")
+          s = s.replace("+ new_get + b[m.end():]", "+ new_get.encode('utf-8') + b[m.end():]")
+          s = s.replace("new_submit = br'''", "new_submit = r'''")
+          s = s.replace("+ new_submit + b[m.end():]", "+ new_submit.encode('utf-8') + b[m.end():]")
+          p.write_text(s, encoding='utf-8')
+          PY
       - name: Apply focused registration gate patch
         run: python .github/scripts/patch-registration-gate.py
       - name: Verify focused registration gate
