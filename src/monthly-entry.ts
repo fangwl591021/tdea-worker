@@ -2470,19 +2470,34 @@ async function handleMotherPointEvents(events: Array<{ event: LineEvent; query: 
 }
 
 async function updateLocalPoints(env: Env, lineUserId: string, amount: number, reason: string, options: { source?: string; referenceId?: string; skipExternalSync?: boolean } = {}) {
+  void options.skipExternalSync;
   const numericAmount = Number(amount || 0);
   if (!lineUserId || !numericAmount) return { success: false, message: "Missing LINE UID or point amount" };
-  const before = await queryPointBalance(env, lineUserId) as Record<string, unknown>;
-  if (before.success !== true) return { success: false, message: clean(before.message) || clean(before.code) || "mother point query failed", before };
-  const externalSync = await insertMemberPoint(env, { lineUserId, eventName: numericAmount >= 0 ? "TDEA add points" : "TDEA deduct points", eventContent: reason, points: numericAmount, remark: options.referenceId || options.source || "TDEA Worker" }) as Record<string, unknown>;
-  if (externalSync.success !== true || clean(externalSync.code) !== "insert_success") return { success: false, message: clean(externalSync.message) || "mother point insert failed", externalSync, before };
-  const after = await queryPointBalance(env, lineUserId) as Record<string, unknown>;
+  if (!env.ASSETS_BUCKET) return { success: false, message: "R2 bucket is not configured" };
+  const key = `points/accounts/${encodeURIComponent(lineUserId)}.json`;
+  const object = await env.ASSETS_BUCKET.get(key);
+  const stored = object ? await object.json().catch(() => null) as PointAccount | null : null;
+  const beforeBalance = stored && Number.isFinite(Number(stored.balance)) ? Number(stored.balance) : 0;
+  const logs = stored && Array.isArray(stored.logs) ? stored.logs : [];
+  const balanceAfter = beforeBalance + numericAmount;
+  if (balanceAfter < 0) return { success: false, code: "insufficient_points", message: `點數不足，目前可用 ${beforeBalance} 點`, balance: beforeBalance };
   const createdTs = Date.now();
-  const expectedBalanceAfter = numberValue(before.balance) + numericAmount;
-  const afterBalance = after.success === true ? numberValue(after.balance) : expectedBalanceAfter;
-  const balanceAfter = after.success === true && afterBalance === expectedBalanceAfter ? afterBalance : expectedBalanceAfter;
-  const log: PointLog = { logId: crypto.randomUUID ? crypto.randomUUID() : String(createdTs), lineUserId, type: numericAmount >= 0 ? "EARN" : "SPEND", amount: numericAmount, points: Math.abs(numericAmount), reason, balanceAfter, createdAt: new Date(createdTs).toISOString(), createdTs, source: options.source || "tdea", referenceId: options.referenceId || "", externalSync, externalBalanceSync: after };
-  return { success: true, balance: balanceAfter, log, account: { balance: balanceAfter, logs: after.success === true && Array.isArray(after.list) ? pointLogsFromMotherList(after.list as Record<string, unknown>[], lineUserId) : [log], updatedAt: new Date(createdTs).toISOString(), source: "wetw-point", syncedAt: new Date(createdTs).toISOString(), externalRaw: after }, before, externalSync, externalBalanceSync: after };
+  const log: PointLog = {
+    logId: crypto.randomUUID ? crypto.randomUUID() : String(createdTs),
+    lineUserId,
+    type: numericAmount >= 0 ? "EARN" : "SPEND",
+    amount: numericAmount,
+    points: Math.abs(numericAmount),
+    reason,
+    balanceAfter,
+    createdAt: new Date(createdTs).toISOString(),
+    createdTs,
+    source: options.source || "tdea-local",
+    referenceId: options.referenceId || ""
+  };
+  const account: PointAccount = { balance: balanceAfter, logs: [log, ...logs].slice(0, 1000), updatedAt: new Date(createdTs).toISOString(), source: "tdea-local" };
+  await env.ASSETS_BUCKET.put(key, JSON.stringify(account, null, 2), { httpMetadata: { contentType: "application/json; charset=utf-8", cacheControl: "no-store" } });
+  return { success: true, balance: balanceAfter, log, account, before: { balance: beforeBalance, source: "tdea-local" } };
 }
 
 function taipeiDateKey(date = new Date()) {
@@ -2576,12 +2591,15 @@ async function importLegacyPointsOnce(env: Env, lineUserId: string, force = fals
 }
 
 async function getUnifiedPointAccount(env: Env, lineUserId: string, options: { autoImport?: boolean } = {}) {
+  void options;
   if (!lineUserId) return { success: false, balance: 0, logs: [], message: "Missing LINE UID" };
-  if (!motherPointApiReady(env)) return { success: false, balance: 0, logs: [], message: "Mother point API key is not configured" };
-  const result = await queryPointBalance(env, lineUserId) as Record<string, unknown>;
-  if (result.success !== true) return { success: false, balance: 0, logs: [], message: clean(result.message) || clean(result.code) || "mother point query failed", motherSynced: result };
-  const list = Array.isArray(result.list) ? result.list.map(asRecord) : [];
-  return { success: true, balance: numberValue(result.balance), logs: pointLogsFromMotherList(list, lineUserId), imported: null, legacySynced: null, motherSynced: result, source: "wetw-point/query-user-point-list" };
+  if (!env.ASSETS_BUCKET) return { success: false, balance: 0, logs: [], message: "R2 bucket is not configured" };
+  const key = `points/accounts/${encodeURIComponent(lineUserId)}.json`;
+  const object = await env.ASSETS_BUCKET.get(key);
+  const stored = object ? await object.json().catch(() => null) as PointAccount | null : null;
+  const balance = stored && Number.isFinite(Number(stored.balance)) ? Number(stored.balance) : 0;
+  const logs = stored && Array.isArray(stored.logs) ? stored.logs : [];
+  return { success: true, balance, logs, imported: null, legacySynced: null, motherSynced: null, source: "tdea-local", updatedAt: stored?.updatedAt || "" };
 }
 
 async function syncCheckinPoints(env: Env, entry: RegistrationEntry) {
