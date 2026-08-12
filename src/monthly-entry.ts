@@ -2637,24 +2637,24 @@ async function syncCheckinPoints(env: Env, entry: RegistrationEntry) {
   const lineUserId = firstClean(entry.lineUserId, answers.LINE_user_id, answers.lineUserId, answers.line_user_id, answers.uid, answers.UID);
   if (!lineUserId) return [{ success: false, code: "missing_line_user_id", message: "registration has no LINE user id" }];
 
-  const eventName = firstClean(activity.name, activity.activityNo, "TDEA 瘣餃?蝪賢");
+  const eventName = firstClean(activity.name, activity.activityNo, "TDEA 活動簽到");
   const eventContent = firstClean(activity.courseTime, activity.activityNo, entry.id);
   const checkinPoints = numberValue(activity.checkinPoints || activity.checkinPointAmount);
   const feePoints = numberValue(activity.feePoints || activity.feePointAmount);
   const jobs: Array<{ label: string; points: number }> = [];
-  if (checkinPoints > 0) jobs.push({ label: "蝪賢韐?", points: checkinPoints });
-  if (feePoints > 0) jobs.push({ label: "鞎餌??", points: -Math.abs(feePoints) });
+  if (checkinPoints > 0) jobs.push({ label: "簽到贈點", points: checkinPoints });
+  if (feePoints > 0) jobs.push({ label: "報名扣點", points: -Math.abs(feePoints) });
   if (!jobs.length) return [];
 
   const results = [];
   for (const job of jobs) {
-    results.push(await insertMemberPoint(env, {
+    results.push(await updateLocalPoints(
+      env,
       lineUserId,
-      eventName: `${eventName} ${job.label}`,
-      eventContent,
-      points: job.points,
-      remark: entry.id
-    }));
+      job.points,
+      `${eventName} ${job.label}${eventContent ? `｜${eventContent}` : ""}`,
+      { source: "activity_checkin", referenceId: entry.id }
+    ));
   }
   return results;
 }
