@@ -1,8 +1,10 @@
 name: Fix CRM D1 point sync once
 on:
   push:
-    branches: [feature/tdea-identity-profile]
-    paths: [.github/workflows/fix-crm-d1-point-sync-once.yml]
+    branches:
+      - feature/tdea-identity-profile
+    paths:
+      - .github/workflows/fix-crm-d1-point-sync-once.yml
 permissions:
   contents: write
 jobs:
@@ -14,12 +16,12 @@ jobs:
           ref: feature/tdea-identity-profile
           fetch-depth: 0
       - name: Patch backend batch and frontend refresh
-        shell: python
+        shell: bash
         run: |
+          python - <<'PY'
           from pathlib import Path
           import re
 
-          # monthly-entry.ts may contain mixed line endings/legacy bytes: byte-level replacement only.
           p = Path('src/monthly-entry.ts')
           b = p.read_bytes()
           pat = re.compile(rb'async function queryMemberPointBatchApi\(request: Request, env: Env\) \{.*?\r?\n\}\r?\n\r?\n(?=async function )', re.S)
@@ -30,11 +32,8 @@ jobs:
           b = b[:m.start()] + new + b[m.end():]
           p.write_bytes(b)
 
-          # app.js is normal UTF-8.
           p = Path('public/app.js')
           s = p.read_text(encoding='utf-8')
-
-          # Replace roster point loader with canonical D1 batch flow.
           pat = re.compile(r'  async function loadRosterPointBalances\(type, force = false\) \{.*?\n  \}\n\n  function members\(type\)', re.S)
           if not pat.search(s):
               raise SystemExit('loadRosterPointBalances function not found')
@@ -72,19 +71,18 @@ jobs:
   function members(type)'''
           s = pat.sub(repl, s, count=1)
 
-          # Auto-load D1 balances whenever association/vendor CRM is rendered.
           anchor = '    if (state.view === "adminWhitelist" && !state.adminWhitelist) loadAdminWhitelist().then(() => render()).catch(() => undefined);\n'
           if anchor not in s:
               raise SystemExit('render anchor not found')
           s = s.replace(anchor, anchor + '    if ((state.view === "association" || state.view === "vendor") && !rosterPointLoading[state.view]) setTimeout(() => loadRosterPointBalances(state.view), 0);\n', 1)
 
-          # After drawer reload, immediately update the outer CRM row from canonical D1 balance.
           old = '      state.memberPointAccounts[key] = result.data || { success: false, message: result.message || "點數讀取失敗" };\n      if (showMessage) toast("點數已更新");'
           new2 = '      state.memberPointAccounts[key] = result.data || { success: false, message: result.message || "點數讀取失敗" };\n      if (row && state.memberPointAccounts[key]?.success === true) row.pointBalance = Number(state.memberPointAccounts[key].balance || 0);\n      rosterPointLoadedAt[type] = Date.now();\n      if (showMessage) toast("點數已更新");'
           if old not in s:
               raise SystemExit('member drawer account assignment anchor not found')
           s = s.replace(old, new2, 1)
           p.write_text(s, encoding='utf-8', newline='')
+          PY
       - name: Verify focused patch
         shell: bash
         run: |
@@ -92,9 +90,11 @@ jobs:
           from pathlib import Path
           m = Path('src/monthly-entry.ts').read_bytes()
           a = Path('public/app.js').read_text(encoding='utf-8')
-          assert b'async function queryMemberPointBatchApi' in m
-          assert b'getUnifiedPointAccount(env, lineUserId)' in m
-          assert b'queryPointBalance(env' not in m[m.find(b'async function queryMemberPointBatchApi'):m.find(b'async function ', m.find(b'async function queryMemberPointBatchApi')+10)]
+          start = m.find(b'async function queryMemberPointBatchApi')
+          end = m.find(b'async function ', start + 10)
+          body = m[start:end if end > start else None]
+          assert b'getUnifiedPointAccount(env, lineUserId)' in body
+          assert b'queryPointBalance(env' not in body
           assert 'setTimeout(() => loadRosterPointBalances(state.view), 0)' in a
           assert 'row.pointBalance = Number(state.memberPointAccounts[key].balance || 0)' in a
           print('focused CRM D1 point sync verification passed')
