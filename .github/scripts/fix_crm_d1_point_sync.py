@@ -1,0 +1,74 @@
+from pathlib import Path
+import re
+
+p = Path('src/monthly-entry.ts')
+b = p.read_bytes()
+pat = re.compile(rb'async function queryMemberPointBatchApi\(request: Request, env: Env\) \{.*?\r?\n\}\r?\n\r?\n(?=async function )', re.S)
+m = pat.search(b)
+if not m:
+    raise SystemExit('queryMemberPointBatchApi function not found')
+new = b'''async function queryMemberPointBatchApi(request: Request, env: Env) {\r\n  const guard = await requireAdmin(request, env);\r\n  if (guard) return guard;\r\n  const input = await request.json().catch(() => ({})) as Record<string, unknown>;\r\n  const members = Array.isArray(input.members) ? input.members.slice(0, 600).map(asRecord) : [];\r\n  const results: Array<Record<string, unknown>> = [];\r\n  for (const member of members) {\r\n    const memberNo = firstClean(member.memberNo, member.rosterMemberNo);\r\n    const lineUserId = firstClean(member.lineUserId, member.uid, member.LINE_user_id);\r\n    if (!lineUserId) {\r\n      results.push({ memberNo, lineUserId: '', success: false, message: 'missing_line_uid' });\r\n      continue;\r\n    }\r\n    const account = await getUnifiedPointAccount(env, lineUserId);\r\n    results.push({ memberNo, lineUserId, success: account.success === true, balance: numberValue(account.balance), message: account.success === true ? '' : clean(account.message) });\r\n  }\r\n  return json({ success: true, data: { members: results }, members: results });\r\n}\r\n\r\n'''
+b = b[:m.start()] + new + b[m.end():]
+p.write_bytes(b)
+
+p = Path('public/app.js')
+s = p.read_text(encoding='utf-8')
+pat = re.compile(r'  async function loadRosterPointBalances\(type, force = false\) \{.*?\n  \}\n\n  function members\(type\)', re.S)
+if not pat.search(s):
+    raise SystemExit('loadRosterPointBalances function not found')
+repl = '''  async function loadRosterPointBalances(type, force = false) {
+    if (type !== "association" && type !== "vendor") return;
+    if (rosterPointLoading[type]) return;
+    const now = Date.now();
+    if (!force && rosterPointLoadedAt[type] && now - rosterPointLoadedAt[type] < 5 * 60 * 1000) return;
+    const rows = visibleRosterRows(type);
+    if (!rows.length) return;
+    rosterPointLoading[type] = true;
+    try {
+      const response = await fetch(api + "/api/member-points/batch", {
+        method: "POST",
+        headers: adminHeaders({ "content-type": "application/json" }),
+        body: JSON.stringify({ members: rows.map(row => ({ memberNo: row.memberNo || "", lineUserId: memberLineUid(row) || "" })) })
+      });
+      const result = await response.json().catch(() => ({}));
+      const items = Array.isArray(result?.data?.members) ? result.data.members : Array.isArray(result?.members) ? result.members : [];
+      const byMemberNo = new Map(items.map(item => [String(item.memberNo || "").trim().toUpperCase(), item]));
+      const byUid = new Map(items.map(item => [String(item.lineUserId || "").trim().toLowerCase(), item]));
+      rows.forEach(row => {
+        const pointResult = byMemberNo.get(String(row.memberNo || "").trim().toUpperCase()) || byUid.get(String(memberLineUid(row) || "").trim().toLowerCase());
+        if (pointResult?.success === true) row.pointBalance = Number(pointResult.balance || 0);
+      });
+      rosterPointLoadedAt[type] = Date.now();
+    } catch (error) {
+      console.warn('CRM D1 point batch load failed', error);
+    } finally {
+      rosterPointLoading[type] = false;
+      render();
+    }
+  }
+
+  function members(type)'''
+s = pat.sub(repl, s, count=1)
+
+anchor = '    if (state.view === "adminWhitelist" && !state.adminWhitelist) loadAdminWhitelist().then(() => render()).catch(() => undefined);\n'
+if anchor not in s:
+    raise SystemExit('render anchor not found')
+s = s.replace(anchor, anchor + '    if ((state.view === "association" || state.view === "vendor") && !rosterPointLoading[state.view]) setTimeout(() => loadRosterPointBalances(state.view), 0);\n', 1)
+
+old = '      state.memberPointAccounts[key] = result.data || { success: false, message: result.message || "點數讀取失敗" };\n      if (showMessage) toast("點數已更新");'
+new2 = '      state.memberPointAccounts[key] = result.data || { success: false, message: result.message || "點數讀取失敗" };\n      if (row && state.memberPointAccounts[key]?.success === true) row.pointBalance = Number(state.memberPointAccounts[key].balance || 0);\n      rosterPointLoadedAt[type] = Date.now();\n      if (showMessage) toast("點數已更新");'
+if old not in s:
+    raise SystemExit('member drawer account assignment anchor not found')
+s = s.replace(old, new2, 1)
+p.write_text(s, encoding='utf-8', newline='')
+
+m2 = Path('src/monthly-entry.ts').read_bytes()
+a = Path('public/app.js').read_text(encoding='utf-8')
+start = m2.find(b'async function queryMemberPointBatchApi')
+end = m2.find(b'async function ', start + 10)
+body = m2[start:end if end > start else None]
+assert b'getUnifiedPointAccount(env, lineUserId)' in body
+assert b'queryPointBalance(env' not in body
+assert 'setTimeout(() => loadRosterPointBalances(state.view), 0)' in a
+assert 'row.pointBalance = Number(state.memberPointAccounts[key].balance || 0)' in a
+print('CRM D1 point sync patch verified')
