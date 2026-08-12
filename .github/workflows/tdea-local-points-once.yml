@@ -1,0 +1,71 @@
+name: Apply TDEA local points core once
+
+on:
+  push:
+    branches:
+      - fix/tdea-local-points-core
+    paths:
+      - .github/workflows/tdea-local-points-once.yml
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/tdea-local-points-core
+          fetch-depth: 0
+
+      - name: Patch only two point functions
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+
+          path = Path('src/monthly-entry.ts')
+          data = path.read_bytes()
+
+          get_pattern = re.compile(
+              rb'async function getUnifiedPointAccount\(env: Env, lineUserId: string, options: \{ autoImport\?: boolean \} = \{\}\) \{.*?\r?\n\}\r?\n(?=\r?\nasync function syncCheckinPoints)',
+              re.S,
+          )
+          get_replacement = '''async function getUnifiedPointAccount(env: Env, lineUserId: string, options: { autoImport?: boolean } = {}) {\r\n  void options;\r\n  if (!lineUserId) return { success: false, balance: 0, logs: [], message: "Missing LINE UID" };\r\n  if (!env.ASSETS_BUCKET) return { success: false, balance: 0, logs: [], message: "R2 bucket is not configured" };\r\n  const key = `points/accounts/${encodeURIComponent(lineUserId)}.json`;\r\n  const object = await env.ASSETS_BUCKET.get(key);\r\n  const stored = object ? await object.json().catch(() => null) as PointAccount | null : null;\r\n  const balance = stored && Number.isFinite(Number(stored.balance)) ? Number(stored.balance) : 0;\r\n  const logs = stored && Array.isArray(stored.logs) ? stored.logs : [];\r\n  return { success: true, balance, logs, imported: null, legacySynced: null, motherSynced: null, source: "tdea-local", updatedAt: stored?.updatedAt || "" };\r\n}\r\n'''.encode('utf-8')
+
+          update_pattern = re.compile(
+              rb'async function updateLocalPoints\(env: Env, lineUserId: string, amount: number, reason: string, options: \{ source\?: string; referenceId\?: string; skipExternalSync\?: boolean \} = \{\}\) \{.*?\r?\n\}\r?\n(?=\r?\nfunction taipeiDateKey)',
+              re.S,
+          )
+          update_replacement = '''async function updateLocalPoints(env: Env, lineUserId: string, amount: number, reason: string, options: { source?: string; referenceId?: string; skipExternalSync?: boolean } = {}) {\r\n  void options.skipExternalSync;\r\n  const numericAmount = Number(amount || 0);\r\n  if (!lineUserId || !numericAmount) return { success: false, message: "Missing LINE UID or point amount" };\r\n  if (!env.ASSETS_BUCKET) return { success: false, message: "R2 bucket is not configured" };\r\n  const key = `points/accounts/${encodeURIComponent(lineUserId)}.json`;\r\n  const object = await env.ASSETS_BUCKET.get(key);\r\n  const stored = object ? await object.json().catch(() => null) as PointAccount | null : null;\r\n  const beforeBalance = stored && Number.isFinite(Number(stored.balance)) ? Number(stored.balance) : 0;\r\n  const logs = stored && Array.isArray(stored.logs) ? stored.logs : [];\r\n  const balanceAfter = beforeBalance + numericAmount;\r\n  if (balanceAfter < 0) return { success: false, code: "insufficient_points", message: `點數不足，目前可用 ${beforeBalance} 點`, balance: beforeBalance };\r\n  const createdTs = Date.now();\r\n  const log: PointLog = {\r\n    logId: crypto.randomUUID ? crypto.randomUUID() : String(createdTs),\r\n    lineUserId,\r\n    type: numericAmount >= 0 ? "EARN" : "SPEND",\r\n    amount: numericAmount,\r\n    points: Math.abs(numericAmount),\r\n    reason,\r\n    balanceAfter,\r\n    createdAt: new Date(createdTs).toISOString(),\r\n    createdTs,\r\n    source: options.source || "tdea-local",\r\n    referenceId: options.referenceId || ""\r\n  };\r\n  const account: PointAccount = { balance: balanceAfter, logs: [log, ...logs].slice(0, 1000), updatedAt: new Date(createdTs).toISOString(), source: "tdea-local" };\r\n  await env.ASSETS_BUCKET.put(key, JSON.stringify(account, null, 2), { httpMetadata: { contentType: "application/json; charset=utf-8", cacheControl: "no-store" } });\r\n  return { success: true, balance: balanceAfter, log, account, before: { balance: beforeBalance, source: "tdea-local" } };\r\n}\r\n'''.encode('utf-8')
+
+          data2, count1 = get_pattern.subn(get_replacement, data, count=1)
+          data3, count2 = update_pattern.subn(update_replacement, data2, count=1)
+          if count1 != 1 or count2 != 1:
+              raise SystemExit(f'patch target mismatch: get={count1}, update={count2}')
+
+          path.write_bytes(data3)
+          print(f'patched getUnifiedPointAccount={count1}, updateLocalPoints={count2}')
+          PY
+
+      - name: Verify target-only diff
+        shell: bash
+        run: |
+          git diff --stat
+          git diff -- src/monthly-entry.ts | sed -n '1,220p'
+          grep -A14 'async function getUnifiedPointAccount' src/monthly-entry.ts
+          grep -A35 'async function updateLocalPoints' src/monthly-entry.ts
+          if grep -A14 'async function getUnifiedPointAccount' src/monthly-entry.ts | grep -E 'queryPointBalance|motherPointApiReady'; then exit 1; fi
+          if grep -A35 'async function updateLocalPoints' src/monthly-entry.ts | grep -E 'queryPointBalance|insertMemberPoint'; then exit 1; fi
+
+      - name: Commit patch and remove one-time workflow
+        shell: bash
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add src/monthly-entry.ts
+          git rm .github/workflows/tdea-local-points-once.yml
+          git commit -m 'Make TDEA point core local-only'
+          git push origin HEAD:fix/tdea-local-points-core
