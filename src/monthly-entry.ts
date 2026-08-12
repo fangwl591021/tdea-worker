@@ -5543,10 +5543,6 @@ function normalizedPhoneForLookup(value: unknown) {
   return digits.startsWith("8869") ? "0" + digits.slice(3) : digits;
 }
 
-function rosterQualificationActive(row: Record<string, unknown>) {
-  return firstClean(row.qualification, row.memberQualification, row.status).toUpperCase() === "Y";
-}
-
 async function tdeaDesignMemberLookupApi(request: Request, env: Env) {
   const configuredSecret = clean(env.TDEA_DESIGN_LOOKUP_SECRET);
   if (!configuredSecret) return json({ success: false, message: "Member lookup is not configured" }, 503);
@@ -5594,7 +5590,6 @@ async function tdeaDesignMemberLookupApi(request: Request, env: Env) {
     rowMatchesMemberName(row, fullName)
   );
   if (!match) return json({ success: false, message: "會員編號與姓名無法在 TDEA CRM 名冊中完成核對" }, 404);
-  if (!rosterQualificationActive(match)) return json({ success: false, message: "此會員目前不是有效會員資格，請聯絡協會確認" }, 409);
   return json({
     success: true,
     match: {
