@@ -57,10 +57,22 @@ jobs:
       - name: Verify target bridge only
         shell: bash
         run: |
-          grep -A45 'async function getUnifiedPointAccount' src/monthly-entry.ts | grep -q 'TDEA_DESIGN.fetch'
-          grep -A55 'async function updateLocalPoints' src/monthly-entry.ts | grep -q 'TDEA_DESIGN.fetch'
-          if grep -A45 'async function getUnifiedPointAccount' src/monthly-entry.ts | grep -E 'ASSETS_BUCKET|queryPointBalance|motherPointApiReady'; then exit 1; fi
-          if grep -A55 'async function updateLocalPoints' src/monthly-entry.ts | grep -E 'ASSETS_BUCKET|insertMemberPoint|queryPointBalance'; then exit 1; fi
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+          data = Path('src/monthly-entry.ts').read_bytes()
+          get_body = re.search(rb'async function getUnifiedPointAccount\(.*?\r?\n\}\r?\n(?=\r?\nasync function syncCheckinPoints)', data, re.S)
+          update_body = re.search(rb'async function updateLocalPoints\(.*?\r?\n\}\r?\n(?=\r?\nfunction taipeiDateKey)', data, re.S)
+          if not get_body or not update_body:
+              raise SystemExit('target function not found')
+          for name, body in [('get', get_body.group()), ('update', update_body.group())]:
+              if b'TDEA_DESIGN.fetch' not in body:
+                  raise SystemExit(f'{name} bridge missing')
+              for forbidden in [b'ASSETS_BUCKET', b'queryPointBalance', b'insertMemberPoint', b'motherPointApiReady']:
+                  if forbidden in body:
+                      raise SystemExit(f'{name} still contains {forbidden!r}')
+          print('point bridge verification passed')
+          PY
           git diff --stat
 
       - name: Commit patch and remove workflow
