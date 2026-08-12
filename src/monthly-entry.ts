@@ -2597,9 +2597,38 @@ async function getUnifiedPointAccount(env: Env, lineUserId: string, options: { a
   const key = `points/accounts/${encodeURIComponent(lineUserId)}.json`;
   const object = await env.ASSETS_BUCKET.get(key);
   const stored = object ? await object.json().catch(() => null) as PointAccount | null : null;
-  const balance = stored && Number.isFinite(Number(stored.balance)) ? Number(stored.balance) : 0;
-  const logs = stored && Array.isArray(stored.logs) ? stored.logs : [];
-  return { success: true, balance, logs, imported: null, legacySynced: null, motherSynced: null, source: "tdea-local", updatedAt: stored?.updatedAt || "" };
+  if (stored) {
+    const balance = Number.isFinite(Number(stored.balance)) ? Number(stored.balance) : 0;
+    const logs = Array.isArray(stored.logs) ? stored.logs : [];
+    return { success: true, balance, logs, imported: null, legacySynced: null, motherSynced: null, source: "tdea-local", updatedAt: stored.updatedAt || "" };
+  }
+  const managerData = await readManagerDataRaw(env).catch(() => null);
+  const targetUid = lineUserId.toLowerCase();
+  const rosterRows = [
+    ...(Array.isArray(managerData?.association) ? managerData!.association as Array<Record<string, unknown>> : []),
+    ...(Array.isArray(managerData?.vendor) ? managerData!.vendor as Array<Record<string, unknown>> : [])
+  ];
+  const roster = rosterRows.find((row) => firstClean(explicitMemberLineUid(row), memberLineUid(row)).toLowerCase() === targetUid);
+  const hasImportedBalance = Boolean(roster && Object.prototype.hasOwnProperty.call(roster, "pointBalance") && Number.isFinite(Number(roster.pointBalance)));
+  const initialBalance = hasImportedBalance ? Number(roster!.pointBalance) : 0;
+  if (!hasImportedBalance) return { success: true, balance: 0, logs: [], imported: null, legacySynced: null, motherSynced: null, source: "tdea-local", updatedAt: "" };
+  const createdTs = Date.now();
+  const log: PointLog = {
+    logId: crypto.randomUUID ? crypto.randomUUID() : String(createdTs),
+    lineUserId,
+    type: "EARN",
+    amount: initialBalance,
+    points: Math.abs(initialBalance),
+    reason: "名冊點數初始化",
+    balanceAfter: initialBalance,
+    createdAt: new Date(createdTs).toISOString(),
+    createdTs,
+    source: "roster-import",
+    referenceId: firstClean(roster?.memberNo, roster?.rosterMemberNo)
+  };
+  const account: PointAccount = { balance: initialBalance, logs: [log], updatedAt: new Date(createdTs).toISOString(), source: "tdea-local" };
+  await env.ASSETS_BUCKET.put(key, JSON.stringify(account, null, 2), { httpMetadata: { contentType: "application/json; charset=utf-8", cacheControl: "no-store" } });
+  return { success: true, balance: initialBalance, logs: account.logs, imported: { source: "roster-import", balance: initialBalance }, legacySynced: null, motherSynced: null, source: "tdea-local", updatedAt: account.updatedAt };
 }
 
 async function syncCheckinPoints(env: Env, entry: RegistrationEntry) {
