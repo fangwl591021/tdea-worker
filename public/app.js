@@ -2523,10 +2523,10 @@
 
   function memberPointPanelHtml(info, account) {
     const lineUserId = memberLineUid(info.row);
-    if (!lineUserId && account?.resolving) return `<div class="empty">正在比對母站綁定名冊...</div>`;
-    if (!lineUserId) return `<div class="empty">本地名冊沒有 LINE UID，且母站綁定名冊尚未回補成功。</div>`;
-    if (!account) return `<div class="empty">正在讀取母站點數...</div>`;
-    if (account.success === false) return `<div class="empty">${esc(account.message || "母站點數讀取失敗")}</div>`;
+    if (!lineUserId && account?.resolving) return `<div class="empty">正在比對會員 LINE UID...</div>`;
+    if (!lineUserId) return `<div class="empty">本地名冊尚未取得 LINE UID，請先完成會員 LINE 綁定。</div>`;
+    if (!account) return `<div class="empty">正在讀取本地點數...</div>`;
+    if (account.success === false) return `<div class="empty">${esc(account.message || "本地點數讀取失敗")}</div>`;
     const balance = Number(account.balance || 0);
     const motherLogs = Array.isArray(account.motherSynced?.list) ? account.motherSynced.list.map(item => ({
       createdAt: item.created_at,
@@ -2563,8 +2563,8 @@
     if (!showMessage) render();
     const lineUserId = info ? await resolveMemberLineUidFromMother(info) : "";
     if (!lineUserId) {
-      state.memberPointAccounts[key] = { success: false, message: "母站綁定名冊查無此會員 LINE UID" };
-      if (showMessage) toast("母站綁定名冊查無此會員 LINE UID");
+      state.memberPointAccounts[key] = { success: false, message: "會員名冊查無此會員 LINE UID" };
+      if (showMessage) toast("會員名冊查無此會員 LINE UID");
       render();
       return;
     }
@@ -2592,9 +2592,9 @@
     if (submitter?.dataset.pointAction === "spend") amount = -Math.abs(amount);
     if (submitter?.dataset.pointAction === "add") amount = Math.abs(amount);
     const lineUserId = validLineUid(data.lineUserId) || await resolveMemberLineUidFromMother(info);
-    if (!lineUserId) return toast("母站綁定名冊查無此會員 LINE UID");
+    if (!lineUserId) return toast("會員名冊查無此會員 LINE UID");
     const actionName = amount >= 0 ? "贈點" : "扣點";
-    if (!confirm(`確認${actionName} ${Math.abs(amount).toLocaleString()} 點？\n\n此操作會寫入母站點數。`)) return;
+    if (!confirm(`確認${actionName} ${Math.abs(amount).toLocaleString()} 點？\n\n此操作會直接異動 TDEA 本地點數。`)) return;
     const response = await fetch(api + "/api/points/adjust", {
       method: "POST",
       headers: adminHeaders({ "content-type": "application/json" }),
@@ -2604,7 +2604,6 @@
     if (!response.ok || !result.success) return toast(result.message || "點數異動失敗");
     form.reset();
     await loadMemberPointAccount(info.type, info.rowId);
-    await loadPointLedger(false);
     toast(actionName + "完成");
   }
   function memberRegistrationRowsHtml(rows) {
