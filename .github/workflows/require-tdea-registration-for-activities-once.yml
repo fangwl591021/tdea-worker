@@ -58,6 +58,6 @@ jobs:
           git config user.email "50135766+fangwl591021@users.noreply.github.com"
           git add src/monthly-entry.ts public/native-form.js
           git commit -m "Require registered TDEA identity for activity signup"
-          git rm .github/workflows/require-tdea-registration-for-activities-once.yml .github/scripts/patch-registration-gate.py
+          git rm -f .github/workflows/require-tdea-registration-for-activities-once.yml .github/scripts/patch-registration-gate.py
           git commit -m "Remove one-time activity registration patch files"
           git push origin feature/tdea-identity-profile
