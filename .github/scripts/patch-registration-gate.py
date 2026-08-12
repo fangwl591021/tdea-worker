@@ -58,7 +58,11 @@ async function resolveTdeaRegisteredIdentity(env: Env, lineUserId: string) {
         raise SystemExit('syncCheckinPoints anchor not found')
     b = b.replace(marker, helper + b'\r\n' + marker, 1)
 
-rx = re.compile(rb'async function getNativeLoginMember\(request: Request, env: Env, formId: string\) \{.*?\r?\n\}', re.S)
+# Bound replacements to the next known function so nested braces cannot truncate the source.
+rx = re.compile(
+    rb'async function getNativeLoginMember\(request: Request, env: Env, formId: string\) \{.*?\r?\n\}\r?\n(?=\r?\nfunction validateNativeAnswers)',
+    re.S,
+)
 m = rx.search(b)
 if not m:
     raise SystemExit('getNativeLoginMember function not found')
@@ -77,7 +81,10 @@ new_get = br'''async function getNativeLoginMember(request: Request, env: Env, f
 }'''
 b = b[:m.start()] + new_get + b[m.end():]
 
-rx = re.compile(rb'async function submitNativeForm\(request: Request, env: Env, formId: string\) \{.*?\r?\n\}', re.S)
+rx = re.compile(
+    rb'async function submitNativeForm\(request: Request, env: Env, formId: string\) \{.*?\r?\n\}\r?\n(?=\r?\nasync function createNativeRegistration)',
+    re.S,
+)
 m = rx.search(b)
 if not m:
     raise SystemExit('submitNativeForm function not found')
