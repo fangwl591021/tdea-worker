@@ -26,7 +26,7 @@ import {
   vendorCardKeyword
 } from "./line-keywords";
 
-type Env = { ADMIN_EMAILS?: string; ADMIN_LOGIN_USER?: string; ADMIN_LOGIN_PASSWORD?: string; ASSETS_BUCKET?: R2Bucket; LINE_CHANNEL_SECRET?: string; LINE_CHANNEL_ACCESS_TOKEN?: string; FORWARD_WEBHOOK_URL?: string; GOOGLE_FORMS_SCRIPT_URL?: string; GOOGLE_FORMS_SHARED_SECRET?: string; OPNFORM_API_BASE?: string; OPNFORM_PUBLIC_BASE?: string; OPNFORM_API_TOKEN?: string; OPNFORM_WORKSPACE_ID?: string; OPNFORM_WEBHOOK_SECRET?: string; WETW_POINT_API_KEY?: string; WETW_MEMBER_API_KEY?: string; WETW_TDEA_SHOP_ID?: string; WETW_TDEA_CLIENT_ID?: string; WETW_SHOP_ID?: string; WETW_POINT_TYPE?: string; TDEA_POINT_EXTERNAL_SYNC?: string; TDEA_ADMIN_LINE_USER_IDS?: string; AIWE_WP_USER?: string; AIWE_WP_APP_PASSWORD?: string; OPENAI_API_KEY?: string; OPENAI_MODEL?: string };
+type Env = { TDEA_DESIGN?: Fetcher; TDEA_INTERNAL_SECRET?: string; ADMIN_EMAILS?: string; ADMIN_LOGIN_USER?: string; ADMIN_LOGIN_PASSWORD?: string; ASSETS_BUCKET?: R2Bucket; LINE_CHANNEL_SECRET?: string; LINE_CHANNEL_ACCESS_TOKEN?: string; FORWARD_WEBHOOK_URL?: string; GOOGLE_FORMS_SCRIPT_URL?: string; GOOGLE_FORMS_SHARED_SECRET?: string; OPNFORM_API_BASE?: string; OPNFORM_PUBLIC_BASE?: string; OPNFORM_API_TOKEN?: string; OPNFORM_WORKSPACE_ID?: string; OPNFORM_WEBHOOK_SECRET?: string; WETW_POINT_API_KEY?: string; WETW_MEMBER_API_KEY?: string; WETW_TDEA_SHOP_ID?: string; WETW_TDEA_CLIENT_ID?: string; WETW_SHOP_ID?: string; WETW_POINT_TYPE?: string; TDEA_POINT_EXTERNAL_SYNC?: string; TDEA_ADMIN_LINE_USER_IDS?: string; AIWE_WP_USER?: string; AIWE_WP_APP_PASSWORD?: string; OPENAI_API_KEY?: string; OPENAI_MODEL?: string };
 type LineEvent = { type?: string; replyToken?: string; message?: { type?: string; id?: string; text?: string }; postback?: { data?: string }; source?: { type?: string; userId?: string; groupId?: string; roomId?: string } };
 type MonthlyPage = { id?: string; manual?: boolean; activityNo?: string; activityId?: string; activityName?: string; imageUrl?: string; galleryUrls?: string[]; formImageUrl?: string; detailTitle?: string; detailText?: string; detailUrl?: string; formUrl?: string; shareUrl?: string; order?: number };
 type MonthlyConfig = { enabled?: boolean; keyword?: string; month?: string; altText?: string; detailBaseUrl?: string; pages?: MonthlyPage[]; updatedAt?: string };
@@ -2473,17 +2473,28 @@ async function updateLocalPoints(env: Env, lineUserId: string, amount: number, r
   void options.skipExternalSync;
   const numericAmount = Number(amount || 0);
   if (!lineUserId || !numericAmount) return { success: false, message: "Missing LINE UID or point amount" };
-  if (!env.ASSETS_BUCKET) return { success: false, message: "R2 bucket is not configured" };
-  const key = `points/accounts/${encodeURIComponent(lineUserId)}.json`;
-  const object = await env.ASSETS_BUCKET.get(key);
-  const stored = object ? await object.json().catch(() => null) as PointAccount | null : null;
-  const beforeBalance = stored && Number.isFinite(Number(stored.balance)) ? Number(stored.balance) : 0;
-  const logs = stored && Array.isArray(stored.logs) ? stored.logs : [];
-  const balanceAfter = beforeBalance + numericAmount;
-  if (balanceAfter < 0) return { success: false, code: "insufficient_points", message: `點數不足，目前可用 ${beforeBalance} 點`, balance: beforeBalance };
+  if (!env.TDEA_DESIGN || !env.TDEA_INTERNAL_SECRET) return { success: false, message: "TDEA-DESIGN point service is not configured" };
+  const requestId = clean(options.referenceId) || (crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random()}`);
+  const response = await env.TDEA_DESIGN.fetch("https://tdea-design.internal/internal/tdea/points/adjust", {
+    method: "POST",
+    headers: { "content-type": "application/json", "x-tdea-internal-secret": env.TDEA_INTERNAL_SECRET },
+    body: JSON.stringify({
+      lineUserId,
+      action: numericAmount < 0 ? "deduct" : "grant",
+      points: Math.abs(numericAmount),
+      note: clean(reason) || clean(options.source) || "TDEA point adjustment",
+      requestId
+    })
+  });
+  const result = await response.json().catch(() => ({})) as Record<string, unknown>;
+  if (!response.ok || result.success !== true) return { success: false, message: clean(result.error) || "TDEA-DESIGN point adjustment failed", code: response.status === 400 ? "point_adjust_failed" : "point_service_failed" };
+  const wallet = asRecord(result.wallet);
+  const adjustment = asRecord(result.result);
+  const entry = asRecord(adjustment.entry);
+  const balanceAfter = numberValue(wallet.balance || entry.balanceAfter || entry.balance_after);
   const createdTs = Date.now();
   const log: PointLog = {
-    logId: crypto.randomUUID ? crypto.randomUUID() : String(createdTs),
+    logId: clean(entry.id) || requestId,
     lineUserId,
     type: numericAmount >= 0 ? "EARN" : "SPEND",
     amount: numericAmount,
@@ -2492,12 +2503,10 @@ async function updateLocalPoints(env: Env, lineUserId: string, amount: number, r
     balanceAfter,
     createdAt: new Date(createdTs).toISOString(),
     createdTs,
-    source: options.source || "tdea-local",
-    referenceId: options.referenceId || ""
+    source: options.source || "tdea-design-d1",
+    referenceId: requestId
   };
-  const account: PointAccount = { balance: balanceAfter, logs: [log, ...logs].slice(0, 1000), updatedAt: new Date(createdTs).toISOString(), source: "tdea-local" };
-  await env.ASSETS_BUCKET.put(key, JSON.stringify(account, null, 2), { httpMetadata: { contentType: "application/json; charset=utf-8", cacheControl: "no-store" } });
-  return { success: true, balance: balanceAfter, log, account, before: { balance: beforeBalance, source: "tdea-local" } };
+  return { success: true, balance: balanceAfter, log, account: { balance: balanceAfter, logs: [log], source: "tdea-design-d1" }, serviceResult: result };
 }
 
 function taipeiDateKey(date = new Date()) {
@@ -2593,42 +2602,32 @@ async function importLegacyPointsOnce(env: Env, lineUserId: string, force = fals
 async function getUnifiedPointAccount(env: Env, lineUserId: string, options: { autoImport?: boolean } = {}) {
   void options;
   if (!lineUserId) return { success: false, balance: 0, logs: [], message: "Missing LINE UID" };
-  if (!env.ASSETS_BUCKET) return { success: false, balance: 0, logs: [], message: "R2 bucket is not configured" };
-  const key = `points/accounts/${encodeURIComponent(lineUserId)}.json`;
-  const object = await env.ASSETS_BUCKET.get(key);
-  const stored = object ? await object.json().catch(() => null) as PointAccount | null : null;
-  if (stored) {
-    const balance = Number.isFinite(Number(stored.balance)) ? Number(stored.balance) : 0;
-    const logs = Array.isArray(stored.logs) ? stored.logs : [];
-    return { success: true, balance, logs, imported: null, legacySynced: null, motherSynced: null, source: "tdea-local", updatedAt: stored.updatedAt || "" };
-  }
-  const managerData = await readManagerDataRaw(env).catch(() => null);
-  const targetUid = lineUserId.toLowerCase();
-  const rosterRows = [
-    ...(Array.isArray(managerData?.association) ? managerData!.association as Array<Record<string, unknown>> : []),
-    ...(Array.isArray(managerData?.vendor) ? managerData!.vendor as Array<Record<string, unknown>> : [])
-  ];
-  const roster = rosterRows.find((row) => firstClean(explicitMemberLineUid(row), memberLineUid(row)).toLowerCase() === targetUid);
-  const hasImportedBalance = Boolean(roster && Object.prototype.hasOwnProperty.call(roster, "pointBalance") && Number.isFinite(Number(roster.pointBalance)));
-  const initialBalance = hasImportedBalance ? Number(roster!.pointBalance) : 0;
-  if (!hasImportedBalance) return { success: true, balance: 0, logs: [], imported: null, legacySynced: null, motherSynced: null, source: "tdea-local", updatedAt: "" };
-  const createdTs = Date.now();
-  const log: PointLog = {
-    logId: crypto.randomUUID ? crypto.randomUUID() : String(createdTs),
-    lineUserId,
-    type: "EARN",
-    amount: initialBalance,
-    points: Math.abs(initialBalance),
-    reason: "名冊點數初始化",
-    balanceAfter: initialBalance,
-    createdAt: new Date(createdTs).toISOString(),
-    createdTs,
-    source: "roster-import",
-    referenceId: firstClean(roster?.memberNo, roster?.rosterMemberNo)
-  };
-  const account: PointAccount = { balance: initialBalance, logs: [log], updatedAt: new Date(createdTs).toISOString(), source: "tdea-local" };
-  await env.ASSETS_BUCKET.put(key, JSON.stringify(account, null, 2), { httpMetadata: { contentType: "application/json; charset=utf-8", cacheControl: "no-store" } });
-  return { success: true, balance: initialBalance, logs: account.logs, imported: { source: "roster-import", balance: initialBalance }, legacySynced: null, motherSynced: null, source: "tdea-local", updatedAt: account.updatedAt };
+  if (!env.TDEA_DESIGN || !env.TDEA_INTERNAL_SECRET) return { success: false, balance: 0, logs: [], message: "TDEA-DESIGN point service is not configured" };
+  const response = await env.TDEA_DESIGN.fetch(`https://tdea-design.internal/internal/tdea/points/${encodeURIComponent(lineUserId)}`, {
+    method: "GET",
+    headers: { "x-tdea-internal-secret": env.TDEA_INTERNAL_SECRET, accept: "application/json" }
+  });
+  const result = await response.json().catch(() => ({})) as Record<string, unknown>;
+  if (!response.ok || result.success !== true) return { success: false, balance: 0, logs: [], message: clean(result.error) || "TDEA-DESIGN point query failed" };
+  const entries = Array.isArray(result.entries) ? result.entries.map(asRecord) : [];
+  const logs: PointLog[] = entries.map((entry, index) => {
+    const amount = numberValue(entry.delta);
+    const createdAt = clean(entry.created_at);
+    return {
+      logId: clean(entry.id) || `${lineUserId}:${index}:${createdAt}`,
+      lineUserId,
+      type: amount >= 0 ? "EARN" : "SPEND",
+      amount,
+      points: Math.abs(amount),
+      reason: clean(entry.event_type) || "TDEA points",
+      balanceAfter: numberValue(entry.balance_after),
+      createdAt,
+      createdTs: Date.parse(createdAt) || 0,
+      source: "tdea-design-d1",
+      referenceId: clean(entry.event_reference)
+    };
+  });
+  return { success: true, balance: numberValue(result.balance), logs, source: "tdea-design-d1", userId: clean(result.userId) };
 }
 
 async function syncCheckinPoints(env: Env, entry: RegistrationEntry) {
