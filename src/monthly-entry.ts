@@ -5602,6 +5602,32 @@ async function tdeaDesignMemberLookupApi(request: Request, env: Env) {
     }
   });
 }
+async function tdeaDesignMemberNumberLookupApi(request: Request, env: Env) {
+  const configuredSecret = clean(env.TDEA_DESIGN_LOOKUP_SECRET);
+  if (!configuredSecret) return json({ success: false, message: "Member lookup is not configured" }, 503);
+  if (!await secureTextEqual(request.headers.get("x-tdea-design-key"), configuredSecret)) return json({ success: false, message: "Unauthorized" }, 401);
+  const input = asRecord(await request.json().catch(() => ({})));
+  const memberType = clean(input.memberType).toLowerCase();
+  const fullName = clean(input.fullName);
+  if (!["association", "vendor"].includes(memberType)) return json({ success: false, message: "僅支援協會會員或廠商會員查詢" }, 400);
+  if (!fullName) return json({ success: false, message: "請填寫姓名／公司名稱" }, 400);
+  const managerData = await readManagerData(env) as Record<string, unknown> | null;
+  const rosterRows = managerData?.[memberType];
+  const rows = Array.isArray(rosterRows) ? rosterRows as Array<Record<string, unknown>> : [];
+  const candidateByNumber = new Map<string, { memberNumber: string; rosterName: string }>();
+  for (const row of rows) {
+    if (!rowMatchesMemberName(row, fullName)) continue;
+    const memberNumber = managerRosterMemberKeys(row)[0] || "";
+    if (!memberNumber) continue;
+    const rosterName = memberType === "vendor" ? firstClean(row.companyName, row.name, row.rosterName, fullName) : firstClean(row.name, row.rosterName, row.memberName, fullName);
+    candidateByNumber.set(memberNumber, { memberNumber, rosterName });
+  }
+  const candidates = [...candidateByNumber.values()];
+  if (!candidates.length) return json({ success: false, message: "TDEA CRM 名冊查無此姓名／公司名稱" }, 404);
+  if (candidates.length > 1) return json({ success: false, message: "找到多筆同名資料，請聯絡 TDEA 協助確認會員編號" }, 409);
+  const match = candidates[0];
+  return json({ success: true, match: { memberType, memberNumber: match.memberNumber, rosterName: match.rosterName, source: memberType === "vendor" ? "vendor-crm" : "association-crm" } });
+}
 async function listMotherRegisterRecordsApi(request: Request, env: Env) {
   const guard = await requireAdmin(request, env);
   if (guard) return guard;
@@ -7020,6 +7046,7 @@ export default {
     const url = new URL(request.url);
     if (request.method === "OPTIONS") return new Response(null, { status: 204, headers });
     if (request.method === "POST" && url.pathname === "/api/internal/tdea-design/member-lookup") return tdeaDesignMemberLookupApi(request, env);
+    if (request.method === "POST" && url.pathname === "/api/internal/tdea-design/member-number-lookup") return tdeaDesignMemberNumberLookupApi(request, env);
 	    const uploadMatch = url.pathname.match(/^\/api\/uploads\/(.+)$/);
 	    if ((request.method === "GET" || request.method === "HEAD") && uploadMatch) return getUploadedFile(env, decodeURIComponent(uploadMatch[1]));
       if (request.method === "GET" && url.pathname === "/api/line-keywords/effective") return json({ success: true, data: effectiveLineKeywords(), source: "src/line-keywords.ts" });
