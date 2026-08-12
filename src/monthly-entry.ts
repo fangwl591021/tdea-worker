@@ -2329,130 +2329,20 @@ async function resolvePointBatchLineUserId(
 async function queryMemberPointBatchApi(request: Request, env: Env) {
   const guard = await requireAdmin(request, env);
   if (guard) return guard;
-
   const input = await request.json().catch(() => ({})) as Record<string, unknown>;
-
-  const rawMembers = Array.isArray(input.members)
-    ? input.members.map(asRecord)
-    : [];
-
-  const legacyLineUserIds = Array.isArray(input.lineUserIds)
-    ? input.lineUserIds
-    : [];
-
-  const members = rawMembers.length
-    ? rawMembers
-        .map((row) => ({
-          memberNo: firstClean(
-            row.memberNo,
-            row.rosterMemberNo,
-            row.member_no,
-            row.user_login
-          ).toUpperCase(),
-          lineUserId: firstClean(
-            row.lineUserId,
-            row.lineUid,
-            row.uid,
-            row.LINE_user_id
-          )
-        }))
-        .filter((row) => row.memberNo || row.lineUserId)
-        .slice(0, 1000)
-    : legacyLineUserIds
-        .map((value) => ({
-          memberNo: "",
-          lineUserId: clean(value)
-        }))
-        .filter((row) => row.lineUserId)
-        .slice(0, 1000);
-
-  const data = await mapWithConcurrency(
-    members,
-    6,
-    async (member) => {
-      const lineUserId = await resolvePointBatchLineUserId(env, member);
-
-      if (!lineUserId) {
-        return {
-          memberNo: member.memberNo,
-          lineUserId: "",
-          success: false,
-          balance: null,
-          message: "?????? LINE UID",
-          source: "member-number-fallback"
-        };
-      }
-
-      try {
-        const result = await queryPointBalance(
-          env,
-          lineUserId
-        ) as Record<string, unknown>;
-
-        return {
-          memberNo: member.memberNo,
-          lineUserId,
-          success: result.success === true,
-          balance: result.success === true
-            ? numberValue(result.balance)
-            : null,
-          message: result.success === true
-            ? ""
-            : clean(result.message) ||
-              clean(result.code) ||
-              "mother point query failed",
-          source: member.lineUserId
-            ? "line-user-id"
-            : "member-number-fallback"
-        };
-      } catch (error) {
-        return {
-          memberNo: member.memberNo,
-          lineUserId,
-          success: false,
-          balance: null,
-          message: String(
-            (error as Error).message ||
-            error ||
-            "mother point query failed"
-          ),
-          source: member.lineUserId
-            ? "line-user-id"
-            : "member-number-fallback"
-        };
-      }
+  const members = Array.isArray(input.members) ? input.members.slice(0, 600).map(asRecord) : [];
+  const results: Array<Record<string, unknown>> = [];
+  for (const member of members) {
+    const memberNo = firstClean(member.memberNo, member.rosterMemberNo);
+    const lineUserId = firstClean(member.lineUserId, member.uid, member.LINE_user_id);
+    if (!lineUserId) {
+      results.push({ memberNo, lineUserId: '', success: false, message: 'missing_line_uid' });
+      continue;
     }
-  );
-
-  return json({ success: true, data });
-}
-
-function formatMotherPointReply(result: Record<string, unknown>, label: string) {
-  if (result.success !== true) {
-    return `${label}點數查詢失敗：${clean(result.message) || clean(result.code) || "未知錯誤"}`;
+    const account = await getUnifiedPointAccount(env, lineUserId);
+    results.push({ memberNo, lineUserId, success: account.success === true, balance: numberValue(account.balance), message: account.success === true ? '' : clean(account.message) });
   }
-  const flatList = Array.isArray(result.list) ? result.list.map(asRecord) : [];
-  const data = asRecord(result.data);
-  const dataList = Array.isArray(data.list) ? data.list.map(asRecord) : [];
-  const list = flatList.length ? flatList : dataList;
-  if (!list.length) return `${label}目前查不到點數紀錄。`;
-  const balance = result.balance ?? list[0].point_balance ?? "未知";
-  const rows = list.slice(0, 3).map((item) => {
-    const createdAt = clean(item.created_at);
-    const eventName = clean(item.event_name) || "點數紀錄";
-    const points = item.get_point ?? 0;
-    return `${createdAt} ${eventName} ${points} 點`.trim();
-  }).join("\n");
-  return `${label}目前點數餘額：${balance}\n\n最近紀錄：\n${rows}`;
-}
-
-function pointLogsFromMotherList(list: Array<Record<string, unknown>>, fallbackLineUserId = "") {
-  return list.map((item, index) => {
-    const amount = numberValue(item.get_point);
-    const createdAt = firstClean(item.created_at, item.createdAt) || new Date().toISOString();
-    const ts = Date.parse(createdAt);
-    return { logId: firstClean(item.id, "mother-" + index + "-" + createdAt), lineUserId: firstClean(item.LINE_user_id, item.lineUserId, fallbackLineUserId), type: amount >= 0 ? "EARN" : "SPEND", amount, points: Math.abs(amount), reason: firstClean(item.event_name, item.event_content, item.shop_remark), balanceAfter: numberValue(item.point_balance), createdAt, createdTs: Number.isFinite(ts) ? ts : Date.now(), source: "wetw-point/query-user-point-list", referenceId: firstClean(item.shop_remark, item.id), externalSync: item } as PointLog;
-  });
+  return json({ success: true, data: { members: results }, members: results });
 }
 
 async function handleMotherPointEvents(events: Array<{ event: LineEvent; query: { uid: string } }>, env: Env) {

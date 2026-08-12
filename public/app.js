@@ -1124,6 +1124,7 @@
     if (state.view === "motherRegister" && !state.motherRegisterRecords && !state.motherRegisterLoading) loadMotherRegisterRecords();
     if (state.view === "dashboard" && state.memberApplications === null) loadMemberApplications();
     if (state.view === "adminWhitelist" && !state.adminWhitelist) loadAdminWhitelist().then(() => render()).catch(() => undefined);
+    if ((state.view === "association" || state.view === "vendor") && !rosterPointLoading[state.view]) setTimeout(() => loadRosterPointBalances(state.view), 0);
     window.TDEALineNav?.refresh?.();
   }
 
@@ -1185,155 +1186,28 @@
   async function loadRosterPointBalances(type, force = false) {
     if (type !== "association" && type !== "vendor") return;
     if (rosterPointLoading[type]) return;
-
     const now = Date.now();
-    if (
-      !force &&
-      rosterPointLoadedAt[type] &&
-      now - rosterPointLoadedAt[type] < 5 * 60 * 1000
-    ) {
-      return;
-    }
-
+    if (!force && rosterPointLoadedAt[type] && now - rosterPointLoadedAt[type] < 5 * 60 * 1000) return;
     const rows = visibleRosterRows(type);
     if (!rows.length) return;
-
     rosterPointLoading[type] = true;
-
-    rows.forEach((row) => {
-      row.motherPointLoading = true;
-      row.motherPointError = "";
-    });
-
     try {
-      // ??????????????? UID ????
-      if (force) motherRosterMapPromise = null;
-      const motherMap = await loadMotherRosterMap();
-
-      const members = rows.map((row) => {
-        const memberNo = rosterMemberKey(row);
-
-        let lineUserId = memberLineUid(row);
-
-        if (!lineUserId && memberNo) {
-          const remote = motherMap.get(memberNo);
-
-          lineUserId = validLineUid(
-            remote?.lineUserId ||
-            remote?.LINE_user_id ||
-            remote?.uid
-          );
-
-          // ? resolveMemberLineUidFromMother() ???
-          // ??????? CRM row?
-          if (lineUserId) {
-            row.lineUserId = lineUserId;
-
-            if (!row.LINE_user_id) {
-              row.LINE_user_id = lineUserId;
-            }
-
-            if (!row.uid) {
-              row.uid = lineUserId;
-            }
-          }
-        }
-
-        return {
-          memberNo,
-          lineUserId
-        };
+      const response = await fetch(api + "/api/member-points/batch", {
+        method: "POST",
+        headers: adminHeaders({ "content-type": "application/json" }),
+        body: JSON.stringify({ members: rows.map(row => ({ memberNo: row.memberNo || "", lineUserId: memberLineUid(row) || "" })) })
       });
-
-      // ??? UID ???????? CRM?
-      if (members.some((item) => item.lineUserId)) {
-        queueManagerDataSave();
-      }
-
-      const response = await fetch(
-        api + "/api/member-points/batch",
-        {
-          method: "POST",
-          headers: adminHeaders({
-            "content-type": "application/json"
-          }),
-          body: JSON.stringify({ members }),
-          cache: "no-store"
-        }
-      );
-
       const result = await response.json().catch(() => ({}));
-
-      if (!response.ok || result.success !== true) {
-        throw new Error(
-          result.message || "??????????"
-        );
-      }
-
-      const results = Array.isArray(result.data)
-        ? result.data
-        : [];
-
-      const byMemberNo = new Map();
-      const byUid = new Map();
-
-      results.forEach((item) => {
-        const memberNo = String(
-          item.memberNo || ""
-        ).trim().toUpperCase();
-
-        const lineUserId = String(
-          item.lineUserId || ""
-        ).trim().toLowerCase();
-
-        if (memberNo) byMemberNo.set(memberNo, item);
-        if (lineUserId) byUid.set(lineUserId, item);
+      const items = Array.isArray(result?.data?.members) ? result.data.members : Array.isArray(result?.members) ? result.members : [];
+      const byMemberNo = new Map(items.map(item => [String(item.memberNo || "").trim().toUpperCase(), item]));
+      const byUid = new Map(items.map(item => [String(item.lineUserId || "").trim().toLowerCase(), item]));
+      rows.forEach(row => {
+        const pointResult = byMemberNo.get(String(row.memberNo || "").trim().toUpperCase()) || byUid.get(String(memberLineUid(row) || "").trim().toLowerCase());
+        if (pointResult?.success === true) row.pointBalance = Number(pointResult.balance || 0);
       });
-
-      rows.forEach((row) => {
-        const memberNo = rosterMemberKey(row);
-
-        const lineUserId = String(
-          memberLineUid(row) || ""
-        ).trim().toLowerCase();
-
-        const pointResult =
-          byMemberNo.get(memberNo) ||
-          byUid.get(lineUserId);
-
-        row.motherPointLoading = false;
-
-        if (pointResult?.success === true) {
-          row.pointBalance = Number(
-            pointResult.balance || 0
-          );
-
-          row.motherPointSuccess = true;
-          row.motherPointError = "";
-        } else {
-          row.motherPointSuccess = false;
-
-          row.motherPointError = lineUserId
-            ? (
-                pointResult?.message ||
-                "????????"
-              )
-            : "??????????? LINE UID";
-        }
-      });
-
       rosterPointLoadedAt[type] = Date.now();
-
     } catch (error) {
-      rows.forEach((row) => {
-        row.motherPointLoading = false;
-        row.motherPointSuccess = false;
-
-        row.motherPointError =
-          error?.message ||
-          "????????";
-      });
-
+      console.warn('CRM D1 point batch load failed', error);
     } finally {
       rosterPointLoading[type] = false;
       render();
@@ -2572,6 +2446,8 @@
       const res = await fetch(api + "/api/points/" + encodeURIComponent(lineUserId), { headers: adminHeaders(), cache: "no-store" });
       const result = await res.json().catch(() => ({}));
       state.memberPointAccounts[key] = result.data || { success: false, message: result.message || "點數讀取失敗" };
+      if (row && state.memberPointAccounts[key]?.success === true) row.pointBalance = Number(state.memberPointAccounts[key].balance || 0);
+      rosterPointLoadedAt[type] = Date.now();
       if (showMessage) toast("點數已更新");
     } catch (error) {
       state.memberPointAccounts[key] = { success: false, message: error?.message || "點數讀取失敗" };
