@@ -2206,9 +2206,9 @@ async function queryPointBalance(env: Env, lineUserId: string) {
 }
 
 async function syncMotherPointToLocal(env: Env, lineUserId: string) {
-  const result = await queryPointBalance(env, lineUserId) as Record<string, unknown>;
+  const result = await getUnifiedPointAccount(env, lineUserId) as Record<string, unknown>;
   if (result.success !== true) return result;
-  return { ...result, cached: false, syncedAt: new Date().toISOString(), source: "wetw-point/query-user-point-list" };
+  return { ...result, cached: false, syncedAt: new Date().toISOString(), source: "tdea-design-d1" };
 }
 
 async function syncBoundMemberPoints(env: Env, lineUserId: string) {
@@ -2352,7 +2352,7 @@ async function handleMotherPointEvents(events: Array<{ event: LineEvent; query: 
     if (!uid) {
       return replyToLine(event.replyToken, [{ type: "text", text: "查詢點數需要 LINE UID，請輸入：TDEA點數+UID" }], env);
     }
-    const result = await queryPointBalance(env, uid) as Record<string, unknown>;
+    const result = await getUnifiedPointAccount(env, uid) as Record<string, unknown>;
     const label = query.uid ? `${uid} ` : "你 ";
     return replyToLine(event.replyToken, [{ type: "text", text: formatMotherPointReply(result, label) }], env);
   }));
@@ -2414,15 +2414,6 @@ async function rewardMarqueePoint(request: Request, env: Env) {
     const points = Math.max(1, Math.round(Number(config.left?.points || 1)));
     const eventContent = clean(config.left?.eventContent || "廣告贈點系統簽到") || "廣告贈點系統簽到";
     const referenceId = `marquee:${taipeiDateKey()}:button:left`;
-    const motherBefore = await queryPointBalance(env, lineUserId) as Record<string, unknown>;
-    if (motherBefore.success !== true) {
-      return json({ success: false, message: clean(motherBefore.message) || clean(motherBefore.code) || "母站點數查詢失敗", before: motherBefore }, 502);
-    }
-    const motherLogs = Array.isArray(motherBefore.list) ? motherBefore.list.map(asRecord) : [];
-    const existing = motherLogs.find((log) => firstClean(log.shop_remark, log.event_content, log.event_name).includes(referenceId));
-    if (existing) {
-      return json({ success: true, awarded: false, duplicate: true, points: 0, balance: motherBefore.balance, referenceId, message: "今日已完成系統簽到" });
-    }
     const result = await updateLocalPoints(env, lineUserId, points, eventContent, {
       source: "marquee_button_checkin",
       referenceId
@@ -2439,12 +2430,6 @@ async function rewardMarqueePoint(request: Request, env: Env) {
   const title = clean(item.title || config.title || "TDEA 廣告贈點");
   const dateKey = taipeiDateKey();
   const referenceId = `marquee:${dateKey}:${clean(item.id || item.imageUrl || imageUrl)}`;
-  const motherBefore = await queryPointBalance(env, lineUserId) as Record<string, unknown>;
-  const motherLogs = Array.isArray(motherBefore.list) ? motherBefore.list.map(asRecord) : [];
-  const existing = motherLogs.find((log) => firstClean(log.shop_remark, log.event_content, log.event_name).includes(referenceId));
-  if (existing) {
-    return json({ success: true, awarded: false, duplicate: true, points: 0, balance: motherBefore.balance, imageId: item.id, linkUrl: clean(item.linkUrl), message: "already awarded" });
-  }
   const eventContent = `${title} 圖片點擊每日贈點`;
   const result = await updateLocalPoints(env, lineUserId, points, eventContent, {
     source: "marquee_image_click",
@@ -2471,8 +2456,8 @@ async function queryMarqueePoints(request: Request, env: Env) {
   const config = await readMarqueeConfig(env);
   if (config.enabled === false) return json({ success: false, message: "廣告贈點尚未啟用" }, 403);
   if (config.right?.enabled === false) return json({ success: false, message: "查詢按鈕尚未啟用" }, 403);
-  const result = await queryPointBalance(env, lineUserId) as Record<string, unknown>;
-  const list = Array.isArray(result.list) ? result.list.map(asRecord) : [];
+  const result = await getUnifiedPointAccount(env, lineUserId) as Record<string, unknown>;
+  const list = Array.isArray(result.logs) ? result.logs.map(asRecord) : [];
   return json({
     success: result.success !== false,
     lineUserId,
@@ -2484,9 +2469,10 @@ async function queryMarqueePoints(request: Request, env: Env) {
 }
 
 async function importLegacyPointsOnce(env: Env, lineUserId: string, force = false) {
-  const result = await queryPointBalance(env, lineUserId) as Record<string, unknown>;
-  if (result.success !== true) return { success: false, reason: clean(result.code) || "mother_query_failed", imported: 0, message: clean(result.message) || "mother point query failed", raw: result };
-  return { success: true, reason: "mother_direct", imported: 0, balance: numberValue(result.balance), importedAt: new Date().toISOString(), source: "wetw-point/query-user-point-list", raw: result, message: "mother point is the source of truth; no local import was written" };
+  void force;
+  const result = await getUnifiedPointAccount(env, lineUserId) as Record<string, unknown>;
+  if (result.success !== true) return { success: false, reason: "d1_query_failed", imported: 0, message: clean(result.message) || "TDEA D1 point query failed", raw: result };
+  return { success: true, reason: "d1_canonical", imported: 0, balance: numberValue(result.balance), importedAt: new Date().toISOString(), source: "tdea-design-d1", raw: result };
 }
 
 async function getUnifiedPointAccount(env: Env, lineUserId: string, options: { autoImport?: boolean } = {}) {
