@@ -1,0 +1,34 @@
+name: Reuse passed LINE UID for activity records once
+on:
+  push:
+    branches:
+      - feature/tdea-identity-profile
+    paths:
+      - .github/workflows/use-passed-line-uid-for-activity-records-once.yml
+permissions:
+  contents: write
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feature/tdea-identity-profile
+          fetch-depth: 0
+      - name: Apply UID reuse patch
+        run: python .github/scripts/use-passed-line-uid-for-activity-records.py
+      - name: Verify
+        shell: bash
+        run: |
+          node --check public/native-form.js
+          grep -q 'const passedUid = trim(params.get("lineUserId")' public/native-form.js
+      - name: Commit and cleanup
+        shell: bash
+        run: |
+          git config user.name "fangwl591021"
+          git config user.email "50135766+fangwl591021@users.noreply.github.com"
+          git add public/native-form.js
+          git commit -m "Reuse signed-in LINE UID for activity records"
+          git rm .github/workflows/use-passed-line-uid-for-activity-records-once.yml .github/scripts/use-passed-line-uid-for-activity-records.py
+          git commit -m "Remove one-time activity records UID patch files"
+          git push origin feature/tdea-identity-profile
