@@ -263,9 +263,16 @@
     ].includes(label);
   }
 
+  function optionText(option) {
+    if (typeof option === "string" || typeof option === "number") return trim(option);
+    if (!option || typeof option !== "object") return "";
+    return trim(option.label || option.name || option.value || option.text || option.title);
+  }
+
   function selectedValue(value, option) {
-    if (Array.isArray(value)) return value.map(String).includes(String(option));
-    return String(value ?? "") === String(option);
+    const normalizedOption = optionText(option);
+    if (Array.isArray(value)) return value.map((item) => optionText(item) || String(item)).includes(normalizedOption);
+    return String(value ?? "") === normalizedOption;
   }
 
   function fieldHtml(field, answers = {}) {
@@ -276,15 +283,15 @@
     const value = answers[field.key] ?? answers[field.label] ?? "";
     if (type === "paragraph") return `<div class="nf-field"><label>${label}</label><textarea name="${name}" ${field.required ? "required" : ""}>${esc(value)}</textarea></div>`;
     if (type === "dropdown") {
-      const options = Array.isArray(field.options) ? field.options : [];
+      const options = (Array.isArray(field.options) ? field.options : []).map(optionText).filter(Boolean);
       return `<div class="nf-field"><label>${label}</label><select name="${name}" ${field.required ? "required" : ""}><option value="">請選擇</option>${options.map((opt) => `<option value="${esc(opt)}" ${selectedValue(value, opt) ? "selected" : ""}>${esc(opt)}</option>`).join("")}</select></div>`;
     }
     if (type === "radio") {
-      const options = Array.isArray(field.options) ? field.options : [];
+      const options = (Array.isArray(field.options) ? field.options : []).map(optionText).filter(Boolean);
       return `<div class="nf-field"><label>${label}</label><div class="nf-choice">${options.map((opt) => `<label><input type="radio" name="${name}" value="${esc(opt)}" ${field.required ? "required" : ""} ${selectedValue(value, opt) ? "checked" : ""}>${esc(opt)}</label>`).join("")}</div></div>`;
     }
     if (type === "checkbox") {
-      const options = Array.isArray(field.options) ? field.options : [];
+      const options = (Array.isArray(field.options) ? field.options : []).map(optionText).filter(Boolean);
       return `<div class="nf-field" data-checkbox-field="${name}" data-required="${field.required ? "1" : "0"}"><label>${label}</label><div class="nf-choice">${options.map((opt) => `<label><input type="checkbox" name="${name}" value="${esc(opt)}" ${selectedValue(value, opt) ? "checked" : ""}>${esc(opt)}</label>`).join("")}</div></div>`;
     }
     return `<div class="nf-field"><label>${label}</label><input name="${name}" type="${type === "email" ? "email" : "text"}" value="${esc(value)}" ${field.required ? "required" : ""}></div>`;
