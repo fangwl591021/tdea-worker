@@ -1906,11 +1906,19 @@
 
   function ensureActivityEditorFields() {
     const form = document.querySelector("#drawer-activity");
-    if (!form || form.dataset.mediaFieldsReady) return;
-    form.dataset.mediaFieldsReady = "true";
-    ensureActivityMediaStyles();
+    if (!form) return;
     const id = form.querySelector("input[name='id']")?.value || "";
     const activity = state.data.activities.find((item) => item.id === id) || {};
+    if (form.dataset.mediaFieldsReady) {
+      const textarea = form.querySelector("[name='customRegistrationFields']");
+      if (textarea) {
+        textarea.value = serializeCustomRegistrationFields(activity);
+        hydrateCustomRegistrationFieldsFromNativeForm(activity, textarea).catch(() => false);
+      }
+      return;
+    }
+    form.dataset.mediaFieldsReady = "true";
+    ensureActivityMediaStyles();
     const insertBefore = form.querySelector("input[name='formUrl']")?.closest(".field") || form.querySelector("button[type='submit']");
     const wrap = document.createElement("div");
     wrap.className = "activity-extra-fields";
