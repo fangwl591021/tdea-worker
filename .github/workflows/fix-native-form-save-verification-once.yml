@@ -1,0 +1,45 @@
+name: Fix native form save verification once
+on:
+  push:
+    branches: [feature/tdea-identity-profile]
+    paths: ['.github/workflows/fix-native-form-save-verification-once.yml']
+permissions:
+  contents: write
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feature/tdea-identity-profile
+      - name: Apply patch
+        shell: python
+        run: |
+          from pathlib import Path
+          p=Path('public/app.js')
+          s=p.read_text(encoding='utf-8')
+          old='''    const result = await response.json().catch(() => ({}));\n    if (!response.ok || !result.success) return false;\n    const formUrl = result.formUrl || result.nativeFormUrl || result.data?.formUrl || result.data?.nativeFormUrl || result.data?.form?.formUrl || "";'''
+          new='''    const result = await response.json().catch(() => ({}));\n    if (!response.ok || !result.success) {\n      throw new Error(result.message || result.error || `報名表儲存失敗（HTTP ${response.status}）`);\n    }\n    const formUrl = result.formUrl || result.nativeFormUrl || result.data?.formUrl || result.data?.nativeFormUrl || result.data?.form?.formUrl || "";'''
+          if old not in s:
+              raise SystemExit('ensureNativeForm failure block not found')
+          s=s.replace(old,new,1)
+          old2='''          form.__tdeaRegistrationSettings = registrationSettings;\n          await ensureNativeFormForActivity(activity, email, registrationSettings, { update: true });'''
+          new2='''          form.__tdeaRegistrationSettings = registrationSettings;\n          const nativeSaved = await ensureNativeFormForActivity(activity, email, registrationSettings, { update: true });\n          if (!nativeSaved) throw new Error("自訂問題未寫入報名表");\n          if (customFields.length) {\n            const verifyFormId = nativeFormIdentifier(activity);\n            const verifyResponse = await fetch(api + "/api/native-forms/" + encodeURIComponent(verifyFormId), { headers: adminHeaders(), cache: "no-store" });\n            const verifyResult = await verifyResponse.json().catch(() => ({}));\n            if (!verifyResponse.ok || !verifyResult.success) throw new Error(verifyResult.message || "無法驗證自訂問題是否已儲存");\n            const verifyData = verifyResult.data?.form || verifyResult.data || {};\n            const verifyFields = Array.isArray(verifyData.fields) ? verifyData.fields : [];\n            const verifyKeys = new Set(verifyFields.map((field) => String(field?.key || "").trim()));\n            const missing = customFields.filter((field) => !verifyKeys.has(String(field.key || "").trim()));\n            if (missing.length) throw new Error("自訂問題未寫入報名表：" + missing.map((field) => field.label).join("、"));\n          }'''
+          if old2 not in s:
+              raise SystemExit('activity native save call not found')
+          s=s.replace(old2,new2,1)
+          p.write_text(s,encoding='utf-8')
+      - name: Verify
+        run: |
+          node --check public/app.js
+          grep -n -A18 -B3 'const nativeSaved' public/app.js
+          git diff --check
+      - name: Commit and cleanup
+        run: |
+          git config user.name fangwl591021
+          git config user.email 50135766+fangwl591021@users.noreply.github.com
+          git add public/app.js
+          git commit -m "Verify native form custom field saves"
+          git rm .github/workflows/fix-native-form-save-verification-once.yml
+          git commit -m "Cleanup native form save verification workflow"
+          git push origin feature/tdea-identity-profile
