@@ -876,15 +876,49 @@
     return fields.filter((field) => field && !defaultRegistrationFieldKeys.has(String(field.key || "").trim()));
   }
 
-  function serializeCustomRegistrationFields(activity = {}) {
-    return customRegistrationFieldsFor(activity).map((field) => {
+  function customRegistrationOptionText(option) {
+    if (typeof option === "string") return option.trim();
+    if (!option || typeof option !== "object") return "";
+    return String(option.label || option.name || option.value || option.text || option.id || "").trim();
+  }
+
+  function serializeCustomRegistrationFieldList(fields = []) {
+    return (Array.isArray(fields) ? fields : []).filter((field) => field && !defaultRegistrationFieldKeys.has(String(field.key || "").trim())).map((field) => {
       const type = String(field.type || "text").trim();
       const required = field.required ? "必填" : "選填";
-      const options = Array.isArray(field.options) ? field.options.join(",") : "";
-      return [String(field.label || "").trim(), type, required, options].join(" | ");
+      const options = Array.isArray(field.options) ? field.options.map(customRegistrationOptionText).filter(Boolean).join(",") : "";
+      return [String(field.label || "").trim(), type, required, options].join(" | " );
     }).filter(Boolean).join("\n");
   }
 
+  function serializeCustomRegistrationFields(activity = {}) {
+    return serializeCustomRegistrationFieldList(customRegistrationFieldsFor(activity));
+  }
+
+  async function hydrateCustomRegistrationFieldsFromNativeForm(activity, textarea) {
+    if (!activity || !textarea) return false;
+    const formId = nativeFormIdentifier(activity);
+    if (!formId) return false;
+    const before = textarea.value;
+    try {
+      const response = await fetch(api + "/api/native-forms/" + encodeURIComponent(formId), { headers: adminHeaders(), cache: "no-store" });
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok || !result.success) return false;
+      const data = result.data?.form || result.data || {};
+      const fields = Array.isArray(data.fields) ? data.fields : [];
+      const customText = serializeCustomRegistrationFieldList(fields);
+      if (!customText) return false;
+      if (textarea.value === before) textarea.value = customText;
+      const merged = { ...storedFormSettingsForActivity(activity), fields };
+      state.data.formSettings ||= {};
+      if (activity.id) state.data.formSettings[activity.id] = merged;
+      if (activity.activityNo) state.data.formSettings[activity.activityNo] = merged;
+      activity.formSettings = { ...(activity.formSettings || {}), ...merged };
+      return true;
+    } catch (_) {
+      return false;
+    }
+  }
   function parseCustomRegistrationFields(text = "") {
     return String(text || "").split(/\r?\n/).map((line, index) => {
       const raw = line.trim();
@@ -1888,6 +1922,10 @@
       <div class="field"><label>報名頁網址</label><input name="nativeFormUrl" value="${esc(activity.nativeFormUrl || "")}" placeholder="系統會自動產生"></div>`;
     insertBefore?.insertAdjacentElement("beforebegin", wrap);
     groupActivityMediaFields(wrap);
+    const customRegistrationTextarea = wrap.querySelector("[name='customRegistrationFields']");
+    if (customRegistrationTextarea) {
+      hydrateCustomRegistrationFieldsFromNativeForm(activity, customRegistrationTextarea).catch(() => false);
+    }
     const galleryFileInput = wrap.querySelector("[data-activity-gallery-file]");
     if (galleryFileInput && !wrap.querySelector("[data-activity-gallery-status]")) {
       const status = document.createElement("div");
