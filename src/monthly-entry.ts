@@ -1392,6 +1392,26 @@ function normalizeRegistrationPayment(entry: RegistrationEntry): RegistrationPay
   };
 }
 
+async function refreshRegistrationActivitySnapshot(env: Env, entry: RegistrationEntry): Promise<RegistrationEntry> {
+  const formId = clean(entry.formId);
+  if (!formId) return entry;
+  const form = await readNativeForm(env, formId).catch(() => null);
+  const activity = asRecord(form?.activity);
+  if (!Object.keys(activity).length) return entry;
+  const payment = normalizeRegistrationPayment(entry);
+  const amount = activityPaymentAmount(activity);
+  return {
+    ...entry,
+    activity: { ...asRecord(entry.activity), ...activity },
+    payment: {
+      ...payment,
+      amount,
+      status: amount <= 0 ? "free" : (payment.status === "free" ? "unpaid" : payment.status),
+      method: amount <= 0 ? "free" : (payment.method || "bank_transfer"),
+    },
+  };
+}
+
 function paymentIsSettled(entry: RegistrationEntry) {
   const payment = normalizeRegistrationPayment(entry);
   return payment.amount <= 0 || payment.status === "free" || payment.status === "paid";
@@ -1406,7 +1426,7 @@ async function listRegistrations(request: Request, env: Env) {
     .filter(Boolean);
   for (const key of keys) {
     const list = dedupeRegistrations(await readRegistrationList(env, key));
-    if (list.length) return json({ success: true, key, data: list.map(publicRegistrationEntry) });
+    if (list.length) { const current = await Promise.all(list.map((entry) => refreshRegistrationActivitySnapshot(env, entry))); return json({ success: true, key, data: current.map(publicRegistrationEntry) }); }
   }
   return json({ success: true, key: keys[0] || "", data: [] });
 }
@@ -3117,7 +3137,8 @@ async function queryNativeRegistration(request: Request, env: Env) {
   }
   const entry = await readNativeRegistration(env, targetId);
   if (!entry || (queryCode && entry.queryCode !== queryCode)) return json({ success: false, message: "查無報名資料" }, 404);
-  return json({ success: true, data: { ...publicRegistrationEntry(entry), checkinUrl: entry.checkinToken ? nativeCheckinUrl(entry.checkinToken) : "" } });
+  const currentEntry = await refreshRegistrationActivitySnapshot(env, entry);
+  return json({ success: true, data: { ...publicRegistrationEntry(currentEntry), checkinUrl: entry.checkinToken ? nativeCheckinUrl(entry.checkinToken) : "" } });
 }
 
 async function queryNativeRegistrationsByLine(request: Request, env: Env) {
@@ -3131,7 +3152,8 @@ async function queryNativeRegistrationsByLine(request: Request, env: Env) {
     const entry = await readNativeRegistration(env, id);
     if (entry && clean(entry.lineUserId) === lineUserId) entries.push(entry);
   }
-  return json({ success: true, data: entries.map((entry) => ({ ...publicRegistrationEntry(entry), checkinUrl: entry.checkinToken ? nativeCheckinUrl(entry.checkinToken) : "" })) });
+  const currentEntries = await Promise.all(entries.map((entry) => refreshRegistrationActivitySnapshot(env, entry)));
+  return json({ success: true, data: currentEntries.map((entry) => ({ ...publicRegistrationEntry(entry), checkinUrl: entry.checkinToken ? nativeCheckinUrl(entry.checkinToken) : "" })) });
 }
 
 async function updateRegistrationEverywhere(env: Env, entry: RegistrationEntry) {
@@ -6900,7 +6922,8 @@ async function handleMonthlyWebhook(request: Request, env: Env, rawBody: string,
     }
     return replyMonthlyActivityEvents(events, allEvents, env, ctx);
   }
-  const hasBuiltInKeywordEvents = Boolean(queryEvents.length || memberQrEvents.length || calendarEvents.length || personalMessageEvents.length || uidBindEvents.length || vendorCardEvents.length || marqueeEvents.length || pointEvents.length);
+
+  const hasBuiltInKeywordEvents = Boolean(queryEvents.length || memberQrEvents.length || calendarEvents.length || personalMessageEvents.length || uidBindEvents.length || vendorCardEvents.length || marqueeEvents.length || pointEvents.length);
   if (hasBuiltInKeywordEvents) {
     const signature = request.headers.get("x-line-signature");
     if (!await verifyLineSignature(rawBody, signature, env.LINE_CHANNEL_SECRET)) return new Response("Invalid Signature", { status: 403, headers });
@@ -6922,7 +6945,8 @@ async function handleMonthlyWebhook(request: Request, env: Env, rawBody: string,
     if (!await verifyLineSignature(rawBody, signatureForCustomKeyword, env.LINE_CHANNEL_SECRET)) return new Response("Invalid Signature", { status: 403, headers });
     const customKeyword = await handleCustomKeywordEvents(customKeywordEvents, env);
     if (customKeyword) return customKeyword;
-  }  const onboardingActiveEarly = !hasMemberCheckinTextInPayload && await hasMemberOnboardingSession(allEvents, env);
+  }
+  const onboardingActiveEarly = !hasMemberCheckinTextInPayload && await hasMemberOnboardingSession(allEvents, env);
   if (onboardingActiveEarly && !hasBuiltInKeywordEvents) {
     const signature = request.headers.get("x-line-signature");
     if (!await verifyLineSignature(rawBody, signature, env.LINE_CHANNEL_SECRET)) return new Response("Invalid Signature", { status: 403, headers });

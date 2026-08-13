@@ -1492,7 +1492,7 @@
   function registrationList(rowId) {
     const activity = state.data.activities.find(r => r.id === rowId) || {};
     const rows = state.registrationLists[rowId];
-    if (!rows) return `<section class="panel"><div class="panel-head"><h2 class="panel-title">${esc(activity.name || "活動")} 報名名單</h2><div class="actions"><button class="btn" data-export-registrations="${esc(rowId)}">Excel</button><button class="btn" data-refresh-registration-list="${esc(rowId)}">重新載入</button></div></div>${empty("正在載入報名名單...")}</section>`;
+    if (!rows) return `<section class="panel"><div class="panel-head"><div><h2 class="panel-title">${esc(activity.name || "活動")} 報名名單</h2>${Number(activity.paymentAmount || 0) > 0 ? `<div class="muted" style="margin-top:8px;white-space:pre-wrap"><strong>報名費：</strong>NT$ ${esc(Number(activity.paymentAmount || 0).toLocaleString())}<br><strong>匯款資訊：</strong>${esc(activity.remittanceInfo || "尚未設定")}</div>` : ""}</div><div class="actions"><button class="btn" data-drawer="activity:${esc(rowId)}">修改活動付款資訊</button><button class="btn" data-export-registrations="${esc(rowId)}">Excel</button><button class="btn" data-refresh-registration-list="${esc(rowId)}">重新載入</button></div></div>${empty("正在載入報名名單...")}</section>`;
     if (!rows.length) return `<section class="panel"><div class="panel-head"><h2 class="panel-title">${esc(activity.name || "活動")} 報名名單</h2><div class="actions"><button class="btn" data-export-registrations="${esc(rowId)}">Excel</button><button class="btn" data-refresh-registration-list="${esc(rowId)}">重新載入</button></div></div>${empty("目前 Worker 沒有收到這個活動的報名資料")}</section>`;
     const systemFields = new Set(["LINE_user_id", "lineUserId", "line_user_id", "uid", "UID", "memberName", "registrationSource"]);
     const baseFields = [
