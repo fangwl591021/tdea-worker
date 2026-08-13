@@ -806,9 +806,10 @@
 
     async function runLoginQuery() {
       const box = app.querySelector("[data-my-query-result]");
-      const uid = await loadLiff({ login: true });
+      const passedUid = trim(params.get("lineUserId") || params.get("uid") || params.get("LINE_user_id"));
+      const uid = passedUid || await loadLiff({ login: true });
       if (!uid) {
-        box.innerHTML = `<div class="nf-alert">無法取得 LINE UID，請從 LINE LIFF 開啟查詢頁。</div>`;
+        box.innerHTML = `<div class="nf-alert">無法取得 LINE UID，請從已登入的 TDEA 會員中心重新開啟活動紀錄。</div>`;
         return;
       }
       box.innerHTML = `<div class="nf-ok">查詢你的報名紀錄中...</div>`;
