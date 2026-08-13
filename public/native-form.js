@@ -10,7 +10,7 @@
   const marqueeMode = params.has("marquee");
   const motherRegisterMode = params.has("motherRegister") || params.has("mother_register");
   const app = document.querySelector("#app");
-  const liffId = (formId || checkinToken || redeemToken || memberQrMode || calendarMode || marqueeMode || motherRegisterMode) ? "2005868456-cfANNVou" : "2005868456-2jmxqyFU";
+  const liffId = (formId || checkinToken || redeemToken || queryMode || memberQrMode || calendarMode || marqueeMode || motherRegisterMode) ? "2005868456-cfANNVou" : "2005868456-2jmxqyFU";
   const nativeLiffUrl = "https://liff.line.me/2005868456-cfANNVou";
   const calendarId = "7d66f2a96f192dda6cca2b04e60a6e549c7adf74f57721845d5b7e03f8b7ca89@group.calendar.google.com";
   let liffReady = null;
@@ -424,7 +424,11 @@
             return;
           }
           if (options.login && window.liff?.login) {
-            window.liff.login({ redirectUri: location.href });
+            const redirectParams = new URLSearchParams();
+  if (queryMode) redirectParams.set("query", "1");
+  ["code", "edit", "lineUserId", "uid", "LINE_user_id"].forEach((key) => { const value = trim(params.get(key)); if (value) redirectParams.set(key, value); });
+  const redirectUri = queryMode ? `${nativeLiffUrl}?${redirectParams.toString()}` : location.href;
+  window.liff.login({ redirectUri });
             return;
           }
         } catch (_) {}
