@@ -1,0 +1,16 @@
+name: Inspect query LIFF once
+on:
+  push:
+    paths:
+      - '.github/workflows/inspect-query-liff-once.yml'
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feature/tdea-identity-profile
+      - name: Inspect LIFF flow
+        shell: bash
+        run: |
+          grep -n -A45 -B12 'function loadLiff\|async function loadLiff\|liff.login\|liff.init' public/native-form.js | head -220 || true

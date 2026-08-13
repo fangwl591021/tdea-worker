@@ -1,0 +1,77 @@
+name: Fix structured fields direct DOM once
+on:
+  push:
+    branches: [feature/tdea-identity-profile]
+    paths: ['.github/workflows/fix-structured-fields-direct-dom-once.yml']
+permissions:
+  contents: write
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feature/tdea-identity-profile
+      - name: Apply patch
+        shell: python
+        run: |
+          from pathlib import Path
+          p=Path('public/app.js')
+          s=p.read_text(encoding='utf-8')
+          old='''          const builderSettings = form.__tdeaRegistrationSettings && typeof form.__tdeaRegistrationSettings === "object" ? form.__tdeaRegistrationSettings : {};
+          const structuredEditorPresent = Boolean(form.querySelector("[data-custom-fields]"));
+          const textareaCustomFields = parseCustomRegistrationFields(d.customRegistrationFields || "");
+          const structuredCustomFields = Array.isArray(builderSettings.customFields) ? builderSettings.customFields : [];
+          const customFields = structuredEditorPresent ? structuredCustomFields : textareaCustomFields;
+          registrationSettings = structuredEditorPresent
+            ? { ...builderSettings, customFields, fields: Array.isArray(builderSettings.fields) ? builderSettings.fields : [...(Array.isArray(defaults.fields) ? defaults.fields : []), ...customFields] }
+            : { ...builderSettings, customFields, fields: [...(Array.isArray(defaults.fields) ? defaults.fields : []), ...customFields] };'''
+          new='''          const builderSettings = form.__tdeaRegistrationSettings && typeof form.__tdeaRegistrationSettings === "object" ? form.__tdeaRegistrationSettings : {};
+          const structuredEditorPresent = Boolean(form.querySelector("[data-custom-fields]"));
+          const textareaCustomFields = parseCustomRegistrationFields(d.customRegistrationFields || "");
+          const structuredCustomFields = structuredEditorPresent ? [...form.querySelectorAll("[data-custom-field]")].map((row, index) => {
+            const type = String(row.querySelector("[name='customType']")?.value || "text").trim();
+            const options = [...row.querySelectorAll("[name='customOption']")].map((input) => String(input.value || "").trim()).filter(Boolean);
+            return {
+              key: `custom_${index + 1}`,
+              label: String(row.querySelector("[name='customLabel']")?.value || "").trim(),
+              type,
+              ...(options.length ? { options } : {}),
+              required: Boolean(row.querySelector("[name='customRequired']")?.checked)
+            };
+          }).filter((field) => field.label) : [];
+          const customFields = structuredEditorPresent ? structuredCustomFields : textareaCustomFields;
+          const baseFields = Array.isArray(builderSettings.fields)
+            ? builderSettings.fields.filter((field) => !String(field?.key || "").startsWith("custom_"))
+            : (Array.isArray(defaults.fields) ? defaults.fields : []);
+          registrationSettings = structuredEditorPresent
+            ? { ...builderSettings, customFields, fields: [...baseFields, ...customFields] }
+            : { ...builderSettings, customFields, fields: [...(Array.isArray(defaults.fields) ? defaults.fields : []), ...customFields] };'''
+          if old not in s:
+              raise SystemExit('target block not found')
+          p.write_text(s.replace(old,new,1),encoding='utf-8')
+      - name: Bump app asset version
+        shell: python
+        run: |
+          from pathlib import Path
+          p=Path('public/admin-login.js')
+          s=p.read_text(encoding='utf-8')
+          if 'app.js?v=activity-editor5' in s:
+              s=s.replace('app.js?v=activity-editor5','app.js?v=activity-editor6',1)
+          p.write_text(s,encoding='utf-8')
+      - name: Verify
+        run: |
+          node --check public/app.js
+          node --check public/admin-login.js
+          grep -n "structuredCustomFields = structuredEditorPresent" public/app.js
+          grep -n "activity-editor6" public/admin-login.js
+          git diff --check
+      - name: Commit and cleanup
+        run: |
+          git config user.name fangwl591021
+          git config user.email 50135766+fangwl591021@users.noreply.github.com
+          git add public/app.js public/admin-login.js
+          git commit -m "Read structured custom fields directly from activity form DOM"
+          git rm .github/workflows/fix-structured-fields-direct-dom-once.yml
+          git commit -m "Cleanup direct DOM custom field workflow"
+          git push origin feature/tdea-identity-profile

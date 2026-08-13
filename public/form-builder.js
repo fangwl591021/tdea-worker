@@ -112,6 +112,35 @@
     (Array.isArray(settings.sessions) ? settings.sessions : []).forEach(session => addSession(block, session));
     (Array.isArray(settings.customFields) ? settings.customFields : []).forEach(field => addCustomField(block, field));
   }
+  async function hydrateStructuredCustomFieldsFromNativeForm(form, block) {
+    if (!form || !block) return false;
+    try {
+      const data = await loadRemoteActivitiesIntoLocal();
+      const activity = targetActivity(data, form) || {};
+      const formId = String(activity.nativeFormId || activity.formId || activity.id || activity.activityNo || formRowId(form) || "").trim();
+      if (!formId) return false;
+      const response = await fetch(`${apiBase}/api/native-forms/${encodeURIComponent(formId)}`, {
+        headers: adminHeaders(),
+        cache: "no-store"
+      });
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok || !result.success) throw new Error(result.message || `自訂題目讀取失敗（HTTP ${response.status}）`);
+      const native = result.data?.form || result.data || {};
+      const fields = Array.isArray(native.fields) ? native.fields : [];
+      const systemKeys = new Set(["name","phone","email","company","memberNo","note","gender","isMember","meal","imageUpload","participantUnit"]);
+      const customFields = fields.filter(field => field && !systemKeys.has(String(field.key || "").trim()));
+      const list = block.querySelector("[data-custom-fields]");
+      if (!list) return false;
+      list.innerHTML = "";
+      customFields.forEach(field => addCustomField(block, field));
+      return true;
+    } catch (error) {
+      const status = form.querySelector(".form-upload-status");
+      if (status) status.textContent = error?.message || "自訂題目讀取失敗";
+      return false;
+    }
+  }
+
   async function uploadPoster(file, activityId) {
     if (!hasAdminIdentity()) throw new Error("請先登入管理者");
 
@@ -239,6 +268,7 @@
 
     hydrateRegistrationSettings(form, block);
     submit?.insertAdjacentElement("beforebegin", block);
+    hydrateStructuredCustomFieldsFromNativeForm(form, block).catch(() => false);
     if (form.id === "activity-form") submit.textContent = "建立活動與報名設定";
 	    block.querySelector("[data-add-custom-field]")?.addEventListener("click", () => addCustomField(block));
 	    block.querySelector("[data-add-session]")?.addEventListener("click", () => addSession(block));

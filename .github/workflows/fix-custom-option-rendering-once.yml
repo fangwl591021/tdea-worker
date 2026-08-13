@@ -1,0 +1,76 @@
+name: Fix custom option rendering once
+on:
+  push:
+    paths:
+      - '.github/workflows/fix-custom-option-rendering-once.yml'
+permissions:
+  contents: write
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feature/tdea-identity-profile
+          fetch-depth: 0
+      - name: Patch option handling
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          # public/app.js: serialize existing object options safely.
+          p=Path('public/app.js')
+          s=p.read_text(encoding='utf-8')
+          old='''      const options = Array.isArray(field.options) ? field.options.join(",") : "";'''
+          new='''      const options = Array.isArray(field.options) ? field.options.map((option) => {
+        if (option && typeof option === "object") return String(option.name || option.label || option.value || option.text || "").trim();
+        return String(option || "").trim();
+      }).filter(Boolean).join(",") : "";'''
+          if old not in s: raise SystemExit('app option serializer target not found')
+          p.write_text(s.replace(old,new,1),encoding='utf-8')
+
+          # public/native-form.js: render string or object options.
+          p=Path('public/native-form.js')
+          s=p.read_text(encoding='utf-8')
+          marker='''  function selectedValue(value, option) {'''
+          helper='''  function optionValue(option) {
+    if (option && typeof option === "object") return trim(option.name || option.label || option.value || option.text || "");
+    return trim(option);
+  }
+
+'''
+          if helper.strip() not in s:
+              if marker not in s: raise SystemExit('native option helper marker not found')
+              s=s.replace(marker,helper+marker,1)
+          s=s.replace('''      return `<div class="nf-field"><label>${label}</label><select name="${name}" ${field.required ? "required" : ""}><option value="">請選擇</option>${options.map((opt) => `<option value="${esc(opt)}" ${selectedValue(value, opt) ? "selected" : ""}>${esc(opt)}</option>`).join("")}</select></div>`;''','''      return `<div class="nf-field"><label>${label}</label><select name="${name}" ${field.required ? "required" : ""}><option value="">請選擇</option>${options.map((opt) => optionValue(opt)).filter(Boolean).map((opt) => `<option value="${esc(opt)}" ${selectedValue(value, opt) ? "selected" : ""}>${esc(opt)}</option>`).join("")}</select></div>`;''',1)
+          s=s.replace('''      return `<div class="nf-field"><label>${label}</label><div class="nf-choice">${options.map((opt) => `<label><input type="radio" name="${name}" value="${esc(opt)}" ${field.required ? "required" : ""} ${selectedValue(value, opt) ? "checked" : ""}>${esc(opt)}</label>`).join("")}</div></div>`;''','''      return `<div class="nf-field"><label>${label}</label><div class="nf-choice">${options.map((opt) => optionValue(opt)).filter(Boolean).map((opt) => `<label><input type="radio" name="${name}" value="${esc(opt)}" ${field.required ? "required" : ""} ${selectedValue(value, opt) ? "checked" : ""}>${esc(opt)}</label>`).join("")}</div></div>`;''',1)
+          s=s.replace('''      return `<div class="nf-field" data-checkbox-field="${name}" data-required="${field.required ? "1" : "0"}"><label>${label}</label><div class="nf-choice">${options.map((opt) => `<label><input type="checkbox" name="${name}" value="${esc(opt)}" ${selectedValue(value, opt) ? "checked" : ""}>${esc(opt)}</label>`).join("")}</div></div>`;''','''      return `<div class="nf-field" data-checkbox-field="${name}" data-required="${field.required ? "1" : "0"}"><label>${label}</label><div class="nf-choice">${options.map((opt) => optionValue(opt)).filter(Boolean).map((opt) => `<label><input type="checkbox" name="${name}" value="${esc(opt)}" ${selectedValue(value, opt) ? "checked" : ""}>${esc(opt)}</label>`).join("")}</div></div>`;''',1)
+          p.write_text(s,encoding='utf-8')
+
+          # src/monthly-entry.ts: byte-level targeted replacement only.
+          p=Path('src/monthly-entry.ts')
+          b=p.read_bytes()
+          old=b'''function normalizeOptions(options: unknown) {\n  return (Array.isArray(options) ? options : clean(options).split(/\\n|,/))\n    .map((item) => clean(item))\n    .filter(Boolean)\n    .map((name) => ({ id: name, name }));\n}'''
+          new=b'''function normalizeOptions(options: unknown) {\n  return (Array.isArray(options) ? options : clean(options).split(/\\n|,/))\n    .map((item) => {\n      if (item && typeof item === "object") {\n        const row = asRecord(item);\n        return firstClean(row.name, row.label, row.value, row.text);\n      }\n      return clean(item);\n    })\n    .filter(Boolean)\n    .map((name) => ({ id: name, name }));\n}'''
+          if old not in b: raise SystemExit('monthly normalizeOptions target not found')
+          p.write_bytes(b.replace(old,new,1))
+          PY
+      - name: Verify
+        shell: bash
+        run: |
+          grep -q 'function optionValue(option)' public/native-form.js
+          grep -q 'option.name || option.label || option.value || option.text' public/app.js
+          grep -q 'firstClean(row.name, row.label, row.value, row.text)' src/monthly-entry.ts
+          git diff --check || true
+      - name: Commit and cleanup
+        shell: bash
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add public/app.js public/native-form.js src/monthly-entry.ts
+          git commit -m 'Fix custom registration option rendering'
+          git push origin HEAD:feature/tdea-identity-profile
+          git rm .github/workflows/fix-custom-option-rendering-once.yml
+          git commit -m 'Remove one-time custom option workflow'
+          git push origin HEAD:feature/tdea-identity-profile

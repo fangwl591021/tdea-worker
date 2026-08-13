@@ -5,12 +5,14 @@
   const api = "https://tdeawork.fangwl591021.workers.dev";
   const liffBase = "https://liff.line.me/2005868456-2jmxqyFU";
   const nativeLiffBase = "https://liff.line.me/2005868456-cfANNVou";
+  const appScriptBase = new URL(".", document.currentScript?.src || location.href).href;
   const autoSyncKey = "tdea-auto-sync-registrations";
   const sidebarCollapsedKey = "tdea-sidebar-collapsed";
   const labels = {
     dashboard: ["活動總覽", "查看活動狀態、報名與簽到概況。"],
-    association: ["會員 CRM", "維護協會會員檔案、會員資格與點數資料，可匯入 CSV。"],
-    vendor: ["廠商 CRM", "維護廠商會員檔案、統編、窗口與備註，可匯入 CSV。"],
+    general: ["一般會員", "查看由 TDEA-DESIGN 正式註冊的一般會員資料與點數。"],
+    association: ["協會會員", "維護協會會員檔案、會員資格與點數資料，可匯入 CSV。"],
+    vendor: ["廠商會員", "維護廠商會員檔案、統編、窗口與備註，可匯入 CSV。"],
     creator: ["創建活動", "建立活動草稿，之後可直接改接 D1。"],
     keywords: ["關鍵字", "整理 LINE OA 觸發關鍵字、用途與回覆行為。"],
     adminWhitelist: ["權限名單", "後台登入、核銷與 LINE 工具使用權限。"],
@@ -18,13 +20,17 @@
     motherRegister: ["母站註冊資料", "查看由母站註冊表送回的獨立資料，不併入會員 CRM。"]
   };
   purgeLegacyManagerCache();
-  const state = { view: "dashboard", drawer: "", keywordEditId: "", data: load(), archivedActivities: [], registrationLists: {}, memberRegistrationLists: {}, memberPointAccounts: {}, memberApplications: null, adminWhitelist: null, adminWhitelistMeta: null, motherRegisterRecords: null, motherRegisterSearch: "", motherRegisterLoading: false, motherRegisterLoadedAt: "", rosterSearch: { association: "", vendor: "" } };
-  let motherRosterMapPromise = null;
+  const state = { view: "dashboard", drawer: "", keywordEditId: "", data: load(), archivedActivities: [], registrationLists: {}, memberRegistrationLists: {}, memberPointAccounts: {}, memberApplications: null, generalMembers: null, generalMembersLoading: false, generalSearch: "", adminWhitelist: null, adminWhitelistMeta: null, motherRegisterRecords: null, motherRegisterSearch: "", motherRegisterLoading: false, motherRegisterLoadedAt: "", rosterSearch: { association: "", vendor: "" } };
   let managerDataSaveTimer = null;
   let managerDataLoading = false;
   let lineDraftAutoImporting = false;
   let lineDraftLastAutoImport = 0;
   let rosterCleanupApplied = false;
+  const rosterPointLoading = { association: false, vendor: false };
+  const rosterPointLoadedAt = { association: 0, vendor: 0 };
+  let rosterImportPreview = null;
+  let sheetJsPromise = null;
+
 
   function sidebarCollapsed() { return localStorage.getItem(sidebarCollapsedKey) === "Y"; }
   function setSidebarCollapsed(value) { localStorage.setItem(sidebarCollapsedKey, value ? "Y" : "N"); }
@@ -193,11 +199,11 @@
         ...(localRow || {}),
         ...remoteRow,
         lineUserId: memberLineUid(remoteRow) || memberLineUid(localRow),
-        legacyAccount: firstValue(remoteRow?.legacyAccount, remoteRow?.aiweMemberNo, remoteRow?.motherAccount, localRow?.legacyAccount, localRow?.aiweMemberNo, localRow?.motherAccount),
         phone: firstValue(remoteRow?.phone, remoteRow?.mobile, remoteRow?.tel, localRow?.phone, localRow?.mobile, localRow?.tel),
         email: firstValue(remoteRow?.email, remoteRow?.mail, localRow?.email, localRow?.mail),
         jobTitle: firstValue(remoteRow?.jobTitle, remoteRow?.title, remoteRow?.position, localRow?.jobTitle, localRow?.title, localRow?.position),
         company: firstValue(remoteRow?.company, remoteRow?.companyName, remoteRow?.unit, localRow?.company, localRow?.companyName, localRow?.unit),
+        qualification: firstValue(localRow?.qualification, remoteRow?.qualification, "Y"),
         loginAccess,
         allowLogin: loginAccess,
         canLogin: loginAccess
@@ -231,6 +237,25 @@
         keepalive: true
       });
     } catch (_) {}
+  }
+  async function saveManagerDataRemoteChecked() {
+    if (!hasAdminIdentity()) throw new Error("請先登入管理員再匯入名冊");
+    if (!managerDataHasContent(state.data)) throw new Error("沒有可儲存的名冊資料");
+    clearTimeout(managerDataSaveTimer);
+    managerDataSaveTimer = null;
+    const payload = { ...state.data };
+    delete payload.activities;
+    ["association", "vendor"].forEach((name) => {
+      if (Array.isArray(payload[name]) && payload[name].length === 0) delete payload[name];
+    });
+    const response = await fetch(api + "/api/manager-data", {
+      method: "PUT",
+      headers: adminHeaders({ "content-type": "application/json" }),
+      body: JSON.stringify(payload)
+    });
+    const result = await response.json().catch(() => ({}));
+    if (!response.ok || result.success !== true) throw new Error(result.message || "名冊儲存失敗");
+    return result;
   }
   async function loadActivitiesRemote() {
     const response = await fetch(api + "/api/activities", { headers: adminHeaders(), cache: "no-store" });
@@ -531,23 +556,7 @@
     state.adminWhitelistMeta = { ...(state.adminWhitelistMeta || {}), ...j };
     return state.adminWhitelist;
   }
-  async function syncRosterMemberToWorker(type, item) {
-    if (!item || (type !== "association" && type !== "vendor")) return;
-    try {
-      const member = {
-        ...item,
-        rosterType: type,
-        rosterMemberNo: item.memberNo || item.rosterMemberNo || "",
-        rosterName: type === "vendor" ? (item.companyName || item.name || "") : (item.name || item.companyName || ""),
-        lineUserId: item.lineUserId || item.LINE_user_id || item.uid || ""
-      };
-      await fetch(api + "/api/aiwe-members/import", {
-        method: "POST",
-        headers: adminHeaders({ "content-type": "application/json" }),
-        body: JSON.stringify({ source: "crm-editor", members: [member] })
-      });
-    } catch (_) {}
-  }
+  async function syncRosterMemberToWorker(type, item) { return null; }
   function deletedActivityKeys() {
     if (!Array.isArray(state.data.deletedActivityKeys)) state.data.deletedActivityKeys = [];
     return state.data.deletedActivityKeys;
@@ -859,9 +868,82 @@
     };
   }
 
+  const defaultRegistrationFieldKeys = new Set(["name","phone","email","company","memberNo","note","participantUnit"]);
+
+  function customRegistrationFieldsFor(activity = {}) {
+    const settings = storedFormSettingsForActivity(activity);
+    const fields = Array.isArray(settings.fields) ? settings.fields : [];
+    return fields.filter((field) => field && !defaultRegistrationFieldKeys.has(String(field.key || "").trim()));
+  }
+
+  function customRegistrationOptionText(option) {
+    if (typeof option === "string") return option.trim();
+    if (!option || typeof option !== "object") return "";
+    return String(option.label || option.name || option.value || option.text || option.id || "").trim();
+  }
+
+  function serializeCustomRegistrationFieldList(fields = []) {
+    return (Array.isArray(fields) ? fields : []).filter((field) => field && !defaultRegistrationFieldKeys.has(String(field.key || "").trim())).map((field) => {
+      const type = String(field.type || "text").trim();
+      const required = field.required ? "必填" : "選填";
+      const options = Array.isArray(field.options) ? field.options.map(customRegistrationOptionText).filter(Boolean).join(",") : "";
+      return [String(field.label || "").trim(), type, required, options].join(" | " );
+    }).filter(Boolean).join("\n");
+  }
+
+  function serializeCustomRegistrationFields(activity = {}) {
+    return serializeCustomRegistrationFieldList(customRegistrationFieldsFor(activity));
+  }
+
+  async function hydrateCustomRegistrationFieldsFromNativeForm(activity, textarea) {
+    if (!activity || !textarea) return false;
+    const formId = nativeFormIdentifier(activity);
+    if (!formId) return false;
+    try {
+      textarea.dataset.nativeHydrating = "true";
+      const response = await fetch(api + "/api/native-forms/" + encodeURIComponent(formId), { headers: adminHeaders(), cache: "no-store" });
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok || !result.success) throw new Error(result.message || result.error || `自訂問題讀取失敗（HTTP ${response.status}）`);
+      const data = result.data?.form || result.data || {};
+      const fields = Array.isArray(data.fields) ? data.fields : [];
+      const customText = serializeCustomRegistrationFieldList(fields);
+      textarea.value = customText;
+      const merged = { ...storedFormSettingsForActivity(activity), fields };
+      state.data.formSettings ||= {};
+      if (activity.id) state.data.formSettings[activity.id] = merged;
+      if (activity.activityNo) state.data.formSettings[activity.activityNo] = merged;
+      activity.formSettings = { ...(activity.formSettings || {}), ...merged };
+      return true;
+    } catch (error) {
+      textarea.dataset.nativeHydrationError = error?.message || "自訂問題讀取失敗";
+      console.error("custom registration field hydration failed", error);
+      return false;
+    } finally {
+      delete textarea.dataset.nativeHydrating;
+    }
+  }
+  function parseCustomRegistrationFields(text = "") {
+    return String(text || "").split(/\r?\n/).map((line, index) => {
+      const raw = line.trim();
+      if (!raw) return null;
+      const parts = raw.split("|").map((part) => part.trim());
+      const label = parts[0] || "";
+      if (!label) return null;
+      const rawType = (parts[1] || "text").toLowerCase();
+      const type = ["text","email","paragraph","radio","checkbox","dropdown"].includes(rawType) ? rawType : "text";
+      const required = /^(必填|required|y|yes|true|1)$/i.test(parts[2] || "");
+      const options = (parts[3] || "").split(/[,、]/).map((v) => v.trim()).filter(Boolean);
+      const keyBase = `custom_${index + 1}_${label}`.replace(/[^A-Za-z0-9_\u4e00-\u9fff]/g, "_").slice(0, 60);
+      return { key: keyBase, label, type, required, ...(options.length ? { options } : {}) };
+    }).filter(Boolean);
+  }
+
   function storedFormSettingsForActivity(activity = {}) {
     const settings = state.data.formSettings || {};
-    return settings[activity.id] || settings[activity.activityNo] || {};
+    const byActivityNo = activity.activityNo ? settings[activity.activityNo] || {} : {};
+    const byId = activity.id ? settings[activity.id] || {} : {};
+    const activitySettings = activity.formSettings && typeof activity.formSettings === "object" ? activity.formSettings : {};
+    return { ...byActivityNo, ...byId, ...activitySettings };
   }
 
   function nativeFormIdentifier(activity = {}) {
@@ -891,7 +973,9 @@
       body: JSON.stringify({ activity, settings })
     });
     const result = await response.json().catch(() => ({}));
-    if (!response.ok || !result.success) return false;
+    if (!response.ok || !result.success) {
+      throw new Error(result.message || result.error || `報名表儲存失敗（HTTP ${response.status}）`);
+    }
     const formUrl = result.formUrl || result.nativeFormUrl || result.data?.formUrl || result.data?.nativeFormUrl || result.data?.form?.formUrl || "";
     const formId = result.formId || result.nativeFormId || result.data?.formId || result.data?.nativeFormId || result.data?.form?.id || currentFormId || activity.id;
     if (!formUrl || !formId) return false;
@@ -1082,7 +1166,7 @@
         <aside class="sidebar">
           <div class="brand"><span>TDEA 管理中心</span><button class="sidebar-toggle" type="button" data-sidebar-toggle title="${collapsed ? "展開選單" : "收合選單"}" aria-label="${collapsed ? "展開選單" : "收合選單"}">${collapsed ? "›" : "‹"}</button></div>
           ${adminProfileHtml()}
-          <nav class="nav">${nav("dashboard", "活動總覽")}${nav("association", "會員 CRM")}${nav("vendor", "廠商 CRM")}${nav("motherRegister", "母站註冊資料")}${nav("creator", "創建活動")}${nav("redeem", "點數折抵")}</nav>
+          <nav class="nav">${nav("dashboard", "活動總覽")}${nav("general", "一般會員")}${nav("association", "協會會員")}${nav("vendor", "廠商會員")}${nav("creator", "創建活動")}${nav("redeem", "點數折抵")}</nav>
         </aside>
         <main class="main">
           <div class="topbar"><div><h1>${title}</h1><div class="subtitle">${sub}</div></div><div class="actions">${actions()}</div></div>
@@ -1096,32 +1180,87 @@
     if (autoSyncEnabled()) syncRegistrations();
     if (state.view === "redeem" && !state.redeemRecords) loadRedeemRecords();
     if (state.view === "redeem" && !state.pointLedger) loadPointLedger();
-    if (state.view === "motherRegister" && !state.motherRegisterRecords && !state.motherRegisterLoading) loadMotherRegisterRecords();
     if (state.view === "dashboard" && state.memberApplications === null) loadMemberApplications();
+    if (state.view === "general" && state.generalMembers === null && !state.generalMembersLoading) loadGeneralMembers();
     if (state.view === "adminWhitelist" && !state.adminWhitelist) loadAdminWhitelist().then(() => render()).catch(() => undefined);
+    if ((state.view === "association" || state.view === "vendor") && !rosterPointLoading[state.view]) setTimeout(() => loadRosterPointBalances(state.view), 0);
     window.TDEALineNav?.refresh?.();
   }
 
   function nav(id, text) { return `<button class="${state.view === id ? "active" : ""}" data-nav="${id}" title="${esc(text)}">${text}</button>`; }
   function actions() {
-    if (state.view === "association") return `<button class="btn" data-import="association">匯入 CSV</button><button class="btn primary" data-drawer="association:new">新增協會會員</button>`;
+    if (state.view === "general") return `<button class="btn" data-refresh-general-members>重新載入</button>`;
+    if (state.view === "association") return `<button class="btn" data-import="association">匯入名冊</button><button class="btn primary" data-drawer="association:new">新增協會會員</button>`;
     if (state.view === "vendor") return `<button class="btn" data-import="vendor">匯入 CSV</button><button class="btn primary" data-drawer="vendor:new">新增廠商會員</button>`;
     if (state.view === "creator") return `<button class="btn" data-import-line-drafts>匯入 LINE 草稿</button><button class="btn" data-reset>清空表單</button>`;
     if (state.view === "redeem") return `<button class="btn" data-load-redeem>刷新紀錄</button>`;
-    if (state.view === "motherRegister") return `<button class="btn" data-load-mother-register ${state.motherRegisterLoading ? "disabled" : ""}>${state.motherRegisterLoading ? "刷新中..." : "刷新資料"}</button><button class="btn" data-sync-mother-register>從母站同步</button><button class="btn primary" data-download-mother-register>下載 CSV</button>`;
     if (state.view === "keywords") return `<button class="btn" data-refresh-keywords>刷新列表</button><button class="btn primary" data-keyword-new>新增關鍵字</button>`;
     if (state.view === "adminWhitelist") return `<button class="btn" data-load-whitelist>重新載入</button><button class="btn primary" data-save-whitelist>儲存權限名單</button>`;
     return `<label class="sync-toggle"><input type="checkbox" data-auto-sync ${autoSyncEnabled() ? "checked" : ""}> 自動同步</label><button class="btn" data-sync-registrations>同步報名</button><button class="btn" data-worker>檢查 Worker</button><button class="btn danger" data-clear-test>清空測試資料</button><button class="btn primary" data-nav="creator">新增活動</button>`;
   }
   function body() {
+    if (state.view === "general") return generalMembersView();
     if (state.view === "association") return members("association");
     if (state.view === "vendor") return members("vendor");
     if (state.view === "creator") return creator();
     if (state.view === "redeem") return redeem();
-    if (state.view === "motherRegister") return motherRegisterRecords();
     if (state.view === "keywords") return keywords();
     if (state.view === "adminWhitelist") return adminWhitelistClean();
     return memberApplicationsPanel() + dashboard();
+  }
+
+  async function loadGeneralMembers(force = false) {
+    if (state.generalMembersLoading) return state.generalMembers || [];
+    if (state.generalMembers !== null && !force) return state.generalMembers;
+    state.generalMembersLoading = true;
+    if (state.view === "general") render();
+    try {
+      const response = await fetch(api + "/api/general-members", { headers: adminHeaders(), cache: "no-store" });
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok || result.success !== true) throw new Error(result.message || "一般會員讀取失敗");
+      state.generalMembers = Array.isArray(result.data?.members) ? result.data.members : [];
+    } catch (error) {
+      state.generalMembers = [];
+      toast(error?.message || "一般會員讀取失敗");
+    } finally {
+      state.generalMembersLoading = false;
+      if (state.view === "general") render();
+    }
+    return state.generalMembers;
+  }
+
+  function generalMemberSearchValue(row) {
+    return [row.memberNumber,row.fullName,row.displayName,row.lineUserId,row.phone,row.email,row.gender]
+      .map(value => String(value || "").toLowerCase()).join(" ");
+  }
+
+  function generalMembersView() {
+    if (state.generalMembers === null || state.generalMembersLoading) return `<section class="panel"><div class="panel-head"><h2 class="panel-title">一般會員</h2></div>${empty("正在讀取 TDEA 一般會員...")}</section>`;
+    const query = String(state.generalSearch || "").trim().toLowerCase();
+    const allRows = Array.isArray(state.generalMembers) ? state.generalMembers : [];
+    const rows = query ? allRows.filter(row => generalMemberSearchValue(row).includes(query)) : allRows;
+    const search = `<div class="field" style="min-width:280px;max-width:460px;margin-left:auto"><input data-general-search value="${esc(state.generalSearch || "")}" placeholder="搜尋一般會員：編號、姓名、UID、電話、Email"></div>`;
+    const table = rows.length ? `<div class="table-wrap"><table><thead><tr><th>會員編號</th><th>姓名</th><th>LINE UID</th><th>點數</th><th>手機</th><th>Email</th><th>註冊完成</th><th>操作</th></tr></thead><tbody>${rows.map(row => `<tr><td>${esc(row.memberNumber || "-")}</td><td><strong>${esc(row.fullName || row.displayName || "-")}</strong></td><td>${esc(shortUid(row.lineUserId || ""))}</td><td>${n(row.pointBalance || 0)}</td><td>${esc(row.phone || "-")}</td><td>${esc(row.email || "-")}</td><td>${esc(formatTime(row.profileCompletedAt || ""))}</td><td><button class="link" data-drawer="general:${esc(row.userId)}">CRM 檔案</button></td></tr>`).join("")}</tbody></table></div>` : empty(query ? "沒有符合搜尋條件的一般會員" : "目前沒有已完成註冊的一般會員");
+    return `<section class="panel"><div class="panel-head"><div><h2 class="panel-title">一般會員</h2><div class="muted">直接讀取 TDEA-DESIGN D1，不建立第二份會員資料。</div></div><div class="actions">${search}<span class="badge live">${rows.length} / ${allRows.length} 筆</span></div></div>${table}</section>`;
+  }
+
+  function generalMemberProfile(userId) {
+    const row = (state.generalMembers || []).find(item => item.userId === userId) || {};
+    const name = row.fullName || row.displayName || row.memberNumber || "一般會員";
+    return `<div class="crm-member-profile-layout"><section class="crm-member-card"><div class="crm-member-section-title">一般會員資料</div><div class="form-grid crm-member-form">
+      ${field("系統會員編號", "memberNumber", row.memberNumber || "")}
+      ${field("LINE UID", "lineUserId", row.lineUserId || "")}
+      ${field("姓名", "fullName", row.fullName || "")}
+      ${field("顯示名稱", "displayName", row.displayName || "")}
+      ${field("手機", "phone", row.phone || "")}
+      ${field("Email", "email", row.email || "", "", false, "email")}
+      ${field("性別", "gender", row.gender || "")}
+      ${field("生日", "birthday", row.birthday || "")}
+      ${field("會員類型", "memberType", "一般會員")}
+      ${field("註冊完成時間", "profileCompletedAt", row.profileCompletedAt ? formatTime(row.profileCompletedAt) : "")}
+      <div class="muted" style="grid-column:1/-1">一般會員主檔以 TDEA-DESIGN D1 為準；此處目前僅供查看。</div>
+      <div class="crm-member-savebar"><button class="btn primary" type="button" data-close>關閉</button></div>
+    </div></section><aside class="crm-member-side"><section class="panel member-point-panel"><div class="panel-head"><h3>點數</h3></div><div class="crm-point-summary"><span>可用點數</span><div class="crm-point-number"><strong>${n(row.pointBalance || 0)}</strong><small>點</small></div></div></section></aside></div>`;
   }
 
   function memberApplicationsPanel() {
@@ -1153,6 +1292,41 @@
     return `<div class="table-wrap"><table><thead><tr><th>活動名稱</th><th>類型</th><th>課程時間</th><th>封存時間</th><th>封存者</th><th>狀態</th><th>操作</th></tr></thead><tbody>${rows.map(x => `<tr><td><strong>${esc(x.name || x.activityNo || x.id)}</strong></td><td>${esc(activityTypeLabel(x))}</td><td>${esc(x.courseTime || "-")}</td><td>${esc(formatTime(x.deletedAt || x.updatedAt || ""))}</td><td>${esc(x.deletedBy || "-")}</td><td><span class="badge off">${esc(x.status || "已封存")}</span></td><td><button class="link" data-restore-activity="${esc(x.id)}">恢復</button></td></tr>`).join("")}</tbody></table></div>`;
   }
 
+  function rosterPointText(row) {
+    if (typeof row.pointBalance !== "number" || !Number.isFinite(row.pointBalance)) return "-";
+    return row.pointBalance.toLocaleString("zh-TW");
+  }
+  async function loadRosterPointBalances(type, force = false) {
+    if (type !== "association" && type !== "vendor") return;
+    if (rosterPointLoading[type]) return;
+    const now = Date.now();
+    if (!force && rosterPointLoadedAt[type] && now - rosterPointLoadedAt[type] < 5 * 60 * 1000) return;
+    const rows = visibleRosterRows(type);
+    if (!rows.length) return;
+    rosterPointLoading[type] = true;
+    try {
+      const response = await fetch(api + "/api/member-points/batch", {
+        method: "POST",
+        headers: adminHeaders({ "content-type": "application/json" }),
+        body: JSON.stringify({ members: rows.map(row => ({ memberNo: row.memberNo || "", lineUserId: memberLineUid(row) || "" })) })
+      });
+      const result = await response.json().catch(() => ({}));
+      const items = Array.isArray(result?.data?.members) ? result.data.members : Array.isArray(result?.members) ? result.members : [];
+      const byMemberNo = new Map(items.map(item => [String(item.memberNo || "").trim().toUpperCase(), item]));
+      const byUid = new Map(items.map(item => [String(item.lineUserId || "").trim().toLowerCase(), item]));
+      rows.forEach(row => {
+        const pointResult = byMemberNo.get(String(row.memberNo || "").trim().toUpperCase()) || byUid.get(String(memberLineUid(row) || "").trim().toLowerCase());
+        if (pointResult?.success === true) row.pointBalance = Number(pointResult.balance || 0);
+      });
+      rosterPointLoadedAt[type] = Date.now();
+    } catch (error) {
+      console.warn('CRM D1 point batch load failed', error);
+    } finally {
+      rosterPointLoading[type] = false;
+      render();
+    }
+  }
+
   function members(type) {
     const allRows = visibleRosterRows(type), vendor = type === "vendor";
     const rows = filterRosterRows(type, allRows);
@@ -1160,13 +1334,13 @@
     const query = state.rosterSearch?.[type] || "";
     const search = `<div class="field" style="min-width:280px;max-width:460px;margin-left:auto"><input data-roster-search="${type}" value="${esc(query)}" placeholder="搜尋${title}：編號、名稱、UID、電話、Email"></div>`;
     const count = `<span class="muted" data-roster-count="${type}">${rows.length} / ${allRows.length} 筆</span>`;
-    if (!allRows.length) return `<section class="panel"><div class="panel-head"><h2 class="panel-title">${title}</h2><button class="btn" data-import="${type}">匯入 CSV</button></div>${empty(`目前沒有${title}資料`)}</section>`;
+    if (!allRows.length) return `<section class="panel"><div class="panel-head"><h2 class="panel-title">${title}</h2>${vendor ? `<button class="btn" data-import="${type}">匯入 CSV</button>` : ""}</div>${empty(`目前沒有${title}資料`)}</section>`;
     const body = `<div class="table-wrap"><table><thead><tr><th>會員編號</th><th>${vendor ? "公司名稱" : "姓名"}</th><th>LINE UID</th><th>點數</th><th>${vendor ? "統編" : "身分"}</th><th>${vendor ? "聯絡窗口" : "性別"}</th><th>資格</th><th>管理權限</th><th>備註</th><th>操作</th></tr></thead><tbody>${allRows.map(x => {
       const searchText = rosterSearchValue(x, vendor);
       const hidden = rosterSearchQuery(type) && !searchText.includes(rosterSearchQuery(type));
-      return `<tr data-roster-row="${type}" data-roster-search-text="${esc(searchText)}" ${hidden ? `style="display:none"` : ""}><td>${esc(x.memberNo)}</td><td><strong>${esc(vendor ? x.companyName : x.name)}</strong></td><td>${esc(shortUid(memberLineUid(x)))}</td><td>${esc(x.pointBalance ?? x.points ?? "")}</td><td>${esc(vendor ? x.taxId : x.identity)}</td><td>${esc(vendor ? x.contact : x.gender)}</td><td><span class="badge ${x.qualification === "Y" ? "live" : "off"}">${esc(x.qualification)}</span></td><td><label class="sync-toggle"><input type="checkbox" data-member-login-toggle="${type}:${x.id}" ${memberLoginAllowed(x) ? "checked" : ""}> 允許登入</label></td><td>${esc(x.note)}</td><td><button class="link" data-drawer="${type}:${x.id}">CRM 檔案</button><span class="muted"> / </span><button class="link danger-link" data-delete-member="${type}:${x.id}">刪除</button></td></tr>`;
+      return `<tr data-roster-row="${type}" data-roster-search-text="${esc(searchText)}" ${hidden ? `style="display:none"` : ""}><td>${esc(x.memberNo)}</td><td><strong>${esc(vendor ? x.companyName : x.name)}</strong></td><td>${esc(shortUid(memberLineUid(x)))}</td><td>${esc(rosterPointText(x, type))}</td><td>${esc(vendor ? x.taxId : x.identity)}</td><td>${esc(vendor ? x.contact : x.gender)}</td><td><span class="badge ${x.qualification === "Y" ? "live" : "off"}">${esc(x.qualification)}</span></td><td><label class="sync-toggle"><input type="checkbox" data-member-login-toggle="${type}:${x.id}" ${memberLoginAllowed(x) ? "checked" : ""}> 允許登入</label></td><td>${esc(x.note)}</td><td><button class="link" data-drawer="${type}:${x.id}">CRM 檔案</button><span class="muted"> / </span><button class="link danger-link" data-delete-member="${type}:${x.id}">刪除</button></td></tr>`;
     }).join("")}</tbody></table></div>`;
-    return `<section class="panel"><div class="panel-head"><h2 class="panel-title">${title}</h2><div class="actions">${search}${count}<button class="btn" data-import="${type}">匯入 CSV</button><button class="btn" data-export>匯出備份</button></div></div>${body}</section>`;
+    return `<section class="panel"><div class="panel-head"><h2 class="panel-title">${title}</h2><div class="actions">${search}${count}${vendor ? `<button class="btn" data-import="${type}">匯入 CSV</button>` : ""}<button class="btn" data-export>匯出備份</button></div></div>${body}</section>`;
   }
 
   function adminWhitelist() {
@@ -1377,8 +1551,8 @@
   function drawer() {
     if (!state.drawer) return `<div class="drawer" id="drawer"></div>`;
     const [type, rowId] = state.drawer.split(":");
-    const title = type === "activity" ? "編輯活動" : type === "registrations" ? "報名名單" : type === "vendor" ? "編輯廠商會員" : type === "association" ? "編輯協會會員" : type === "import-vendor" ? "匯入廠商名冊" : "匯入協會名冊";
-    const content = type === "activity" ? activityForm(rowId) : type === "registrations" ? registrationList(rowId) : type.startsWith("import-") ? importForm(type.replace("import-", "")) : memberForm(type, rowId);
+    const title = type === "activity" ? "編輯活動" : type === "registrations" ? "報名名單" : type === "general" ? "一般會員 CRM 檔案" : type === "vendor" ? "編輯廠商會員" : type === "association" ? "編輯協會會員" : type === "import-vendor" ? "匯入廠商名冊" : "匯入協會名冊";
+    const content = type === "activity" ? activityForm(rowId) : type === "registrations" ? registrationList(rowId) : type === "general" ? generalMemberProfile(rowId) : type.startsWith("import-") ? importForm(type.replace("import-", "")) : memberForm(type, rowId);
     const memberTitle = memberDrawerTitle(type, rowId);
     return `<div class="drawer open" id="drawer"><div class="drawer-backdrop" data-close></div><div class="drawer-panel"><div class="drawer-title">${memberTitle || `<h2>${title}</h2>`}<button class="btn icon" data-close>×</button></div>${content}</div></div>`;
   }
@@ -1393,7 +1567,7 @@
   function registrationList(rowId) {
     const activity = state.data.activities.find(r => r.id === rowId) || {};
     const rows = state.registrationLists[rowId];
-    if (!rows) return `<section class="panel"><div class="panel-head"><h2 class="panel-title">${esc(activity.name || "活動")} 報名名單</h2><div class="actions"><button class="btn" data-export-registrations="${esc(rowId)}">Excel</button><button class="btn" data-refresh-registration-list="${esc(rowId)}">重新載入</button></div></div>${empty("正在載入報名名單...")}</section>`;
+    if (!rows) return `<section class="panel"><div class="panel-head"><div><h2 class="panel-title">${esc(activity.name || "活動")} 報名名單</h2>${Number(activity.paymentAmount || 0) > 0 ? `<div class="muted" style="margin-top:8px;white-space:pre-wrap"><strong>報名費：</strong>NT$ ${esc(Number(activity.paymentAmount || 0).toLocaleString())}<br><strong>匯款資訊：</strong>${esc(activity.remittanceInfo || "尚未設定")}</div>` : ""}</div><div class="actions"><button class="btn" data-drawer="activity:${esc(rowId)}">修改活動付款資訊</button><button class="btn" data-export-registrations="${esc(rowId)}">Excel</button><button class="btn" data-refresh-registration-list="${esc(rowId)}">重新載入</button></div></div>${empty("正在載入報名名單...")}</section>`;
     if (!rows.length) return `<section class="panel"><div class="panel-head"><h2 class="panel-title">${esc(activity.name || "活動")} 報名名單</h2><div class="actions"><button class="btn" data-export-registrations="${esc(rowId)}">Excel</button><button class="btn" data-refresh-registration-list="${esc(rowId)}">重新載入</button></div></div>${empty("目前 Worker 沒有收到這個活動的報名資料")}</section>`;
     const systemFields = new Set(["LINE_user_id", "lineUserId", "line_user_id", "uid", "UID", "memberName", "registrationSource"]);
     const baseFields = [
@@ -1479,7 +1653,7 @@
   }
   function memberForm(type, rowId) {
     const x = state.data[type].find(r => r.id === rowId) || {}, vendor = type === "vendor";
-    const profileFields = `${field("會員編號", "memberNo", x.memberNo)}${field("LINE UID", "lineUserId", memberLineUid(x), "例如：Ub68b9724664b889e790c789ece72f717")}${field("母站帳號", "aiweMemberNo", firstValue(x.aiweMemberNo, x.motherMemberNo, x.motherAccount, x.legacyAccount), "母站會員帳號")}${field("手機", "phone", firstValue(x.phone, x.mobile, x.tel), "手機")}${field("Email", "email", x.email, "會員 Email", false, "email")}`;
+    const profileFields = `${field("會員編號", "memberNo", x.memberNo)}${field("LINE UID", "lineUserId", memberLineUid(x), "例如：Ub68b9724664b889e790c789ece72f717")}${field("手機", "phone", firstValue(x.phone, x.mobile, x.tel), "手機")}${field("Email", "email", x.email, "會員 Email", false, "email")}`;
     const vendorFields = `${field("公司名稱", "companyName", x.companyName)}${field("統一編號", "taxId", x.taxId)}${field("負責人", "owner", x.owner)}${field("聯絡窗口", "contact", x.contact)}`;
     const memberFields = `${field("身分", "identity", x.identity)}${field("姓名", "name", x.name)}${select("性別", "gender", ["", "男", "女"], x.gender)}${field("本職", "jobTitle", firstValue(x.jobTitle, x.title, x.position), "本職")}${field("公司/單位", "company", firstValue(x.company, x.companyName, x.unit), "公司/單位")}`;
     return `<div class="crm-member-profile-layout"><section class="crm-member-card"><div class="crm-member-section-title">基本資料</div><form class="form-grid crm-member-form" id="drawer-member" data-type="${type}">${hidden("id", x.id)}${profileFields}${vendor ? vendorFields : memberFields}${select("會員資格", "qualification", ["Y", "N"], x.qualification || "Y")}<label class="sync-toggle"><input type="checkbox" name="loginAccess" value="Y" ${memberLoginAllowed(x) ? "checked" : ""}> 允許此會員登入管理中心</label><div class="field"><label>備註</label><textarea name="note">${esc(x.note)}</textarea></div><div class="crm-member-savebar"><button class="btn" type="button" data-close>取消</button><button class="btn primary" type="submit">儲存檔案變更</button></div></form></section><aside class="crm-member-side" data-member-side><div data-member-point-slot></div></aside><section class="member-registration-wide" data-member-registration-slot></section></div>`;
@@ -1487,20 +1661,102 @@
   function importForm(type) {
     const vendor = type === "vendor";
     const sample = vendor ? "會員編號,公司名稱,統編,負責人,聯絡窗口,會員資格,備註" : "會員編號,身分,姓名,性別,會員資格,備註";
-    return `<form class="form-grid" id="import-form" data-type="${type}"><div class="field"><label>CSV 內容</label><textarea name="csv" placeholder="${sample}"></textarea></div><div class="muted">可從 Google Sheets 複製含標題列的資料貼上；沒有標題列時會依提示順序導入。</div><button class="btn primary" type="submit">導入名冊</button></form>`;
+    if (vendor) return `<form class="form-grid" id="import-form" data-type="${type}"><div class="field"><label>CSV 內容</label><textarea name="csv" placeholder="${sample}"></textarea></div><div class="muted">可從 Google Sheets 複製含標題列的資料貼上；沒有標題列時會依提示順序導入。</div><button class="btn primary" type="submit">導入名冊</button></form>`;
+    return `<form class="form-grid" id="import-form" data-type="${type}">
+      <div class="field"><label class="btn primary" style="display:flex;min-height:64px;align-items:center;justify-content:center;font-size:18px;cursor:pointer">上傳 Excel / CSV<input type="file" accept=".xlsx,.xls,.csv" data-roster-file hidden></label><div class="muted" style="text-align:center">支援 Excel (.xlsx / .xls) 與 CSV</div></div>
+      <section class="panel" data-roster-preview hidden><div class="panel-head"><div><h3 class="panel-title">匯入預覽</h3><div class="muted" data-roster-file-name></div><div class="muted" data-roster-row-count></div></div></div><div class="table-wrap"><table><thead><tr><th>會員編號</th><th>姓名</th><th>point</th></tr></thead><tbody data-roster-preview-rows></tbody></table></div></section>
+      <button class="btn primary" type="button" data-confirm-roster-import disabled>確認匯入名冊</button>
+      <details style="border-top:1px solid #e5e7eb;padding-top:14px"><summary style="cursor:pointer;font-weight:800">進階方式：貼上 CSV / Google Sheets 內容</summary><div class="field" style="margin-top:14px"><label>CSV / Google Sheets 內容</label><textarea name="csv" placeholder="${sample}"></textarea></div><div class="muted">可貼上含標題列的 CSV 或 Google Sheets 資料。</div><button class="btn" type="submit" style="margin-top:12px">導入貼上內容</button></details>
+    </form>`;
   }
 
+  function loadSheetJs() {
+    if (window.XLSX) return Promise.resolve(window.XLSX);
+    if (sheetJsPromise) return sheetJsPromise;
+    sheetJsPromise = new Promise((resolve, reject) => {
+      const script = document.createElement("script");
+      script.src = new URL("vendor/xlsx.full.min.js", appScriptBase).href;
+      script.onload = () => window.XLSX ? resolve(window.XLSX) : reject(new Error("Excel 解析器載入失敗"));
+      script.onerror = () => reject(new Error("Excel 解析器載入失敗"));
+      document.head.appendChild(script);
+    }).catch(error => { sheetJsPromise = null; throw error; });
+    return sheetJsPromise;
+  }
+
+  function rowsToImportText(rows) {
+    return rows.map(row => row.map(value => {
+      const text = String(value ?? "");
+      return /[\t\r\n"]/.test(text) ? `"${text.replaceAll('"', '""')}"` : text;
+    }).join("\t")).join("\n");
+  }
+
+  function firstSheetRows(data, XLSX = window.XLSX) {
+    const workbook = XLSX.read(data, { type: "array" });
+    const firstSheet = workbook.SheetNames[0];
+    if (!firstSheet) return [];
+    return XLSX.utils.sheet_to_json(workbook.Sheets[firstSheet], { header: 1, raw: false, defval: "" });
+  }
+
+  function rosterPreviewRows(text) {
+    const rows = parseCsv(text);
+    if (rows.length < 2) return [];
+    const header = rows[0].map(value => String(value || "").replace(/^\uFEFF/, "").trim().toLowerCase());
+    const column = aliases => header.findIndex(value => aliases.some(alias => value === alias || value.includes(alias)));
+    const memberNoIndex = column(["會員編號", "memberno", "member_no", "member"]);
+    const nameIndex = column(["姓名", "name"]);
+    const pointIndex = column(["pointbalance", "points", "point", "點數"]);
+    return rows.slice(1).filter(row => row.some(value => String(value || "").trim())).map(row => ({
+      memberNo: memberNoIndex >= 0 ? String(row[memberNoIndex] || "").trim() : "",
+      name: nameIndex >= 0 ? String(row[nameIndex] || "").trim() : "",
+      point: pointIndex >= 0 ? String(row[pointIndex] ?? "").trim() : ""
+    }));
+  }
+
+  async function readRosterFile(file) {
+    const extension = String(file?.name || "").split(".").pop().toLowerCase();
+    if (extension === "csv") return file.text();
+    if (!['xlsx', 'xls'].includes(extension)) throw new Error("請選擇 .xlsx、.xls 或 .csv 檔案");
+    const XLSX = await loadSheetJs();
+    return rowsToImportText(firstSheetRows(await file.arrayBuffer(), XLSX));
+  }
+
+  function parseGoogleSheetUrl(value) {
+    let url;
+    try { url = new URL(String(value || "").trim()); } catch (_) { throw new Error("Google Sheet 網址格式不正確"); }
+    const match = url.hostname === "docs.google.com" ? url.pathname.match(/^\/spreadsheets\/d\/([^/]+)/) : null;
+    if (url.protocol !== "https:" || !match?.[1]) throw new Error("Google Sheet 網址格式不正確");
+    const hashParams = new URLSearchParams(String(url.hash || "").replace(/^#/, ""));
+    const gid = url.searchParams.get("gid") || hashParams.get("gid") || "0";
+    if (!/^\d+$/.test(gid)) throw new Error("Google Sheet 網址格式不正確");
+    const spreadsheetId = match[1];
+    return { spreadsheetId, gid, exportUrl: `https://docs.google.com/spreadsheets/d/${encodeURIComponent(spreadsheetId)}/export?format=csv&gid=${encodeURIComponent(gid)}` };
+  }
+
+  async function readGoogleSheet(value, fetcher = fetch) {
+    const source = parseGoogleSheetUrl(value);
+    let response;
+    try { response = await fetcher(source.exportUrl); } catch (_) { throw new Error("無法讀取此 Google Sheet，請確認共用權限為『知道連結的使用者可查看』，或改用 Excel 上傳。"); }
+    if (response.status === 401 || response.status === 403) throw new Error("此 Google Sheet 無法直接讀取。\n請將檔案下載為 Excel / CSV 後使用下方『上傳 Excel / CSV』匯入。");
+    if (!response.ok) throw new Error("無法讀取此 Google Sheet，請確認共用權限為『知道連結的使用者可查看』，或改用 Excel 上傳。");
+    const text = await response.text();
+    const contentType = response.headers?.get?.("content-type") || "";
+    if (contentType.includes("text/html") || /^\s*<!doctype html/i.test(text)) throw new Error("無法讀取此 Google Sheet，請確認共用權限為『知道連結的使用者可查看』，或改用 Excel 上傳。");
+    const rows = rosterPreviewRows(text);
+    if (!rows.length) throw new Error("工作表沒有可匯入資料");
+    return { source, text, rows };
+  }
   function field(label, name, value = "", placeholder = "", required = false, type = "text") { return `<div class="field"><label>${label}</label><input name="${name}" type="${type}" value="${esc(value)}" placeholder="${esc(placeholder)}" ${required ? "required" : ""}></div>`; }
   function select(label, name, options, value = "") { return `<div class="field"><label>${label}</label><select name="${name}">${options.map(o => { const optionValue = Array.isArray(o) ? o[0] : o; const optionLabel = Array.isArray(o) ? o[1] : o; return `<option value="${esc(optionValue)}" ${optionValue === value ? "selected" : ""}>${esc(optionLabel)}</option>`; }).join("")}</select></div>`; }
   function hidden(name, value = "") { return `<input type="hidden" name="${name}" value="${esc(value)}">`; }
   function empty(text) { return `<div class="empty">${esc(text)}</div>`; }
   function parseCsv(text) {
+    const delimiter = String(text || "").split(/\r?\n/, 1)[0].includes("\t") ? "\t" : ",";
     const rows = []; let row = [], cell = "", quote = false;
     for (let i = 0; i < text.length; i++) {
       const ch = text[i], next = text[i + 1];
       if (ch === '"' && quote && next === '"') { cell += '"'; i++; continue; }
       if (ch === '"') { quote = !quote; continue; }
-      if (ch === "," && !quote) { row.push(cell.trim()); cell = ""; continue; }
+      if (ch === delimiter && !quote) { row.push(cell.trim()); cell = ""; continue; }
       if ((ch === "\n" || ch === "\r") && !quote) { if (ch === "\r" && next === "\n") i++; row.push(cell.trim()); if (row.some(Boolean)) rows.push(row); row = []; cell = ""; continue; }
       cell += ch;
     }
@@ -1508,13 +1764,67 @@
   }
   function importRows(type, text) {
     const rows = parseCsv(text); if (!rows.length) return 0;
-    const head = rows[0].map(x => x.toLowerCase());
+    const head = rows[0].map(x => x.replace(/^\uFEFF/, "").trim().toLowerCase());
     const hasHead = head.some(x => x.includes("會員") || x.includes("姓名") || x.includes("公司") || x.includes("member"));
     const data = hasHead ? rows.slice(1) : rows;
     const idx = (names, fallback) => hasHead ? Math.max(head.findIndex(h => names.some(n => h.includes(n))), fallback) : fallback;
     const vendor = type === "vendor";
-    const mapped = data.map(c => vendor ? { id: uid(), memberNo: c[idx(["會員編號", "member"], 0)] || "", companyName: c[idx(["公司", "company"], 1)] || "", taxId: c[idx(["統編", "tax"], 2)] || "", owner: c[idx(["負責人", "owner"], 3)] || "", contact: c[idx(["窗口", "contact"], 4)] || "", qualification: c[idx(["資格"], 5)] || "Y", note: c[idx(["備註", "note"], 6)] || "" } : { id: uid(), memberNo: c[idx(["會員編號", "member"], 0)] || "", identity: c[idx(["身分", "identity"], 1)] || "", name: c[idx(["姓名", "name"], 2)] || "", gender: c[idx(["性別", "gender"], 3)] || "", qualification: c[idx(["資格"], 4)] || "Y", note: c[idx(["備註", "note"], 5)] || "" }).filter(x => vendor ? x.companyName || x.memberNo : x.name || x.memberNo);
-    state.data[type] = mapped.concat(state.data[type]); save(); return mapped.length;
+    if (vendor) {
+      const mapped = data.map(c => ({ id: uid(), memberNo: c[idx(["會員編號", "member"], 0)] || "", companyName: c[idx(["公司", "company"], 1)] || "", taxId: c[idx(["統編", "tax"], 2)] || "", owner: c[idx(["負責人", "owner"], 3)] || "", contact: c[idx(["窗口", "contact"], 4)] || "", qualification: c[idx(["資格"], 5)] || "Y", note: c[idx(["備註", "note"], 6)] || "" })).filter(x => x.companyName || x.memberNo);
+      state.data[type] = mapped.concat(state.data[type]); save(); return mapped.length;
+    }
+
+    const memberIdx = (names, fallback) => {
+      if (!hasHead) return fallback;
+      const found = head.findIndex(h => names.some(name => h === name || h.includes(name)));
+      return found >= 0 ? found : -1;
+    };
+    const valueAt = (cells, names, fallback = -1) => {
+      const position = memberIdx(names, fallback);
+      return position >= 0 ? String(cells[position] ?? "").trim() : "";
+    };
+    const parseImportedPoint = (value) => {
+      const raw = String(value ?? "").trim();
+      if (!raw) return undefined;
+      const parsed = Number(raw.replace(/,/g, ""));
+      return Number.isFinite(parsed) ? parsed : undefined;
+    };
+    const existingRows = state.data[type] || [];
+    const byMemberNo = new Map(existingRows.map(row => [String(row.memberNo || "").trim().toUpperCase(), row]).filter(([memberNo]) => memberNo));
+    const fillFields = ["name", "role", "phone", "email", "jobTitle", "gender", "qualification", "note"];
+    let importedCount = 0;
+    data.forEach(cells => {
+      const memberNo = valueAt(cells, ["會員編號", "memberno", "member_no", "member"], 0).toUpperCase();
+      if (!memberNo) return;
+      const imported = {
+        memberNo,
+        role: valueAt(cells, ["身分", "identity", "role"], 1),
+        name: valueAt(cells, ["姓名", "name"], 2),
+        phone: valueAt(cells, ["手機", "電話", "phone", "mobile"]),
+        email: valueAt(cells, ["email", "電子郵件", "信箱"]),
+        jobTitle: valueAt(cells, ["本職", "職稱", "jobtitle", "job_title"]),
+        gender: valueAt(cells, ["性別", "gender"], 3),
+        qualification: valueAt(cells, ["會員資格", "資格", "qualification"], 4),
+        note: valueAt(cells, ["備註", "note"], 5)
+      };
+      const pointPosition = memberIdx(["pointbalance", "points", "point", "點數"], -1);
+      const pointBalance = parseImportedPoint(pointPosition >= 0 ? cells[pointPosition] : "");
+      const existing = byMemberNo.get(memberNo);
+      if (existing) {
+        fillFields.forEach(fieldName => {
+          if (String(existing[fieldName] ?? "").trim() === "" && imported[fieldName] !== "") existing[fieldName] = imported[fieldName];
+        });
+        if (pointBalance !== undefined) existing.pointBalance = pointBalance;
+      } else {
+        const created = { id: uid(), ...imported };
+        if (!created.qualification) created.qualification = "Y";
+        if (pointBalance !== undefined) created.pointBalance = pointBalance;
+        existingRows.unshift(created);
+        byMemberNo.set(memberNo, created);
+      }
+      importedCount++;
+    });
+    save(); return importedCount;
   }
 
   async function deleteActivity(rowId) {
@@ -1599,16 +1909,25 @@
 
   function ensureActivityEditorFields() {
     const form = document.querySelector("#drawer-activity");
-    if (!form || form.dataset.mediaFieldsReady) return;
-    form.dataset.mediaFieldsReady = "true";
-    ensureActivityMediaStyles();
+    if (!form) return;
     const id = form.querySelector("input[name='id']")?.value || "";
     const activity = state.data.activities.find((item) => item.id === id) || {};
+    if (form.dataset.mediaFieldsReady) {
+      const textarea = form.querySelector("[name='customRegistrationFields']");
+      if (textarea) {
+        textarea.value = serializeCustomRegistrationFields(activity);
+        hydrateCustomRegistrationFieldsFromNativeForm(activity, textarea).catch(() => false);
+      }
+      return;
+    }
+    form.dataset.mediaFieldsReady = "true";
+    ensureActivityMediaStyles();
     const insertBefore = form.querySelector("input[name='formUrl']")?.closest(".field") || form.querySelector("button[type='submit']");
     const wrap = document.createElement("div");
     wrap.className = "activity-extra-fields";
     wrap.innerHTML = `
       <div class="field"><label>詳細說明</label><textarea name="detailText" placeholder="活動介紹、地點、費用、注意事項...">${esc(activity.detailText || "")}</textarea></div>
+      <div class="field"><label>自訂問題</label><textarea name="customRegistrationFields" placeholder="每行一題：問題 | 類型 | 必填/選填 | 選項1,選項2\n例：是否需要素食 | radio | 必填 | 是,否">${esc(serializeCustomRegistrationFields(activity))}</textarea><div class="muted">類型支援 text、email、paragraph、radio、checkbox、dropdown；選擇題請在第 4 欄填選項。</div></div>
       <div class="field"><label>活動主圖附件</label><input type="file" accept="image/*" data-activity-poster-file><div class="muted">請直接附加圖片檔；上傳後會寫入報名頁與每月活動主圖。</div></div>
       <input name="posterUrl" type="hidden" value="${esc(activity.posterUrl || activity.imageUrl || "")}">
       <div class="field"><label>活動圖集附件 / 說明頁輪播圖</label><input type="file" accept="image/*" multiple data-activity-gallery-file><div class="muted">可一次選多張；活動說明頁會用這些圖片做輪播，每月活動會自動帶入張數。</div><div class="actions" style="justify-content:flex-start;margin-top:8px"><button class="btn danger" type="button" data-clear-activity-gallery>清除圖集</button></div></div>
@@ -1616,6 +1935,10 @@
       <div class="field"><label>報名頁網址</label><input name="nativeFormUrl" value="${esc(activity.nativeFormUrl || "")}" placeholder="系統會自動產生"></div>`;
     insertBefore?.insertAdjacentElement("beforebegin", wrap);
     groupActivityMediaFields(wrap);
+    const customRegistrationTextarea = wrap.querySelector("[name='customRegistrationFields']");
+    if (customRegistrationTextarea) {
+      hydrateCustomRegistrationFieldsFromNativeForm(activity, customRegistrationTextarea).catch(() => false);
+    }
     const galleryFileInput = wrap.querySelector("[data-activity-gallery-file]");
     if (galleryFileInput && !wrap.querySelector("[data-activity-gallery-status]")) {
       const status = document.createElement("div");
@@ -1780,9 +2103,44 @@
             return;
           }
         }
+        let registrationSettings = null;
         try {
-          const registrationSettings = form.__tdeaRegistrationSettings || null;
-          await ensureNativeFormForActivity(activity, email, registrationSettings, { update: true });
+          const defaults = nativeFormSettingsFor(activity);
+          const builderSettings = form.__tdeaRegistrationSettings && typeof form.__tdeaRegistrationSettings === "object" ? form.__tdeaRegistrationSettings : {};
+const structuredEditorPresent = Boolean(form.querySelector("[data-custom-fields]"));
+const textareaCustomFields = parseCustomRegistrationFields(d.customRegistrationFields || "");
+const structuredCustomFields = structuredEditorPresent ? [...form.querySelectorAll("[data-custom-field]")].map((row, index) => {
+  const type = String(row.querySelector("[name='customType']")?.value || "text").trim();
+  const options = [...row.querySelectorAll("[name='customOption']")].map((input) => String(input.value || "").trim()).filter(Boolean);
+  return {
+    key: `custom_${index + 1}`,
+    label: String(row.querySelector("[name='customLabel']")?.value || "").trim(),
+    type,
+    ...(options.length ? { options } : {}),
+    required: Boolean(row.querySelector("[name='customRequired']")?.checked)
+  };
+}).filter((field) => field.label) : [];
+const customFields = structuredEditorPresent ? structuredCustomFields : textareaCustomFields;
+const structuredBaseFields = Array.isArray(builderSettings.fields)
+  ? builderSettings.fields.filter((field) => !String(field?.key || "").startsWith("custom_"))
+  : (Array.isArray(defaults.fields) ? defaults.fields : []);
+registrationSettings = structuredEditorPresent
+  ? { ...builderSettings, customFields, fields: [...structuredBaseFields, ...customFields] }
+  : { ...builderSettings, customFields, fields: [...(Array.isArray(defaults.fields) ? defaults.fields : []), ...customFields] };
+          form.__tdeaRegistrationSettings = registrationSettings;
+          const nativeSaved = await ensureNativeFormForActivity(activity, email, registrationSettings, { update: true });
+          if (!nativeSaved) throw new Error("自訂問題未寫入報名表");
+          if (customFields.length) {
+            const verifyFormId = nativeFormIdentifier(activity);
+            const verifyResponse = await fetch(api + "/api/native-forms/" + encodeURIComponent(verifyFormId), { headers: adminHeaders(), cache: "no-store" });
+            const verifyResult = await verifyResponse.json().catch(() => ({}));
+            if (!verifyResponse.ok || !verifyResult.success) throw new Error(verifyResult.message || "無法驗證自訂問題是否已儲存");
+            const verifyData = verifyResult.data?.form || verifyResult.data || {};
+            const verifyFields = Array.isArray(verifyData.fields) ? verifyData.fields : [];
+            const verifyKeys = new Set(verifyFields.map((field) => String(field?.key || "").trim()));
+            const missing = customFields.filter((field) => !verifyKeys.has(String(field.key || "").trim()));
+            if (missing.length) throw new Error("自訂問題未寫入報名表：" + missing.map((field) => field.label).join("、"));
+          }
         } catch (error) {
           toast(error?.message || "報名表處理失敗");
           resetActivityUploadState(form);
@@ -1791,6 +2149,7 @@
         state.data.formSettings ||= {};
         state.data.formSettings[activity.id] ||= {};
         Object.assign(state.data.formSettings[activity.id], {
+          fields: Array.isArray(registrationSettings?.fields) ? registrationSettings.fields : [],
           detailText: activity.detailText || "",
           posterUrl: activity.posterUrl || activity.imageUrl || "",
           imageUrl: activity.imageUrl || activity.posterUrl || "",
@@ -1810,7 +2169,7 @@
           resetActivityUploadState(form);
           return;
         }
-        save();
+        persistLocalSnapshot();
         await finishSubmitState(form);
       }, true);
     }
@@ -1821,6 +2180,8 @@
       applySidebarCollapsed(next);
     };
     document.querySelectorAll("[data-nav]").forEach(b => b.onclick = () => { state.view = b.dataset.nav; state.drawer = ""; render(); });
+    const generalSearch = document.querySelector("[data-general-search]"); if (generalSearch) generalSearch.oninput = () => { state.generalSearch = generalSearch.value || ""; render(); };
+    document.querySelectorAll("[data-refresh-general-members]").forEach(b => b.onclick = async () => { b.disabled = true; await loadGeneralMembers(true); });
     document.querySelectorAll("[data-roster-search]").forEach(input => {
       input.oninput = () => {
         const type = input.dataset.rosterSearch;
@@ -1949,7 +2310,7 @@
     document.querySelectorAll("[data-registration-list]").forEach(b => b.onclick = () => openRegistrationList(b.dataset.registrationList));
     document.querySelectorAll("[data-export-registrations]").forEach(b => b.onclick = () => downloadRegistrationExcel(b.dataset.exportRegistrations, b));
     document.querySelectorAll("[data-refresh-registration-list]").forEach(b => b.onclick = () => loadRegistrationList(b.dataset.refreshRegistrationList, true));
-    document.querySelectorAll("[data-payment-registration]").forEach(b => b.onclick = () => updateRegistrationPayment(b.dataset.paymentRegistration, b.dataset.paymentStatus));
+    document.querySelectorAll("[data-payment-registration]").forEach(b => b.onclick = () => updateRegistrationPayment(b.dataset.paymentRegistration, b.dataset.paymentStatus, b));
     document.querySelectorAll("[data-load-member-applications]").forEach(b => b.onclick = () => loadMemberApplications(true));
     const autoSync = document.querySelector("[data-auto-sync]"); if (autoSync) autoSync.onchange = () => { setAutoSyncEnabled(autoSync.checked); toast(autoSync.checked ? "已開啟自動同步" : "已關閉自動同步"); };
     const refreshKeywords = document.querySelector("[data-refresh-keywords]"); if (refreshKeywords) refreshKeywords.onclick = () => { render(); toast("關鍵字列表已刷新"); };
@@ -2036,14 +2397,117 @@
       }
     };
     // Activity editor submit is handled by the enhanced listener above so registration settings and media remain editable.
-    const mf = document.querySelector("#drawer-member"); if (mf) mf.onsubmit = async e => { e.preventDefault(); const type = mf.dataset.type; const d = Object.fromEntries(new FormData(mf)); const rows = state.data[type]; const old = rows.find(r => r.id === d.id); const loginAccess = d.loginAccess === "Y"; const item = { ...d, id: d.id || uid(), loginAccess, allowLogin: loginAccess, canLogin: loginAccess }; old ? Object.assign(old, item) : rows.unshift(item); try { await syncRosterMemberToWorker(type, item); await syncAdminAccessForMember(type, item); state.drawer = ""; save(); state.adminWhitelist = null; render(); toast("名冊與管理權限已儲存"); } catch (err) { toast(err?.message || "名冊儲存失敗"); } };
-    const im = document.querySelector("#import-form"); if (im) im.onsubmit = e => { e.preventDefault(); const d = Object.fromEntries(new FormData(im)); const count = importRows(im.dataset.type, d.csv || ""); state.drawer = ""; render(); toast(`已導入 ${count} 筆資料`); };
+    const mf = document.querySelector("#drawer-member"); if (mf) mf.onsubmit = e => {
+      e.preventDefault();
+      const type = mf.dataset.type;
+      const d = Object.fromEntries(new FormData(mf));
+      const rows = state.data[type];
+      const old = rows.find(r => r.id === d.id);
+      const loginAccess = d.loginAccess === "Y";
+      const item = { ...d, id: d.id || uid(), loginAccess, allowLogin: loginAccess, canLogin: loginAccess };
+      old ? Object.assign(old, item) : rows.unshift(item);
+
+      // Explicit CRM edits win immediately in the UI. Persist a local snapshot first,
+      // then do the three remote jobs in parallel instead of blocking the drawer.
+      persistLocalSnapshot();
+      state.drawer = "";
+      render();
+      toast("會員資料已更新，背景儲存中...");
+
+      const managerSave = saveManagerDataRemoteChecked();
+      const accessSync = syncAdminAccessForMember(type, item);
+      state.adminWhitelist = null;
+
+      Promise.allSettled([managerSave, accessSync]).then((results) => {
+        const managerResult = results[0];
+        if (managerResult.status === "rejected") {
+          console.error("CRM member manager-data save failed", managerResult.reason);
+          toast(managerResult.reason?.message || "會員資料背景儲存失敗，請再按一次儲存");
+          return;
+        }
+        toast("會員資料已儲存");
+      });
+    };
+    const im = document.querySelector("#import-form"); if (im) {
+      im.onsubmit = e => { e.preventDefault(); const d = Object.fromEntries(new FormData(im)); const count = importRows(im.dataset.type, d.csv || ""); state.drawer = ""; rosterImportPreview = null; render(); toast(`已導入 ${count} 筆資料`); };
+      const rosterFile = im.querySelector("[data-roster-file]");
+      const googleSheetUrl = im.querySelector("[data-google-sheet-url]");
+      const readGoogleSheetButton = im.querySelector("[data-read-google-sheet]");
+      const confirmRoster = im.querySelector("[data-confirm-roster-import]");
+      if (rosterFile && confirmRoster) {
+        if (googleSheetUrl && readGoogleSheetButton) readGoogleSheetButton.onclick = async () => {
+          const preview = im.querySelector("[data-roster-preview]");
+          rosterImportPreview = null;
+          confirmRoster.disabled = true;
+          readGoogleSheetButton.disabled = true;
+          readGoogleSheetButton.textContent = "讀取中...";
+          try {
+            const result = await readGoogleSheet(googleSheetUrl.value);
+            rosterImportPreview = { type: im.dataset.type, text: result.text, fileName: result.source.exportUrl, rows: result.rows };
+            if (preview) preview.hidden = false;
+            const fileName = im.querySelector("[data-roster-file-name]");
+            const rowCount = im.querySelector("[data-roster-row-count]");
+            const body = im.querySelector("[data-roster-preview-rows]");
+            if (fileName) fileName.textContent = `工作表來源：${result.source.spreadsheetId}（gid=${result.source.gid}）`;
+            if (rowCount) rowCount.textContent = `讀取筆數：${result.rows.length}`;
+            if (body) body.innerHTML = result.rows.slice(0, 5).map(row => `<tr><td>${esc(row.memberNo)}</td><td>${esc(row.name)}</td><td>${esc(row.point)}</td></tr>`).join("");
+            confirmRoster.disabled = false;
+          } catch (error) {
+            if (preview) preview.hidden = true;
+            toast(error?.message || "無法讀取此 Google Sheet，請確認共用權限為『知道連結的使用者可查看』，或改用 Excel 上傳。");
+          } finally {
+            readGoogleSheetButton.disabled = false;
+            readGoogleSheetButton.textContent = "讀取 Google Sheet";
+          }
+        };
+        rosterFile.onchange = async () => {
+          const file = rosterFile.files?.[0];
+          const preview = im.querySelector("[data-roster-preview]");
+          rosterImportPreview = null;
+          confirmRoster.disabled = true;
+          if (!file) { if (preview) preview.hidden = true; return; }
+          confirmRoster.textContent = "讀取中...";
+          try {
+            const text = await readRosterFile(file);
+            const rows = rosterPreviewRows(text);
+            if (!rows.length) throw new Error("名冊沒有可匯入的資料");
+            rosterImportPreview = { type: im.dataset.type, text, fileName: file.name, rows };
+            if (preview) preview.hidden = false;
+            const fileName = im.querySelector("[data-roster-file-name]");
+            const rowCount = im.querySelector("[data-roster-row-count]");
+            const body = im.querySelector("[data-roster-preview-rows]");
+            if (fileName) fileName.textContent = `檔名：${file.name}`;
+            if (rowCount) rowCount.textContent = `讀取筆數：${rows.length}`;
+            if (body) body.innerHTML = rows.slice(0, 5).map(row => `<tr><td>${esc(row.memberNo)}</td><td>${esc(row.name)}</td><td>${esc(row.point)}</td></tr>`).join("");
+            confirmRoster.disabled = false;
+          } catch (error) {
+            if (preview) preview.hidden = true;
+            toast(error?.message || "名冊檔案讀取失敗");
+          } finally {
+            confirmRoster.textContent = "確認匯入名冊";
+          }
+        };
+        confirmRoster.onclick = async () => {
+          if (!rosterImportPreview || rosterImportPreview.type !== im.dataset.type) return;
+          confirmRoster.disabled = true;
+          confirmRoster.textContent = "名冊儲存中...";
+          try {
+            const count = importRows(im.dataset.type, rosterImportPreview.text);
+            await saveManagerDataRemoteChecked();
+            rosterImportPreview = null;
+            state.drawer = "";
+            render();
+            toast(`已導入並儲存 ${count} 筆資料`);
+          } catch (error) {
+            confirmRoster.disabled = false;
+            confirmRoster.textContent = "確認匯入名冊";
+            toast(error?.message || "名冊儲存失敗");
+          }
+        };
+      }
+    }
     const loadRoster = document.querySelector("[data-load-roster]"); if (loadRoster) loadRoster.onclick = () => loadRosterSeed(true);
     const worker = document.querySelector("[data-worker]"); if (worker) worker.onclick = async () => { try { const r = await fetch(api + "/api/activities"); const j = await r.json(); toast(j.success ? "Worker API 連線正常" : "Worker API 回應異常"); } catch (_) { toast("Worker API 無法連線"); } };
-    document.querySelectorAll("[data-load-mother-register]").forEach(b => b.onclick = async () => { if (state.motherRegisterLoading) return; b.disabled = true; b.textContent = "刷新中..."; await loadMotherRegisterRecords(true); });
-    document.querySelectorAll("[data-sync-mother-register]").forEach(b => b.onclick = async () => { b.disabled = true; await syncMotherRegisterRecords(); b.disabled = false; });
-    document.querySelectorAll("[data-capture-mother-register]").forEach(b => b.onclick = async () => { b.disabled = true; await captureMotherRegisterRecord(); b.disabled = false; });
-    document.querySelectorAll("[data-download-mother-register]").forEach(b => b.onclick = downloadMotherRegisterRecords);
     const exp = document.querySelector("[data-export]"); if (exp) exp.onclick = () => { navigator.clipboard.writeText(JSON.stringify(state.data, null, 2)); toast("備份 JSON 已複製"); };
     const copy = document.querySelector("[data-copy]"); if (copy) copy.onclick = () => { navigator.clipboard.writeText(location.href); toast("預覽網址已複製"); };
     const reset = document.querySelector("[data-reset]"); if (reset) reset.onclick = () => { const f = document.querySelector("#activity-form"); if (f) f.reset(); };
@@ -2064,43 +2528,8 @@
   function rosterMemberKey(row) {
     return String(row?.memberNo || row?.rosterMemberNo || row?.member_no || row?.aiweMemberNo || "").trim().toUpperCase();
   }
-  async function loadMotherRosterMap() {
-    if (motherRosterMapPromise) return motherRosterMapPromise;
-    motherRosterMapPromise = (async () => {
-      const response = await fetch(api + "/api/aiwe-members-public", { headers: adminHeaders(), cache: "no-store" });
-      const result = await response.json().catch(() => ({}));
-      if (!response.ok || !result.success) throw new Error(result.message || "母站綁定名冊讀取失敗");
-      const map = new Map();
-      for (const item of result.data || []) {
-        const uid = validLineUid(item.lineUserId || item.LINE_user_id || item.uid);
-        if (!uid) continue;
-        [item.rosterMemberNo, item.memberNo, item.member_no, item.aiweMemberNo].forEach((value) => {
-          const key = String(value || "").trim().toUpperCase();
-          if (key && !map.has(key)) map.set(key, { ...item, lineUserId: uid });
-        });
-      }
-      return map;
-    })().catch((error) => {
-      console.warn(error);
-      return new Map();
-    });
-    return motherRosterMapPromise;
-  }
   async function resolveMemberLineUidFromMother(info) {
-    const current = memberLineUid(info?.row);
-    if (current) return current;
-    const key = rosterMemberKey(info?.row);
-    if (!key) return "";
-    const map = await loadMotherRosterMap();
-    const remote = map.get(key);
-    const uid = validLineUid(remote?.lineUserId || remote?.LINE_user_id || remote?.uid);
-    if (uid && info?.row) {
-      info.row.lineUserId = uid;
-      if (!info.row.LINE_user_id) info.row.LINE_user_id = uid;
-      if (!info.row.uid) info.row.uid = uid;
-      queueManagerDataSave();
-    }
-    return uid;
+    return memberLineUid(info?.row);
   }
   function shortUid(value) {
     const text = String(value || "").trim();
@@ -2123,19 +2552,12 @@
 
   function memberPointPanelHtml(info, account) {
     const lineUserId = memberLineUid(info.row);
-    if (!lineUserId && account?.resolving) return `<div class="empty">正在比對母站綁定名冊...</div>`;
-    if (!lineUserId) return `<div class="empty">本地名冊沒有 LINE UID，且母站綁定名冊尚未回補成功。</div>`;
-    if (!account) return `<div class="empty">正在讀取母站點數...</div>`;
-    if (account.success === false) return `<div class="empty">${esc(account.message || "母站點數讀取失敗")}</div>`;
+    if (!lineUserId && account?.resolving) return `<div class="empty">正在確認 TDEA LINE UID...</div>`;
+    if (!lineUserId) return `<div class="empty">本地名冊尚未取得 LINE UID，請先完成會員 LINE 綁定。</div>`;
+    if (!account) return `<div class="empty">正在讀取本地點數...</div>`;
+    if (account.success === false) return `<div class="empty">${esc(account.message || "本地點數讀取失敗")}</div>`;
     const balance = Number(account.balance || 0);
-    const motherLogs = Array.isArray(account.motherSynced?.list) ? account.motherSynced.list.map(item => ({
-      createdAt: item.created_at,
-      type: Number(item.get_point || 0) >= 0 ? "EARN" : "SPEND",
-      amount: Number(item.get_point || 0),
-      balanceAfter: item.point_balance,
-      reason: item.event_name || item.event_content || ""
-    })) : [];
-    const logs = Array.isArray(account.logs) && account.logs.length ? account.logs : motherLogs;
+    const logs = Array.isArray(account.logs) ? account.logs : [];
     return `<div class="crm-point-summary"><span>可用點數</span><div class="crm-point-number"><strong>${esc(balance.toLocaleString())}</strong><small>點</small></div></div><form class="crm-point-actions" data-member-point-form><input type="hidden" name="lineUserId" value="${esc(lineUserId)}"><input type="hidden" name="memberNo" value="${esc(info.row.memberNo || "")}"><div class="field"><label>異動點數</label><input name="amount" type="number" placeholder="正數贈點，負數扣點" required></div><div class="field"><label>原因</label><input name="note" placeholder="例：活動補點、人工扣點" required></div><div class="actions"><button class="btn primary" type="submit" data-point-action="add">贈點</button><button class="btn danger" type="submit" data-point-action="spend">扣點</button></div></form><div class="crm-point-history"><h3>點數歷史紀錄</h3>${memberPointRowsHtml(logs)}</div>`;
   }
 
@@ -2161,10 +2583,10 @@
     const info = row ? { type, rowId, row } : null;
     state.memberPointAccounts[key] = { resolving: true };
     if (!showMessage) render();
-    const lineUserId = info ? await resolveMemberLineUidFromMother(info) : "";
+    const lineUserId = info ? memberLineUid(info.row) : "";
     if (!lineUserId) {
-      state.memberPointAccounts[key] = { success: false, message: "母站綁定名冊查無此會員 LINE UID" };
-      if (showMessage) toast("母站綁定名冊查無此會員 LINE UID");
+      state.memberPointAccounts[key] = { success: false, message: "TDEA CRM 尚未綁定此會員 LINE UID" };
+      if (showMessage) toast("TDEA CRM 尚未綁定此會員 LINE UID");
       render();
       return;
     }
@@ -2172,6 +2594,8 @@
       const res = await fetch(api + "/api/points/" + encodeURIComponent(lineUserId), { headers: adminHeaders(), cache: "no-store" });
       const result = await res.json().catch(() => ({}));
       state.memberPointAccounts[key] = result.data || { success: false, message: result.message || "點數讀取失敗" };
+      if (row && state.memberPointAccounts[key]?.success === true) row.pointBalance = Number(state.memberPointAccounts[key].balance || 0);
+      rosterPointLoadedAt[type] = Date.now();
       if (showMessage) toast("點數已更新");
     } catch (error) {
       state.memberPointAccounts[key] = { success: false, message: error?.message || "點數讀取失敗" };
@@ -2191,10 +2615,10 @@
     if (!amount) return toast("請輸入點數");
     if (submitter?.dataset.pointAction === "spend") amount = -Math.abs(amount);
     if (submitter?.dataset.pointAction === "add") amount = Math.abs(amount);
-    const lineUserId = validLineUid(data.lineUserId) || await resolveMemberLineUidFromMother(info);
-    if (!lineUserId) return toast("母站綁定名冊查無此會員 LINE UID");
+    const lineUserId = validLineUid(data.lineUserId) || memberLineUid(info.row);
+    if (!lineUserId) return toast("TDEA CRM 尚未綁定此會員 LINE UID");
     const actionName = amount >= 0 ? "贈點" : "扣點";
-    if (!confirm(`確認${actionName} ${Math.abs(amount).toLocaleString()} 點？\n\n此操作會寫入母站點數。`)) return;
+    if (!confirm(`確認${actionName} ${Math.abs(amount).toLocaleString()} 點？\n\n此操作會直接異動 TDEA 本地點數。`)) return;
     const response = await fetch(api + "/api/points/adjust", {
       method: "POST",
       headers: adminHeaders({ "content-type": "application/json" }),
@@ -2204,7 +2628,6 @@
     if (!response.ok || !result.success) return toast(result.message || "點數異動失敗");
     form.reset();
     await loadMemberPointAccount(info.type, info.rowId);
-    await loadPointLedger(false);
     toast(actionName + "完成");
   }
   function memberRegistrationRowsHtml(rows) {
@@ -2435,8 +2858,9 @@
       }
     }
   }
-  async function updateRegistrationPayment(registrationId, status) {
-    if (!hasAdminIdentity()) return toast("請先登入管理中心");
+  async function updateRegistrationPayment(registrationId, status, button = null) {
+    const originalText = button?.textContent || (status === "paid" ? "確認收款" : "改回待核對");
+    if (button) { button.disabled = true; button.textContent = "處理中…"; }
     try {
       const response = await fetch(api + "/api/native-registrations/payment", {
         method: "POST",
@@ -2445,12 +2869,14 @@
       });
       const result = await response.json().catch(() => ({}));
       if (!response.ok || !result.success) throw new Error(result.message || "付款狀態更新失敗");
+      if (button) button.textContent = status === "paid" ? "已收款" : "已改回待核對";
       const activityId = state.drawer?.startsWith("registrations:") ? state.drawer.split(":")[1] : "";
-      if (activityId) await loadRegistrationList(activityId);
+      if (activityId) await loadRegistrationList(activityId, true);
       else render();
       toast(status === "paid" ? "已確認收款" : "已改回待核對");
     } catch (err) {
-      toast(err?.message || "付款狀態更新失敗");
+      if (button) { button.disabled = false; button.textContent = originalText; }
+      alert(err?.message || "付款狀態更新失敗");
     }
   }
 

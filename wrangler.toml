@@ -1,5 +1,5 @@
 name = "tdeawork"
-main = "src/monthly-entry.ts"
+main = "src/registration-payment-entry.ts"
 compatibility_date = "2026-05-08"
 
 assets = { directory = "./public", binding = "ASSETS", not_found_handling = "single-page-application" }
@@ -7,6 +7,10 @@ assets = { directory = "./public", binding = "ASSETS", not_found_handling = "sin
 [[r2_buckets]]
 binding = "ASSETS_BUCKET"
 bucket_name = "assets-bucket"
+
+[[services]]
+binding = "TDEA_DESIGN"
+service = "tdea-design"
 
 [vars]
 ADMIN_EMAILS = "admin@example.com,fangwl591021@gmail.com"

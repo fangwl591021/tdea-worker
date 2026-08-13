@@ -1,4 +1,6 @@
+import { handleCardCollectionApi } from "./card-collection-api";
 import baseEntry from "./roster-sync-entry4";
+import { handleIdentityApi } from "./identity-api";
 import {
   calendarKeyword,
   classifyLineEvents,
@@ -24,7 +26,7 @@ import {
   vendorCardKeyword
 } from "./line-keywords";
 
-type Env = { ADMIN_EMAILS?: string; ADMIN_LOGIN_USER?: string; ADMIN_LOGIN_PASSWORD?: string; ASSETS_BUCKET?: R2Bucket; LINE_CHANNEL_SECRET?: string; LINE_CHANNEL_ACCESS_TOKEN?: string; FORWARD_WEBHOOK_URL?: string; GOOGLE_FORMS_SCRIPT_URL?: string; GOOGLE_FORMS_SHARED_SECRET?: string; OPNFORM_API_BASE?: string; OPNFORM_PUBLIC_BASE?: string; OPNFORM_API_TOKEN?: string; OPNFORM_WORKSPACE_ID?: string; OPNFORM_WEBHOOK_SECRET?: string; WETW_POINT_API_KEY?: string; WETW_MEMBER_API_KEY?: string; WETW_TDEA_SHOP_ID?: string; WETW_TDEA_CLIENT_ID?: string; WETW_SHOP_ID?: string; WETW_POINT_TYPE?: string; TDEA_POINT_EXTERNAL_SYNC?: string; TDEA_ADMIN_LINE_USER_IDS?: string; AIWE_WP_USER?: string; AIWE_WP_APP_PASSWORD?: string; OPENAI_API_KEY?: string; OPENAI_MODEL?: string };
+type Env = { TDEA_DESIGN?: Fetcher; TDEA_INTERNAL_SECRET?: string; ADMIN_EMAILS?: string; ADMIN_LOGIN_USER?: string; ADMIN_LOGIN_PASSWORD?: string; ASSETS_BUCKET?: R2Bucket; LINE_CHANNEL_SECRET?: string; LINE_CHANNEL_ACCESS_TOKEN?: string; FORWARD_WEBHOOK_URL?: string; GOOGLE_FORMS_SCRIPT_URL?: string; GOOGLE_FORMS_SHARED_SECRET?: string; OPNFORM_API_BASE?: string; OPNFORM_PUBLIC_BASE?: string; OPNFORM_API_TOKEN?: string; OPNFORM_WORKSPACE_ID?: string; OPNFORM_WEBHOOK_SECRET?: string; WETW_POINT_API_KEY?: string; WETW_MEMBER_API_KEY?: string; WETW_TDEA_SHOP_ID?: string; WETW_TDEA_CLIENT_ID?: string; WETW_SHOP_ID?: string; WETW_POINT_TYPE?: string; TDEA_POINT_EXTERNAL_SYNC?: string; TDEA_ADMIN_LINE_USER_IDS?: string; AIWE_WP_USER?: string; AIWE_WP_APP_PASSWORD?: string; OPENAI_API_KEY?: string; OPENAI_MODEL?: string };
 type LineEvent = { type?: string; replyToken?: string; message?: { type?: string; id?: string; text?: string }; postback?: { data?: string }; source?: { type?: string; userId?: string; groupId?: string; roomId?: string } };
 type MonthlyPage = { id?: string; manual?: boolean; activityNo?: string; activityId?: string; activityName?: string; imageUrl?: string; galleryUrls?: string[]; formImageUrl?: string; detailTitle?: string; detailText?: string; detailUrl?: string; formUrl?: string; shareUrl?: string; order?: number };
 type MonthlyConfig = { enabled?: boolean; keyword?: string; month?: string; altText?: string; detailBaseUrl?: string; pages?: MonthlyPage[]; updatedAt?: string };
@@ -43,7 +45,7 @@ type NativeField = { key: string; label: string; type: string; required?: boolea
 type NativeSession = { id: string; name: string; startTime?: string; endTime?: string; capacity?: number; status?: string };
 type NativeForm = { id: string; provider: "native_form"; activity: Record<string, unknown>; settings: Record<string, unknown>; fields: NativeField[]; sessions: NativeSession[]; formUrl: string; createdAt: string; updatedAt: string };
 type LineLoginMember = { rosterType: "association" | "vendor"; memberNo: string; name: string; role: string; lineUserId: string; company?: string; phone?: string; email?: string; gender?: string; raw: Record<string, unknown> };
-type RegistrationIdentity = { kind: "crm-member" | "mother-registered"; rosterType: "association" | "vendor" | "mother"; memberNo: string; name: string; role: string; lineUserId: string; identityKey: string; source: string; company?: string; phone?: string; email?: string; gender?: string; raw: Record<string, unknown> };
+type RegistrationIdentity = { kind: "crm-member" | "mother-registered"; rosterType: "general" | "association" | "vendor" | "mother"; memberNo: string; name: string; role: string; lineUserId: string; identityKey: string; source: string; company?: string; phone?: string; email?: string; gender?: string; raw: Record<string, unknown> };
 type PointLog = { logId: string; lineUserId: string; type: "EARN" | "SPEND"; amount: number; points: number; reason: string; balanceAfter: number; createdAt: string; createdTs: number; source?: string; referenceId?: string; externalSync?: unknown; externalBalanceSync?: unknown };
 type PointAccount = { balance: number; logs: PointLog[]; updatedAt?: string; source?: string; syncedAt?: string; externalRaw?: unknown };
 type RedeemMode = "fixed" | "manual" | "rate";
@@ -1390,6 +1392,26 @@ function normalizeRegistrationPayment(entry: RegistrationEntry): RegistrationPay
   };
 }
 
+async function refreshRegistrationActivitySnapshot(env: Env, entry: RegistrationEntry): Promise<RegistrationEntry> {
+  const formId = clean(entry.formId);
+  if (!formId) return entry;
+  const form = await readNativeForm(env, formId).catch(() => null);
+  const activity = asRecord(form?.activity);
+  if (!Object.keys(activity).length) return entry;
+  const payment = normalizeRegistrationPayment(entry);
+  const amount = activityPaymentAmount(activity);
+  return {
+    ...entry,
+    activity: { ...asRecord(entry.activity), ...activity },
+    payment: {
+      ...payment,
+      amount,
+      status: amount <= 0 ? "free" : (payment.status === "free" ? "unpaid" : payment.status),
+      method: amount <= 0 ? "free" : (payment.method || "bank_transfer"),
+    },
+  };
+}
+
 function paymentIsSettled(entry: RegistrationEntry) {
   const payment = normalizeRegistrationPayment(entry);
   return payment.amount <= 0 || payment.status === "free" || payment.status === "paid";
@@ -1404,7 +1426,7 @@ async function listRegistrations(request: Request, env: Env) {
     .filter(Boolean);
   for (const key of keys) {
     const list = dedupeRegistrations(await readRegistrationList(env, key));
-    if (list.length) return json({ success: true, key, data: list.map(publicRegistrationEntry) });
+    if (list.length) { const current = await Promise.all(list.map((entry) => refreshRegistrationActivitySnapshot(env, entry))); return json({ success: true, key, data: current.map(publicRegistrationEntry) }); }
   }
   return json({ success: true, key: keys[0] || "", data: [] });
 }
@@ -2204,9 +2226,9 @@ async function queryPointBalance(env: Env, lineUserId: string) {
 }
 
 async function syncMotherPointToLocal(env: Env, lineUserId: string) {
-  const result = await queryPointBalance(env, lineUserId) as Record<string, unknown>;
+  const result = await getUnifiedPointAccount(env, lineUserId) as Record<string, unknown>;
   if (result.success !== true) return result;
-  return { ...result, cached: false, syncedAt: new Date().toISOString(), source: "wetw-point/query-user-point-list" };
+  return { ...result, cached: false, syncedAt: new Date().toISOString(), source: "tdea-design-d1" };
 }
 
 async function syncBoundMemberPoints(env: Env, lineUserId: string) {
@@ -2237,49 +2259,110 @@ async function mapWithConcurrency<T, R>(items: T[], concurrency: number, worker:
   return results;
 }
 
+async function resolvePointBatchLineUserId(
+  env: Env,
+  input: { lineUserId?: unknown; memberNo?: unknown }
+) {
+  const directUid = firstClean(input.lineUserId);
+  if (validLineUid(directUid)) return directUid;
+
+  const memberNo = clean(input.memberNo).toUpperCase();
+  if (!memberNo) return "";
+
+  // 1. ?? CRM / AIWE ??
+  const managerData = await readManagerData(env).catch(() => null);
+
+  const rosterRows = [
+    ...(Array.isArray(managerData?.association)
+      ? managerData.association.map(asRecord)
+      : []),
+    ...(Array.isArray(managerData?.vendor)
+      ? managerData.vendor.map(asRecord)
+      : [])
+  ];
+
+  const aiweRows = await readAiweMembers(env).catch(
+    () => [] as Array<Record<string, unknown>>
+  );
+
+  const localMatches = [...aiweRows, ...rosterRows].filter((row) =>
+    rowMatchesMemberNo(row, memberNo)
+  );
+
+  for (const row of localMatches) {
+    const uid = firstClean(
+      explicitMemberLineUid(row),
+      memberLineUid(row)
+    );
+
+    if (validLineUid(uid)) return uid;
+  }
+
+  // 2. ????????
+  const motherRows = await readMotherRegisterRecords(env).catch(
+    () => [] as Array<Record<string, unknown>>
+  );
+
+  for (const record of motherRows) {
+    const raw = asRecord(record.raw);
+
+    const motherMemberNo = firstClean(
+      record.memberNo,
+      record.rosterMemberNo,
+      record.member_no,
+      record.user_login,
+      record.account,
+      raw.memberNo,
+      raw.rosterMemberNo,
+      raw.member_no,
+      raw.member_number,
+      raw.member_id,
+      raw.user_login,
+      raw.account,
+      raw.username
+    ).toUpperCase();
+
+    if (!motherMemberNo || motherMemberNo !== memberNo) {
+      continue;
+    }
+
+    const uid = firstClean(
+      record.lineUserId,
+      record.LINE_user_id,
+      record.line_userid,
+      record.line_user_id,
+      record.uid,
+      raw.LINE_user_id,
+      raw.lineUserId,
+      raw.line_userid,
+      raw.line_user_id,
+      raw.uid,
+      raw.user_line_id
+    );
+
+    if (validLineUid(uid)) return uid;
+  }
+
+  return "";
+}
+
 async function queryMemberPointBatchApi(request: Request, env: Env) {
   const guard = await requireAdmin(request, env);
   if (guard) return guard;
   const input = await request.json().catch(() => ({})) as Record<string, unknown>;
-  const rawIds = Array.isArray(input.lineUserIds) ? input.lineUserIds : [];
-  const lineUserIds = Array.from(new Set(rawIds.map((item) => clean(item)).filter(Boolean))).slice(0, 1000);
-  const data = await mapWithConcurrency(lineUserIds, 6, async (lineUserId) => {
-    try {
-      const result = await queryPointBalance(env, lineUserId) as Record<string, unknown>;
-      return { lineUserId, success: result.success === true, balance: result.success === true ? numberValue(result.balance) : null, cached: false, syncedAt: new Date().toISOString(), message: result.success === true ? "" : clean(result.message) || clean(result.code) || "mother point query failed", source: "wetw-point/query-user-point-list" };
-    } catch (error) {
-      return { lineUserId, success: false, balance: null, cached: false, syncedAt: "", message: String((error as Error).message || error || "mother point query failed") };
+  const members = Array.isArray(input.members) ? input.members.slice(0, 600).map(asRecord) : [];
+  const results: Array<Record<string, unknown>> = [];
+  for (const member of members) {
+    const memberNo = firstClean(member.memberNo, member.rosterMemberNo);
+    const lineUserId = firstClean(member.lineUserId, member.uid, member.LINE_user_id);
+    if (!lineUserId) {
+      results.push({ memberNo, lineUserId: '', success: false, message: 'missing_line_uid' });
+      continue;
     }
-  });
-  return json({ success: true, data });
-}
-
-function formatMotherPointReply(result: Record<string, unknown>, label: string) {
-  if (result.success !== true) {
-    return `${label}點數查詢失敗：${clean(result.message) || clean(result.code) || "未知錯誤"}`;
+    const account = await getUnifiedPointAccount(env, lineUserId);
+    results.push({ memberNo, lineUserId, success: account.success === true, balance: numberValue(account.balance), message: account.success === true ? '' : clean(account.message) });
   }
-  const flatList = Array.isArray(result.list) ? result.list.map(asRecord) : [];
-  const data = asRecord(result.data);
-  const dataList = Array.isArray(data.list) ? data.list.map(asRecord) : [];
-  const list = flatList.length ? flatList : dataList;
-  if (!list.length) return `${label}目前查不到點數紀錄。`;
-  const balance = result.balance ?? list[0].point_balance ?? "未知";
-  const rows = list.slice(0, 3).map((item) => {
-    const createdAt = clean(item.created_at);
-    const eventName = clean(item.event_name) || "點數紀錄";
-    const points = item.get_point ?? 0;
-    return `${createdAt} ${eventName} ${points} 點`.trim();
-  }).join("\n");
-  return `${label}目前點數餘額：${balance}\n\n最近紀錄：\n${rows}`;
-}
-
-function pointLogsFromMotherList(list: Array<Record<string, unknown>>, fallbackLineUserId = "") {
-  return list.map((item, index) => {
-    const amount = numberValue(item.get_point);
-    const createdAt = firstClean(item.created_at, item.createdAt) || new Date().toISOString();
-    const ts = Date.parse(createdAt);
-    return { logId: firstClean(item.id, "mother-" + index + "-" + createdAt), lineUserId: firstClean(item.LINE_user_id, item.lineUserId, fallbackLineUserId), type: amount >= 0 ? "EARN" : "SPEND", amount, points: Math.abs(amount), reason: firstClean(item.event_name, item.event_content, item.shop_remark), balanceAfter: numberValue(item.point_balance), createdAt, createdTs: Number.isFinite(ts) ? ts : Date.now(), source: "wetw-point/query-user-point-list", referenceId: firstClean(item.shop_remark, item.id), externalSync: item } as PointLog;
-  });
+  return json({ success: true, data: { members: results }, members: results });
 }
 
 async function handleMotherPointEvents(events: Array<{ event: LineEvent; query: { uid: string } }>, env: Env) {
@@ -2289,7 +2372,7 @@ async function handleMotherPointEvents(events: Array<{ event: LineEvent; query: 
     if (!uid) {
       return replyToLine(event.replyToken, [{ type: "text", text: "查詢點數需要 LINE UID，請輸入：TDEA點數+UID" }], env);
     }
-    const result = await queryPointBalance(env, uid) as Record<string, unknown>;
+    const result = await getUnifiedPointAccount(env, uid) as Record<string, unknown>;
     const label = query.uid ? `${uid} ` : "你 ";
     return replyToLine(event.replyToken, [{ type: "text", text: formatMotherPointReply(result, label) }], env);
   }));
@@ -2297,19 +2380,43 @@ async function handleMotherPointEvents(events: Array<{ event: LineEvent; query: 
 }
 
 async function updateLocalPoints(env: Env, lineUserId: string, amount: number, reason: string, options: { source?: string; referenceId?: string; skipExternalSync?: boolean } = {}) {
+  void options.skipExternalSync;
   const numericAmount = Number(amount || 0);
   if (!lineUserId || !numericAmount) return { success: false, message: "Missing LINE UID or point amount" };
-  const before = await queryPointBalance(env, lineUserId) as Record<string, unknown>;
-  if (before.success !== true) return { success: false, message: clean(before.message) || clean(before.code) || "mother point query failed", before };
-  const externalSync = await insertMemberPoint(env, { lineUserId, eventName: numericAmount >= 0 ? "TDEA add points" : "TDEA deduct points", eventContent: reason, points: numericAmount, remark: options.referenceId || options.source || "TDEA Worker" }) as Record<string, unknown>;
-  if (externalSync.success !== true || clean(externalSync.code) !== "insert_success") return { success: false, message: clean(externalSync.message) || "mother point insert failed", externalSync, before };
-  const after = await queryPointBalance(env, lineUserId) as Record<string, unknown>;
+  if (!env.TDEA_DESIGN || !env.TDEA_INTERNAL_SECRET) return { success: false, message: "TDEA-DESIGN point service is not configured" };
+  const requestId = clean(options.referenceId) || (crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random()}`);
+  const response = await env.TDEA_DESIGN.fetch("https://tdea-design.internal/internal/tdea/points/adjust?compact=1", {
+    method: "POST",
+    headers: { "content-type": "application/json", "x-tdea-internal-secret": env.TDEA_INTERNAL_SECRET },
+    body: JSON.stringify({
+      lineUserId,
+      action: numericAmount < 0 ? "deduct" : "grant",
+      points: Math.abs(numericAmount),
+      note: clean(reason) || clean(options.source) || "TDEA point adjustment",
+      requestId
+    })
+  });
+  const result = await response.json().catch(() => ({})) as Record<string, unknown>;
+  if (!response.ok || result.success !== true) return { success: false, message: clean(result.error) || "TDEA-DESIGN point adjustment failed", code: response.status === 400 ? "point_adjust_failed" : "point_service_failed" };
+  const wallet = asRecord(result.wallet);
+  const adjustment = asRecord(result.result);
+  const entry = asRecord(adjustment.entry);
+  const balanceAfter = numberValue(result.balance ?? wallet.balance ?? entry.balanceAfter ?? entry.balance_after);
   const createdTs = Date.now();
-  const expectedBalanceAfter = numberValue(before.balance) + numericAmount;
-  const afterBalance = after.success === true ? numberValue(after.balance) : expectedBalanceAfter;
-  const balanceAfter = after.success === true && afterBalance === expectedBalanceAfter ? afterBalance : expectedBalanceAfter;
-  const log: PointLog = { logId: crypto.randomUUID ? crypto.randomUUID() : String(createdTs), lineUserId, type: numericAmount >= 0 ? "EARN" : "SPEND", amount: numericAmount, points: Math.abs(numericAmount), reason, balanceAfter, createdAt: new Date(createdTs).toISOString(), createdTs, source: options.source || "tdea", referenceId: options.referenceId || "", externalSync, externalBalanceSync: after };
-  return { success: true, balance: balanceAfter, log, account: { balance: balanceAfter, logs: after.success === true && Array.isArray(after.list) ? pointLogsFromMotherList(after.list as Record<string, unknown>[], lineUserId) : [log], updatedAt: new Date(createdTs).toISOString(), source: "wetw-point", syncedAt: new Date(createdTs).toISOString(), externalRaw: after }, before, externalSync, externalBalanceSync: after };
+  const log: PointLog = {
+    logId: clean(entry.id) || requestId,
+    lineUserId,
+    type: numericAmount >= 0 ? "EARN" : "SPEND",
+    amount: numericAmount,
+    points: Math.abs(numericAmount),
+    reason,
+    balanceAfter,
+    createdAt: new Date(createdTs).toISOString(),
+    createdTs,
+    source: options.source || "tdea-design-d1",
+    referenceId: requestId
+  };
+  return { success: true, balance: balanceAfter, log, account: { balance: balanceAfter, logs: [log], source: "tdea-design-d1" }, serviceResult: result };
 }
 
 function taipeiDateKey(date = new Date()) {
@@ -2327,15 +2434,6 @@ async function rewardMarqueePoint(request: Request, env: Env) {
     const points = Math.max(1, Math.round(Number(config.left?.points || 1)));
     const eventContent = clean(config.left?.eventContent || "廣告贈點系統簽到") || "廣告贈點系統簽到";
     const referenceId = `marquee:${taipeiDateKey()}:button:left`;
-    const motherBefore = await queryPointBalance(env, lineUserId) as Record<string, unknown>;
-    if (motherBefore.success !== true) {
-      return json({ success: false, message: clean(motherBefore.message) || clean(motherBefore.code) || "母站點數查詢失敗", before: motherBefore }, 502);
-    }
-    const motherLogs = Array.isArray(motherBefore.list) ? motherBefore.list.map(asRecord) : [];
-    const existing = motherLogs.find((log) => firstClean(log.shop_remark, log.event_content, log.event_name).includes(referenceId));
-    if (existing) {
-      return json({ success: true, awarded: false, duplicate: true, points: 0, balance: motherBefore.balance, referenceId, message: "今日已完成系統簽到" });
-    }
     const result = await updateLocalPoints(env, lineUserId, points, eventContent, {
       source: "marquee_button_checkin",
       referenceId
@@ -2352,12 +2450,6 @@ async function rewardMarqueePoint(request: Request, env: Env) {
   const title = clean(item.title || config.title || "TDEA 廣告贈點");
   const dateKey = taipeiDateKey();
   const referenceId = `marquee:${dateKey}:${clean(item.id || item.imageUrl || imageUrl)}`;
-  const motherBefore = await queryPointBalance(env, lineUserId) as Record<string, unknown>;
-  const motherLogs = Array.isArray(motherBefore.list) ? motherBefore.list.map(asRecord) : [];
-  const existing = motherLogs.find((log) => firstClean(log.shop_remark, log.event_content, log.event_name).includes(referenceId));
-  if (existing) {
-    return json({ success: true, awarded: false, duplicate: true, points: 0, balance: motherBefore.balance, imageId: item.id, linkUrl: clean(item.linkUrl), message: "already awarded" });
-  }
   const eventContent = `${title} 圖片點擊每日贈點`;
   const result = await updateLocalPoints(env, lineUserId, points, eventContent, {
     source: "marquee_image_click",
@@ -2384,8 +2476,8 @@ async function queryMarqueePoints(request: Request, env: Env) {
   const config = await readMarqueeConfig(env);
   if (config.enabled === false) return json({ success: false, message: "廣告贈點尚未啟用" }, 403);
   if (config.right?.enabled === false) return json({ success: false, message: "查詢按鈕尚未啟用" }, 403);
-  const result = await queryPointBalance(env, lineUserId) as Record<string, unknown>;
-  const list = Array.isArray(result.list) ? result.list.map(asRecord) : [];
+  const result = await getUnifiedPointAccount(env, lineUserId) as Record<string, unknown>;
+  const list = Array.isArray(result.logs) ? result.logs.map(asRecord) : [];
   return json({
     success: result.success !== false,
     lineUserId,
@@ -2397,18 +2489,78 @@ async function queryMarqueePoints(request: Request, env: Env) {
 }
 
 async function importLegacyPointsOnce(env: Env, lineUserId: string, force = false) {
-  const result = await queryPointBalance(env, lineUserId) as Record<string, unknown>;
-  if (result.success !== true) return { success: false, reason: clean(result.code) || "mother_query_failed", imported: 0, message: clean(result.message) || "mother point query failed", raw: result };
-  return { success: true, reason: "mother_direct", imported: 0, balance: numberValue(result.balance), importedAt: new Date().toISOString(), source: "wetw-point/query-user-point-list", raw: result, message: "mother point is the source of truth; no local import was written" };
+  void force;
+  const result = await getUnifiedPointAccount(env, lineUserId) as Record<string, unknown>;
+  if (result.success !== true) return { success: false, reason: "d1_query_failed", imported: 0, message: clean(result.message) || "TDEA D1 point query failed", raw: result };
+  return { success: true, reason: "d1_canonical", imported: 0, balance: numberValue(result.balance), importedAt: new Date().toISOString(), source: "tdea-design-d1", raw: result };
 }
 
 async function getUnifiedPointAccount(env: Env, lineUserId: string, options: { autoImport?: boolean } = {}) {
+  void options;
   if (!lineUserId) return { success: false, balance: 0, logs: [], message: "Missing LINE UID" };
-  if (!motherPointApiReady(env)) return { success: false, balance: 0, logs: [], message: "Mother point API key is not configured" };
-  const result = await queryPointBalance(env, lineUserId) as Record<string, unknown>;
-  if (result.success !== true) return { success: false, balance: 0, logs: [], message: clean(result.message) || clean(result.code) || "mother point query failed", motherSynced: result };
-  const list = Array.isArray(result.list) ? result.list.map(asRecord) : [];
-  return { success: true, balance: numberValue(result.balance), logs: pointLogsFromMotherList(list, lineUserId), imported: null, legacySynced: null, motherSynced: result, source: "wetw-point/query-user-point-list" };
+  if (!env.TDEA_DESIGN || !env.TDEA_INTERNAL_SECRET) return { success: false, balance: 0, logs: [], message: "TDEA-DESIGN point service is not configured" };
+  const response = await env.TDEA_DESIGN.fetch(`https://tdea-design.internal/internal/tdea/points/${encodeURIComponent(lineUserId)}`, {
+    method: "GET",
+    headers: { "x-tdea-internal-secret": env.TDEA_INTERNAL_SECRET, accept: "application/json" }
+  });
+  const result = await response.json().catch(() => ({})) as Record<string, unknown>;
+  if (!response.ok || result.success !== true) return { success: false, balance: 0, logs: [], message: clean(result.error) || "TDEA-DESIGN point query failed" };
+  const entries = Array.isArray(result.entries) ? result.entries.map(asRecord) : [];
+  const logs: PointLog[] = entries.map((entry, index) => {
+    const amount = numberValue(entry.delta);
+    const createdAt = clean(entry.created_at);
+    return {
+      logId: clean(entry.id) || `${lineUserId}:${index}:${createdAt}`,
+      lineUserId,
+      type: amount >= 0 ? "EARN" : "SPEND",
+      amount,
+      points: Math.abs(amount),
+      reason: clean(entry.event_type) || "TDEA points",
+      balanceAfter: numberValue(entry.balance_after),
+      createdAt,
+      createdTs: Date.parse(createdAt) || 0,
+      source: "tdea-design-d1",
+      referenceId: clean(entry.event_reference)
+    };
+  });
+  return { success: true, balance: numberValue(result.balance), logs, source: "tdea-design-d1", userId: clean(result.userId), registered: result.registered === true, member: asRecord(result.member) };
+}
+
+
+function registrationIdentityFromTdeaMember(member: Record<string, unknown>, lineUserId: string): RegistrationIdentity {
+  const memberType = ["association", "vendor"].includes(clean(member.memberType)) ? clean(member.memberType) : "general";
+  const memberNo = firstClean(member.rosterMemberNumber, member.companyMemberNumber, member.memberNumber);
+  const name = firstClean(member.fullName, member.displayName, "TDEA 會員");
+  const role = memberType === "association" ? "協會會員" : memberType === "vendor" ? "廠商會員" : "一般會員";
+  return {
+    kind: "crm-member",
+    rosterType: memberType as "general" | "association" | "vendor",
+    memberNo,
+    name,
+    role,
+    lineUserId,
+    identityKey: `tdea:${firstClean(member.userId, lineUserId)}`,
+    source: "tdea-design",
+    company: "",
+    phone: clean(member.phone),
+    email: clean(member.email),
+    gender: clean(member.gender),
+    raw: member
+  };
+}
+
+async function resolveTdeaRegisteredIdentity(env: Env, lineUserId: string) {
+  if (!lineUserId) return { success: false, registered: false, message: "缺少 LINE UID" };
+  if (!env.TDEA_DESIGN || !env.TDEA_INTERNAL_SECRET) return { success: false, registered: false, message: "TDEA 會員服務尚未設定" };
+  const response = await env.TDEA_DESIGN.fetch(`https://tdea-design.internal/internal/tdea/member/${encodeURIComponent(lineUserId)}`, {
+    method: "GET",
+    headers: { "x-tdea-internal-secret": env.TDEA_INTERNAL_SECRET, accept: "application/json" }
+  });
+  const result = await response.json().catch(() => ({})) as Record<string, unknown>;
+  if (!response.ok || result.success !== true) return { success: false, registered: false, message: clean(result.error) || "TDEA 會員服務讀取失敗" };
+  const member = asRecord(result.member);
+  if (result.registered !== true || !clean(member.profileCompletedAt)) return { success: true, registered: false, member };
+  return { success: true, registered: true, member, identity: registrationIdentityFromTdeaMember(member, lineUserId) };
 }
 
 async function syncCheckinPoints(env: Env, entry: RegistrationEntry) {
@@ -2417,24 +2569,24 @@ async function syncCheckinPoints(env: Env, entry: RegistrationEntry) {
   const lineUserId = firstClean(entry.lineUserId, answers.LINE_user_id, answers.lineUserId, answers.line_user_id, answers.uid, answers.UID);
   if (!lineUserId) return [{ success: false, code: "missing_line_user_id", message: "registration has no LINE user id" }];
 
-  const eventName = firstClean(activity.name, activity.activityNo, "TDEA 瘣餃?蝪賢");
+  const eventName = firstClean(activity.name, activity.activityNo, "TDEA 活動簽到");
   const eventContent = firstClean(activity.courseTime, activity.activityNo, entry.id);
   const checkinPoints = numberValue(activity.checkinPoints || activity.checkinPointAmount);
   const feePoints = numberValue(activity.feePoints || activity.feePointAmount);
   const jobs: Array<{ label: string; points: number }> = [];
-  if (checkinPoints > 0) jobs.push({ label: "蝪賢韐?", points: checkinPoints });
-  if (feePoints > 0) jobs.push({ label: "鞎餌??", points: -Math.abs(feePoints) });
+  if (checkinPoints > 0) jobs.push({ label: "簽到贈點", points: checkinPoints });
+  if (feePoints > 0) jobs.push({ label: "報名扣點", points: -Math.abs(feePoints) });
   if (!jobs.length) return [];
 
   const results = [];
   for (const job of jobs) {
-    results.push(await insertMemberPoint(env, {
+    results.push(await updateLocalPoints(
+      env,
       lineUserId,
-      eventName: `${eventName} ${job.label}`,
-      eventContent,
-      points: job.points,
-      remark: entry.id
-    }));
+      job.points,
+      `${eventName} ${job.label}${eventContent ? `｜${eventContent}` : ""}`,
+      { source: "activity_checkin", referenceId: entry.id }
+    ));
   }
   return results;
 }
@@ -2677,6 +2829,37 @@ async function getPointAccountApi(request: Request, env: Env, lineUserId: string
   return json({ success: true, data: await getUnifiedPointAccount(env, lineUserId, { autoImport: true }) });
 }
 
+async function initializeRosterPointsApi(request: Request, env: Env) {
+  const guard = await requireAdmin(request, env);
+  if (guard) return guard;
+  if (!env.TDEA_DESIGN || !env.TDEA_INTERNAL_SECRET) return json({ success: false, message: "TDEA-DESIGN point service is not configured" }, 503);
+  const managerData = await readManagerDataRaw(env);
+  if (!managerData) return json({ success: false, message: "CRM 名冊尚未建立" }, 404);
+  const rows = [
+    ...(Array.isArray(managerData.association) ? managerData.association as Array<Record<string, unknown>> : []),
+    ...(Array.isArray(managerData.vendor) ? managerData.vendor as Array<Record<string, unknown>> : [])
+  ];
+  const members = rows.map((row) => ({
+    memberNo: firstClean(row.memberNo, row.rosterMemberNo, row["會員編號"]),
+    lineUserId: firstClean(explicitMemberLineUid(row), memberLineUid(row)),
+    name: firstClean(row.name, row.rosterName, row["姓名"]),
+    phone: firstClean(row.phone, row.mobile, row.tel, row["手機"]),
+    email: firstClean(row.email, row.mail, row["email"]),
+    pointBalance: Object.prototype.hasOwnProperty.call(row, "pointBalance") ? Number(row.pointBalance) : null
+  }));
+  const response = await env.TDEA_DESIGN.fetch("https://tdea-design.internal/internal/tdea/points/initialize", {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      "x-tdea-internal-secret": env.TDEA_INTERNAL_SECRET
+    },
+    body: JSON.stringify({ members })
+  });
+  const result = await response.json().catch(() => ({})) as Record<string, unknown>;
+  if (!response.ok || result.success !== true) return json({ success: false, message: clean(result.error) || "TDEA-DESIGN 名冊點數初始化失敗", detail: result }, response.status || 502);
+  return json({ success: true, rosterCount: rows.length, data: result });
+}
+
 async function adjustMemberPointApi(request: Request, env: Env) {
   const guard = await requireAdmin(request, env);
   if (guard) return guard;
@@ -2791,11 +2974,13 @@ async function getNativeLoginMember(request: Request, env: Env, formId: string) 
   const url = new URL(request.url);
   const lineUserId = firstClean(url.searchParams.get("lineUserId"), url.searchParams.get("uid"), url.searchParams.get("LINE_user_id"));
   if (!lineUserId) return json({ success: false, message: "缺少 LINE UID" }, 400);
-  const identity = await resolveNativeRegistrationIdentity(env, lineUserId);
-  if (!identity) return json({ success: false, code: "registration_identity_not_found", message: "此 LINE 帳號尚未對到 CRM 會員或母站註冊資料" }, 404);
-  return json({ success: true, data: publicRegistrationIdentity(identity) });
+  const resolved = await resolveTdeaRegisteredIdentity(env, lineUserId);
+  if (resolved.success !== true) return json({ success: false, code: "member_service_unavailable", message: clean(resolved.message) || "會員服務暫時無法使用" }, 502);
+  if (resolved.registered !== true || !resolved.identity) {
+    return json({ success: false, code: "registration_required", message: "尚未完成 TDEA 會員註冊，請先註冊後再報名活動。", registerUrl: "https://liff.line.me/2005868456-3Ip8H1Bx" }, 403);
+  }
+  return json({ success: true, data: publicRegistrationIdentity(resolved.identity), member: resolved.member });
 }
-
 function validateNativeAnswers(form: NativeForm, answers: Record<string, unknown>, sessionId: string) {
   const errors: string[] = [];
   const session = form.sessions.find((item) => item.id === sessionId);
@@ -2835,28 +3020,24 @@ function validateNativeLoginAnswers(form: NativeForm, answers: Record<string, un
 async function submitNativeForm(request: Request, env: Env, formId: string) {
   if (!env.ASSETS_BUCKET) return json({ success: false, message: "R2 bucket is not configured" }, 503);
   const form = await readNativeForm(env, formId);
-  if (!form) return json({ success: false, message: "?曆??啣?”" }, 404);
-  if (nativeRegistrationMode(form.settings || {}) === "member_login") {
-    return json({ success: false, message: "此活動僅允許 CRM 會員、廠商會員或母站已註冊者使用 LINE 快速報名。", code: "quick_registration_required" }, 403);
-  }
+  if (!form) return json({ success: false, message: "找不到報名表" }, 404);
   const input = await request.json().catch(() => ({})) as Record<string, unknown>;
   const rawAnswers = asRecord(input.answers);
   const answers = normalizeAnswersRecord(rawAnswers);
   const lineUserId = firstClean(input.lineUserId, rawAnswers.LINE_user_id, rawAnswers.lineUserId, rawAnswers.line_user_id, rawAnswers.uid, rawAnswers.UID);
-  if (lineUserId) answers.LINE_user_id = lineUserId;
-  const sessionId = clean(input.sessionId || "default");
-  let member: LineLoginMember | null = null;
-  try {
-    member = await resolveAndBindNativeRegistrationMember(env, lineUserId, answers);
-  } catch (error) {
-    return json({ success: false, message: error instanceof Error ? error.message : "?鞈?瘥?憭望?" }, 400);
+  if (!lineUserId) return json({ success: false, code: "line_login_required", message: "請先使用 LINE 登入後再報名活動。" }, 401);
+  const resolved = await resolveTdeaRegisteredIdentity(env, lineUserId);
+  if (resolved.success !== true) return json({ success: false, code: "member_service_unavailable", message: clean(resolved.message) || "會員服務暫時無法使用" }, 502);
+  if (resolved.registered !== true || !resolved.identity) {
+    return json({ success: false, code: "registration_required", message: "尚未完成 TDEA 會員註冊，請先註冊後再報名活動。", registerUrl: "https://liff.line.me/2005868456-3Ip8H1Bx" }, 403);
   }
-  const finalAnswers = member ? normalizeAnswersRecord({ ...answers, ...memberAnswers(member) }) : answers;
-  const errors = member ? validateNativeLoginAnswers(form, finalAnswers, sessionId) : validateNativeAnswers(form, finalAnswers, sessionId);
+  const identity = resolved.identity as RegistrationIdentity;
+  const sessionId = clean(input.sessionId || "default");
+  const finalAnswers = normalizeAnswersRecord({ ...answers, ...registrationIdentityAnswers(identity) });
+  const errors = validateNativeLoginAnswers(form, finalAnswers, sessionId);
   if (errors.length) return json({ success: false, message: errors[0], errors }, 400);
-  return createNativeRegistration(env, form, finalAnswers, member?.lineUserId || lineUserId, sessionId, member ? "line_member_claim" : "form", member ? registrationIdentityFromCrmMember(member) : undefined);
+  return createNativeRegistration(env, form, finalAnswers, lineUserId, sessionId, "tdea_registered", identity);
 }
-
 async function createNativeRegistration(env: Env, form: NativeForm, answers: Record<string, unknown>, lineUserId: string, sessionId: string, source: string, identity?: RegistrationIdentity) {
   const active = activeRegistrations(await readRegistrationList(env, form.id));
   const identityKey = firstClean(identity?.identityKey, answers.registrationIdentityKey);
@@ -2956,7 +3137,8 @@ async function queryNativeRegistration(request: Request, env: Env) {
   }
   const entry = await readNativeRegistration(env, targetId);
   if (!entry || (queryCode && entry.queryCode !== queryCode)) return json({ success: false, message: "查無報名資料" }, 404);
-  return json({ success: true, data: { ...publicRegistrationEntry(entry), checkinUrl: entry.checkinToken ? nativeCheckinUrl(entry.checkinToken) : "" } });
+  const currentEntry = await refreshRegistrationActivitySnapshot(env, entry);
+  return json({ success: true, data: { ...publicRegistrationEntry(currentEntry), checkinUrl: entry.checkinToken ? nativeCheckinUrl(entry.checkinToken) : "" } });
 }
 
 async function queryNativeRegistrationsByLine(request: Request, env: Env) {
@@ -2970,7 +3152,8 @@ async function queryNativeRegistrationsByLine(request: Request, env: Env) {
     const entry = await readNativeRegistration(env, id);
     if (entry && clean(entry.lineUserId) === lineUserId) entries.push(entry);
   }
-  return json({ success: true, data: entries.map((entry) => ({ ...publicRegistrationEntry(entry), checkinUrl: entry.checkinToken ? nativeCheckinUrl(entry.checkinToken) : "" })) });
+  const currentEntries = await Promise.all(entries.map((entry) => refreshRegistrationActivitySnapshot(env, entry)));
+  return json({ success: true, data: currentEntries.map((entry) => ({ ...publicRegistrationEntry(entry), checkinUrl: entry.checkinToken ? nativeCheckinUrl(entry.checkinToken) : "" })) });
 }
 
 async function updateRegistrationEverywhere(env: Env, entry: RegistrationEntry) {
@@ -5431,6 +5614,16 @@ function motherRegisterRecordFromWetw(row: Record<string, unknown>, meta: { shop
     email: firstClean(row.email, row.user_email),
     city: firstClean(row.city, row.county, row.address_city),
     category: firstClean(row.category, row.industry, row.business_category, row.user_category),
+    pointBalance: numberValue(
+      firstClean(
+        row.Point,
+        row.point,
+        row.points,
+        row.point_balance,
+        row.pointBalance,
+        row.system_point
+      )
+    ),
     submitStatus: "imported-from-mother",
     motherHttpStatus: meta.httpStatus,
     motherMessage: "母站 wetw 名單同步",
@@ -6729,7 +6922,8 @@ async function handleMonthlyWebhook(request: Request, env: Env, rawBody: string,
     }
     return replyMonthlyActivityEvents(events, allEvents, env, ctx);
   }
-  const hasBuiltInKeywordEvents = Boolean(queryEvents.length || memberQrEvents.length || calendarEvents.length || personalMessageEvents.length || uidBindEvents.length || vendorCardEvents.length || marqueeEvents.length || pointEvents.length);
+
+  const hasBuiltInKeywordEvents = Boolean(queryEvents.length || memberQrEvents.length || calendarEvents.length || personalMessageEvents.length || uidBindEvents.length || vendorCardEvents.length || marqueeEvents.length || pointEvents.length);
   if (hasBuiltInKeywordEvents) {
     const signature = request.headers.get("x-line-signature");
     if (!await verifyLineSignature(rawBody, signature, env.LINE_CHANNEL_SECRET)) return new Response("Invalid Signature", { status: 403, headers });
@@ -6751,7 +6945,8 @@ async function handleMonthlyWebhook(request: Request, env: Env, rawBody: string,
     if (!await verifyLineSignature(rawBody, signatureForCustomKeyword, env.LINE_CHANNEL_SECRET)) return new Response("Invalid Signature", { status: 403, headers });
     const customKeyword = await handleCustomKeywordEvents(customKeywordEvents, env);
     if (customKeyword) return customKeyword;
-  }  const onboardingActiveEarly = !hasMemberCheckinTextInPayload && await hasMemberOnboardingSession(allEvents, env);
+  }
+  const onboardingActiveEarly = !hasMemberCheckinTextInPayload && await hasMemberOnboardingSession(allEvents, env);
   if (onboardingActiveEarly && !hasBuiltInKeywordEvents) {
     const signature = request.headers.get("x-line-signature");
     if (!await verifyLineSignature(rawBody, signature, env.LINE_CHANNEL_SECRET)) return new Response("Invalid Signature", { status: 403, headers });
@@ -6930,6 +7125,10 @@ async function monthlyDetail(env: Env, id: string) {
 export default {
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
     const url = new URL(request.url);
+    const cardCollectionResponse =
+      await handleCardCollectionApi(request, env);
+    if (cardCollectionResponse) return cardCollectionResponse;
+
     if (request.method === "OPTIONS") return new Response(null, { status: 204, headers });
 	    const uploadMatch = url.pathname.match(/^\/api\/uploads\/(.+)$/);
 	    if ((request.method === "GET" || request.method === "HEAD") && uploadMatch) return getUploadedFile(env, decodeURIComponent(uploadMatch[1]));
@@ -6966,6 +7165,10 @@ export default {
 	    if (request.method === "GET" && url.pathname === "/api/line-webhook/status") return lineWebhookStatusApi(request, env);
 	    if (request.method === "GET" && url.pathname === "/api/line-webhook/logs") return lineWebhookLogsApi(request, env);
 	    if (url.pathname === "/api/activities" || url.pathname === "/api/activities/archived" || /^\/api\/activities\/[^/]+(?:\/restore)?$/.test(url.pathname)) return activityRecordsApi(request, env, url);
+	    if (url.pathname.startsWith("/api/identity/")) {
+	      const identityResponse = await handleIdentityApi(request, env);
+	      if (identityResponse) return identityResponse;
+	    }
 	    if (request.method === "GET" && url.pathname === "/api/manager-data") return json({ success: true, data: await readManagerData(env) });
 	    if ((request.method === "PUT" || request.method === "POST") && url.pathname === "/api/manager-data") {
 	      const guard = await requireAdmin(request, env);
@@ -7010,6 +7213,7 @@ export default {
 	    const redeemMatch = url.pathname.match(/^\/api\/redeem\/([^/]+)(?:\/use)?$/);
 	    if (redeemMatch && request.method === "GET") return getRedeemRequest(request, env, decodeURIComponent(redeemMatch[1]));
 	    if (redeemMatch && request.method === "POST") return confirmRedeemRequest(request, env, decodeURIComponent(redeemMatch[1]));
+	    if (request.method === "POST" && url.pathname === "/api/points/initialize-roster") return initializeRosterPointsApi(request, env);
 	    if (request.method === "POST" && url.pathname === "/api/points/adjust") return adjustMemberPointApi(request, env);
 	    if (request.method === "GET" && url.pathname === "/api/points/ledger") return listPointLedgerApi(request, env);
 	    if (request.method === "POST" && url.pathname === "/api/member-points/batch") return queryMemberPointBatchApi(request, env);
@@ -7025,6 +7229,18 @@ export default {
     if (request.method === "POST" && url.pathname === "/api/opnform/sync") return syncOpnFormResponses(request, env);
     if (request.method === "POST" && url.pathname === "/api/google-forms/submission") return handleFormSubmission(request, env);
     if (request.method === "POST" && url.pathname === "/api/google-forms/sync") return syncGoogleFormResponses(request, env);
+    if (request.method === "GET" && url.pathname === "/api/general-members") {
+      const guard = await requireAdmin(request, env);
+      if (guard) return guard;
+      if (!env.TDEA_DESIGN || !env.TDEA_INTERNAL_SECRET) return json({ success: false, message: "TDEA-DESIGN member service is not configured" }, 503);
+      const upstream = await env.TDEA_DESIGN.fetch("https://tdea-design.internal/internal/tdea/points/members?type=general", {
+        method: "GET",
+        headers: { "x-tdea-internal-secret": env.TDEA_INTERNAL_SECRET, accept: "application/json" }
+      });
+      const result = await upstream.json().catch(() => ({})) as Record<string, unknown>;
+      if (!upstream.ok || result.success !== true) return json({ success: false, message: clean(result.error) || "一般會員讀取失敗" }, upstream.status || 502);
+      return json({ success: true, data: result });
+    }
     if (request.method === "GET" && url.pathname === "/api/registrations/summary") return json({ success: true, data: await readRegistrationSummary(env) });
     if (request.method === "GET" && url.pathname === "/api/registrations/list") return listRegistrations(request, env);
     if (request.method === "GET" && url.pathname === "/api/registrations/export") return exportRegistrationsExcel(request, env);

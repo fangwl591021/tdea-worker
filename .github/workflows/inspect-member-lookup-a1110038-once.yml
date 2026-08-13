@@ -1,0 +1,19 @@
+name: Inspect member lookup A1110038 once
+on:
+  push:
+    paths:
+      - '.github/workflows/inspect-member-lookup-a1110038-once.yml'
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feature/tdea-identity-profile
+      - name: Inspect lookup logic
+        shell: bash
+        run: |
+          echo '=== member lookup route ==='
+          grep -n -E 'member-lookup|member-number-lookup|memberNumber|fullName|rosterName' src/monthly-entry.ts | head -320 || true
+          echo '=== roster references A1110038 ==='
+          grep -Rni 'A1110038' public src . --exclude-dir=.git --exclude='*.map' | head -50 || true
