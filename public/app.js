@@ -2106,8 +2106,14 @@
         let registrationSettings = null;
         try {
           const defaults = nativeFormSettingsFor(activity);
-          const customFields = parseCustomRegistrationFields(d.customRegistrationFields || "");
-          registrationSettings = { ...(form.__tdeaRegistrationSettings || {}), fields: [...(Array.isArray(defaults.fields) ? defaults.fields : []), ...customFields] };
+          const builderSettings = form.__tdeaRegistrationSettings && typeof form.__tdeaRegistrationSettings === "object" ? form.__tdeaRegistrationSettings : {};
+          const structuredEditorPresent = Boolean(form.querySelector("[data-custom-fields]"));
+          const textareaCustomFields = parseCustomRegistrationFields(d.customRegistrationFields || "");
+          const structuredCustomFields = Array.isArray(builderSettings.customFields) ? builderSettings.customFields : [];
+          const customFields = structuredEditorPresent ? structuredCustomFields : textareaCustomFields;
+          registrationSettings = structuredEditorPresent
+            ? { ...builderSettings, customFields, fields: Array.isArray(builderSettings.fields) ? builderSettings.fields : [...(Array.isArray(defaults.fields) ? defaults.fields : []), ...customFields] }
+            : { ...builderSettings, customFields, fields: [...(Array.isArray(defaults.fields) ? defaults.fields : []), ...customFields] };
           form.__tdeaRegistrationSettings = registrationSettings;
           const nativeSaved = await ensureNativeFormForActivity(activity, email, registrationSettings, { update: true });
           if (!nativeSaved) throw new Error("自訂問題未寫入報名表");
