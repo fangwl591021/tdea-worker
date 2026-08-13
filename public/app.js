@@ -903,7 +903,7 @@
 
   function storedFormSettingsForActivity(activity = {}) {
     const settings = state.data.formSettings || {};
-    return settings[activity.id] || settings[activity.activityNo] || {};
+    return settings[activity.id] || settings[activity.activityNo] || activity.formSettings || {};
   }
 
   function nativeFormIdentifier(activity = {}) {
@@ -2049,10 +2049,11 @@
             return;
           }
         }
+        let registrationSettings = null;
         try {
           const defaults = nativeFormSettingsFor(activity);
           const customFields = parseCustomRegistrationFields(d.customRegistrationFields || "");
-          const registrationSettings = { ...(form.__tdeaRegistrationSettings || {}), fields: [...(Array.isArray(defaults.fields) ? defaults.fields : []), ...customFields] };
+          registrationSettings = { ...(form.__tdeaRegistrationSettings || {}), fields: [...(Array.isArray(defaults.fields) ? defaults.fields : []), ...customFields] };
           form.__tdeaRegistrationSettings = registrationSettings;
           await ensureNativeFormForActivity(activity, email, registrationSettings, { update: true });
         } catch (error) {
@@ -2076,6 +2077,7 @@
         activity.formSettings = { ...state.data.formSettings[activity.id] };
         if (activity.activityNo) state.data.formSettings[activity.activityNo] = state.data.formSettings[activity.id];
         try {
+          await saveManagerDataRemoteChecked();
           const saved = await saveActivityRemote(activity);
           Object.assign(activity, saved || {});
         } catch (error) {
