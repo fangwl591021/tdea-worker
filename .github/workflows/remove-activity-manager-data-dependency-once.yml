@@ -1,0 +1,50 @@
+name: Remove activity manager-data dependency once
+on:
+  push:
+    branches: [feature/tdea-identity-profile]
+    paths: ['.github/workflows/remove-activity-manager-data-dependency-once.yml']
+permissions:
+  contents: write
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feature/tdea-identity-profile
+      - name: Apply patch
+        shell: python
+        run: |
+          from pathlib import Path
+          p = Path('public/app.js')
+          s = p.read_text(encoding='utf-8')
+          old = '''        try {\n          await saveManagerDataRemoteChecked();\n          const saved = await saveActivityRemote(activity);\n          Object.assign(activity, saved || {});\n        } catch (error) {\n          toast(error?.message || "活動儲存失敗");\n          resetActivityUploadState(form);\n          return;\n        }\n        save();\n        await finishSubmitState(form);'''
+          new = '''        try {\n          const saved = await saveActivityRemote(activity);\n          Object.assign(activity, saved || {});\n        } catch (error) {\n          toast(error?.message || "活動儲存失敗");\n          resetActivityUploadState(form);\n          return;\n        }\n        persistLocalSnapshot();\n        await finishSubmitState(form);'''
+          if old not in s:
+              raise SystemExit('target activity save block not found')
+          p.write_text(s.replace(old, new, 1), encoding='utf-8')
+      - name: Verify
+        run: |
+          node --check public/app.js
+          python - <<'PY'
+          from pathlib import Path
+          s=Path('public/app.js').read_text(encoding='utf-8')
+          start=s.index('let registrationSettings = null;')
+          end=s.index('await finishSubmitState(form);', start)+len('await finishSubmitState(form);')
+          block=s[start:end]
+          assert 'saveManagerDataRemoteChecked' not in block
+          assert '\n        save();' not in block
+          assert 'const saved = await saveActivityRemote(activity);' in block
+          assert 'persistLocalSnapshot();' in block
+          print(block[-900:])
+          PY
+          git diff --check
+      - name: Commit and cleanup
+        run: |
+          git config user.name fangwl591021
+          git config user.email 50135766+fangwl591021@users.noreply.github.com
+          git add public/app.js
+          git commit -m "Do not block activity save on manager data"
+          git rm .github/workflows/remove-activity-manager-data-dependency-once.yml
+          git commit -m "Cleanup one-time activity manager data workflow"
+          git push origin feature/tdea-identity-profile
