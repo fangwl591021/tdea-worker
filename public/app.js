@@ -204,6 +204,7 @@
         email: firstValue(remoteRow?.email, remoteRow?.mail, localRow?.email, localRow?.mail),
         jobTitle: firstValue(remoteRow?.jobTitle, remoteRow?.title, remoteRow?.position, localRow?.jobTitle, localRow?.title, localRow?.position),
         company: firstValue(remoteRow?.company, remoteRow?.companyName, remoteRow?.unit, localRow?.company, localRow?.companyName, localRow?.unit),
+        qualification: firstValue(localRow?.qualification, remoteRow?.qualification, "Y"),
         loginAccess,
         allowLogin: loginAccess,
         canLogin: loginAccess
@@ -2233,7 +2234,38 @@
       }
     };
     // Activity editor submit is handled by the enhanced listener above so registration settings and media remain editable.
-    const mf = document.querySelector("#drawer-member"); if (mf) mf.onsubmit = async e => { e.preventDefault(); const type = mf.dataset.type; const d = Object.fromEntries(new FormData(mf)); const rows = state.data[type]; const old = rows.find(r => r.id === d.id); const loginAccess = d.loginAccess === "Y"; const item = { ...d, id: d.id || uid(), loginAccess, allowLogin: loginAccess, canLogin: loginAccess }; old ? Object.assign(old, item) : rows.unshift(item); try { await syncRosterMemberToWorker(type, item); await syncAdminAccessForMember(type, item); state.drawer = ""; save(); state.adminWhitelist = null; render(); toast("名冊與管理權限已儲存"); } catch (err) { toast(err?.message || "名冊儲存失敗"); } };
+    const mf = document.querySelector("#drawer-member"); if (mf) mf.onsubmit = e => {
+      e.preventDefault();
+      const type = mf.dataset.type;
+      const d = Object.fromEntries(new FormData(mf));
+      const rows = state.data[type];
+      const old = rows.find(r => r.id === d.id);
+      const loginAccess = d.loginAccess === "Y";
+      const item = { ...d, id: d.id || uid(), loginAccess, allowLogin: loginAccess, canLogin: loginAccess };
+      old ? Object.assign(old, item) : rows.unshift(item);
+
+      // Explicit CRM edits win immediately in the UI. Persist a local snapshot first,
+      // then do the three remote jobs in parallel instead of blocking the drawer.
+      persistLocalSnapshot();
+      state.drawer = "";
+      render();
+      toast("會員資料已更新，背景儲存中...");
+
+      const managerSave = saveManagerDataRemoteChecked();
+      const rosterSync = syncRosterMemberToWorker(type, item);
+      const accessSync = syncAdminAccessForMember(type, item);
+      state.adminWhitelist = null;
+
+      Promise.allSettled([managerSave, rosterSync, accessSync]).then((results) => {
+        const managerResult = results[0];
+        if (managerResult.status === "rejected") {
+          console.error("CRM member manager-data save failed", managerResult.reason);
+          toast(managerResult.reason?.message || "會員資料背景儲存失敗，請再按一次儲存");
+          return;
+        }
+        toast("會員資料已儲存");
+      });
+    };
     const im = document.querySelector("#import-form"); if (im) {
       im.onsubmit = e => { e.preventDefault(); const d = Object.fromEntries(new FormData(im)); const count = importRows(im.dataset.type, d.csv || ""); state.drawer = ""; rosterImportPreview = null; render(); toast(`已導入 ${count} 筆資料`); };
       const rosterFile = im.querySelector("[data-roster-file]");
