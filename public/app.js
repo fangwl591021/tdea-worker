@@ -2107,13 +2107,26 @@
         try {
           const defaults = nativeFormSettingsFor(activity);
           const builderSettings = form.__tdeaRegistrationSettings && typeof form.__tdeaRegistrationSettings === "object" ? form.__tdeaRegistrationSettings : {};
-          const structuredEditorPresent = Boolean(form.querySelector("[data-custom-fields]"));
-          const textareaCustomFields = parseCustomRegistrationFields(d.customRegistrationFields || "");
-          const structuredCustomFields = Array.isArray(builderSettings.customFields) ? builderSettings.customFields : [];
-          const customFields = structuredEditorPresent ? structuredCustomFields : textareaCustomFields;
-          registrationSettings = structuredEditorPresent
-            ? { ...builderSettings, customFields, fields: Array.isArray(builderSettings.fields) ? builderSettings.fields : [...(Array.isArray(defaults.fields) ? defaults.fields : []), ...customFields] }
-            : { ...builderSettings, customFields, fields: [...(Array.isArray(defaults.fields) ? defaults.fields : []), ...customFields] };
+const structuredEditorPresent = Boolean(form.querySelector("[data-custom-fields]"));
+const textareaCustomFields = parseCustomRegistrationFields(d.customRegistrationFields || "");
+const structuredCustomFields = structuredEditorPresent ? [...form.querySelectorAll("[data-custom-field]")].map((row, index) => {
+  const type = String(row.querySelector("[name='customType']")?.value || "text").trim();
+  const options = [...row.querySelectorAll("[name='customOption']")].map((input) => String(input.value || "").trim()).filter(Boolean);
+  return {
+    key: `custom_${index + 1}`,
+    label: String(row.querySelector("[name='customLabel']")?.value || "").trim(),
+    type,
+    ...(options.length ? { options } : {}),
+    required: Boolean(row.querySelector("[name='customRequired']")?.checked)
+  };
+}).filter((field) => field.label) : [];
+const customFields = structuredEditorPresent ? structuredCustomFields : textareaCustomFields;
+const structuredBaseFields = Array.isArray(builderSettings.fields)
+  ? builderSettings.fields.filter((field) => !String(field?.key || "").startsWith("custom_"))
+  : (Array.isArray(defaults.fields) ? defaults.fields : []);
+registrationSettings = structuredEditorPresent
+  ? { ...builderSettings, customFields, fields: [...structuredBaseFields, ...customFields] }
+  : { ...builderSettings, customFields, fields: [...(Array.isArray(defaults.fields) ? defaults.fields : []), ...customFields] };
           form.__tdeaRegistrationSettings = registrationSettings;
           const nativeSaved = await ensureNativeFormForActivity(activity, email, registrationSettings, { update: true });
           if (!nativeSaved) throw new Error("自訂問題未寫入報名表");
