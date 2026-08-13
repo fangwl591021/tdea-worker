@@ -1,0 +1,23 @@
+name: Inspect registration member source once
+on:
+  push:
+    branches:
+      - feature/tdea-identity-profile
+    paths:
+      - .github/workflows/inspect-registration-member-source-once.yml
+permissions:
+  contents: read
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feature/tdea-identity-profile
+      - name: Inspect registration member paths
+        shell: bash
+        run: |
+          echo '=== native-form member references ==='
+          grep -n -E 'member|registered|profile|login-member|TDEA_DESIGN|會員.*失敗|讀取.*會員' public/native-form.js | head -220 || true
+          echo '=== monthly-entry registration member references ==='
+          grep -n -E 'getNativeLoginMember|resolveNativeRegistrationIdentity|login-member|TDEA_DESIGN|internal/tdea/member|會員.*失敗|讀取.*會員|member/profile' src/monthly-entry.ts | head -260 || true
