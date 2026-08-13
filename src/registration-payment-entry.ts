@@ -172,11 +172,71 @@ async function handleNativeRegistrationAmount(request: Request, env: Env, ctx: E
   return new Response(JSON.stringify(payload), { status: response.status, statusText: response.statusText, headers });
 }
 
+async function correctQueriedRegistration(env: Env, item: Record<string, any>) {
+  const bucket = env.ASSETS_BUCKET;
+  if (!bucket) return item;
+  const formId = clean(item.formId);
+  if (!formId) return item;
+
+  const formObject = await bucket.get(`forms/native/${encodeURIComponent(formId)}.json`);
+  if (!formObject) return item;
+  const form = await formObject.json().catch(() => ({})) as NativeForm;
+  const activity = form.activity && typeof form.activity === "object" ? form.activity : (item.activity || {});
+  const answers = item.answers && typeof item.answers === "object" ? item.answers as Record<string, unknown> : {};
+  const payment = item.payment && typeof item.payment === "object" ? item.payment as Record<string, unknown> : {};
+
+  const savedUnitAmount = numberValue(payment.unitAmount);
+  const savedQuantity = Math.floor(numberValue(payment.quantity));
+  const unitAmount = savedUnitAmount > 0 ? savedUnitAmount : activityUnitAmount(activity);
+  const quantity = savedQuantity > 0 ? savedQuantity : registrationHeadcount(form, answers);
+  if (unitAmount <= 0 || quantity <= 0) return item;
+
+  const expectedAmount = unitAmount * quantity;
+  const correctedPayment = updatePayment(payment, unitAmount, quantity);
+  const registrationId = clean(item.id || item.registrationId);
+
+  if (registrationId && numberValue(payment.amount) !== expectedAmount) {
+    await patchStoredRegistration(env, registrationId, formId, activity, unitAmount, quantity).catch(() => undefined);
+  }
+
+  return {
+    ...item,
+    payment: correctedPayment,
+    registrationCount: quantity,
+    unitAmount
+  };
+}
+
+async function handleRegistrationQuery(request: Request, env: Env, ctx: ExecutionContext) {
+  const response = await app.fetch(request, env, ctx);
+  if (!response.ok) return response;
+
+  const payload = await response.clone().json().catch(() => null) as Record<string, any> | null;
+  if (!payload?.success) return response;
+
+  const url = new URL(request.url);
+  if (url.pathname === "/api/native-registrations/query" && payload.data && typeof payload.data === "object" && !Array.isArray(payload.data)) {
+    payload.data = await correctQueriedRegistration(env, payload.data);
+  } else if (url.pathname === "/api/native-registrations/me" && Array.isArray(payload.data)) {
+    payload.data = await Promise.all(payload.data.map((item: unknown) => item && typeof item === "object" ? correctQueriedRegistration(env, item as Record<string, any>) : item));
+  } else {
+    return response;
+  }
+
+  const headers = new Headers(response.headers);
+  headers.delete("content-length");
+  headers.set("content-type", "application/json; charset=utf-8");
+  return new Response(JSON.stringify(payload), { status: response.status, statusText: response.statusText, headers });
+}
+
 export default {
   async fetch(request: Request, env: Env, ctx: ExecutionContext) {
     const url = new URL(request.url);
     const match = request.method === "POST" ? url.pathname.match(/^\/api\/native-forms\/([^/]+)$/) : null;
     if (match) return handleNativeRegistrationAmount(request, env, ctx, decodeURIComponent(match[1]));
+    if (request.method === "GET" && (url.pathname === "/api/native-registrations/query" || url.pathname === "/api/native-registrations/me")) {
+      return handleRegistrationQuery(request, env, ctx);
+    }
     return app.fetch(request, env, ctx);
   }
 };
