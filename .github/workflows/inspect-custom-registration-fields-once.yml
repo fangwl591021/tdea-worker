@@ -1,0 +1,19 @@
+name: Inspect custom registration fields once
+on:
+  push:
+    paths:
+      - '.github/workflows/inspect-custom-registration-fields-once.yml'
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feature/tdea-identity-profile
+      - name: Inspect custom field flow
+        shell: bash
+        run: |
+          echo '=== admin field config ==='
+          grep -n -E 'custom.*field|自訂.*問題|registrationSettings|fields:|fieldHtml|normalizeNativeFields|activityFields' public/app.js src/monthly-entry.ts public/native-form.js | head -420 || true
+          echo '=== native form create/update ==='
+          grep -n -A100 -B30 -E 'ensureNativeFormForActivity|normalizeNativeFields|createNativeForm|updateNativeForm|publicNativeForm' src/monthly-entry.ts public/app.js | head -520 || true
