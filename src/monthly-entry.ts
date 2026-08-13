@@ -2365,7 +2365,7 @@ async function updateLocalPoints(env: Env, lineUserId: string, amount: number, r
   if (!lineUserId || !numericAmount) return { success: false, message: "Missing LINE UID or point amount" };
   if (!env.TDEA_DESIGN || !env.TDEA_INTERNAL_SECRET) return { success: false, message: "TDEA-DESIGN point service is not configured" };
   const requestId = clean(options.referenceId) || (crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random()}`);
-  const response = await env.TDEA_DESIGN.fetch("https://tdea-design.internal/internal/tdea/points/adjust", {
+  const response = await env.TDEA_DESIGN.fetch("https://tdea-design.internal/internal/tdea/points/adjust?compact=1", {
     method: "POST",
     headers: { "content-type": "application/json", "x-tdea-internal-secret": env.TDEA_INTERNAL_SECRET },
     body: JSON.stringify({
@@ -2381,7 +2381,7 @@ async function updateLocalPoints(env: Env, lineUserId: string, amount: number, r
   const wallet = asRecord(result.wallet);
   const adjustment = asRecord(result.result);
   const entry = asRecord(adjustment.entry);
-  const balanceAfter = numberValue(wallet.balance || entry.balanceAfter || entry.balance_after);
+  const balanceAfter = numberValue(result.balance ?? wallet.balance ?? entry.balanceAfter ?? entry.balance_after);
   const createdTs = Date.now();
   const log: PointLog = {
     logId: clean(entry.id) || requestId,
@@ -2530,12 +2530,16 @@ function registrationIdentityFromTdeaMember(member: Record<string, unknown>, lin
 }
 
 async function resolveTdeaRegisteredIdentity(env: Env, lineUserId: string) {
-  const account = await getUnifiedPointAccount(env, lineUserId) as Record<string, unknown>;
-  if (account.success !== true) return { success: false, registered: false, message: clean(account.message) || "TDEA 會員服務讀取失敗" };
-  const member = asRecord(account.member);
-  if (account.registered !== true || !clean(member.profileCompletedAt)) {
-    return { success: true, registered: false, member };
-  }
+  if (!lineUserId) return { success: false, registered: false, message: "缺少 LINE UID" };
+  if (!env.TDEA_DESIGN || !env.TDEA_INTERNAL_SECRET) return { success: false, registered: false, message: "TDEA 會員服務尚未設定" };
+  const response = await env.TDEA_DESIGN.fetch(`https://tdea-design.internal/internal/tdea/member/${encodeURIComponent(lineUserId)}`, {
+    method: "GET",
+    headers: { "x-tdea-internal-secret": env.TDEA_INTERNAL_SECRET, accept: "application/json" }
+  });
+  const result = await response.json().catch(() => ({})) as Record<string, unknown>;
+  if (!response.ok || result.success !== true) return { success: false, registered: false, message: clean(result.error) || "TDEA 會員服務讀取失敗" };
+  const member = asRecord(result.member);
+  if (result.registered !== true || !clean(member.profileCompletedAt)) return { success: true, registered: false, member };
   return { success: true, registered: true, member, identity: registrationIdentityFromTdeaMember(member, lineUserId) };
 }
 

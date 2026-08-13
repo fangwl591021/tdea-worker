@@ -502,20 +502,19 @@
   }
 
   async function showRegister(id) {
-    renderLoading("載入報名表...");
-    const response = await fetch(`${api}/api/native-forms/${encodeURIComponent(id)}`, { cache: "no-store" });
-    const result = await response.json().catch(() => ({}));
+    renderLoading("正在開啟活動報名...");
+    const formPromise = fetch(`${api}/api/native-forms/${encodeURIComponent(id)}`, { cache: "no-store" })
+      .then(async (response) => ({ response, result: await response.json().catch(() => ({})) }));
+    const uidPromise = loadLiff({ login: true });
+    const [{ response, result }, uid] = await Promise.all([formPromise, uidPromise]);
     if (!response.ok || !result.success) return renderError(result.message || "找不到報名表");
+    if (!uid) return renderError("無法取得 LINE UID，請從 LINE 開啟活動報名頁並完成登入。");
     const form = result.data || {};
     const activity = form.activity || {};
     const sessions = Array.isArray(form.sessions) ? form.sessions : [];
     const fields = Array.isArray(form.fields) ? form.fields : [];
     const activityFields = fields.filter((field) => !isRegistrationProfileField(field));
     const image = activity.posterUrl || activity.imageUrl || "";
-
-    renderLoading("確認 TDEA 會員註冊狀態...");
-    const uid = await loadLiff({ login: true });
-    if (!uid) return renderError("無法取得 LINE UID，請從 LINE 開啟活動報名頁並完成登入。");
 
     const memberResponse = await fetch(`${api}/api/native-forms/${encodeURIComponent(id)}/login-member?lineUserId=${encodeURIComponent(uid)}`, { cache: "no-store" });
     const memberResult = await memberResponse.json().catch(() => ({}));
