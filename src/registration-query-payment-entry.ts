@@ -122,6 +122,50 @@ async function correctItem(env: Env, item: Record<string, any>) {
   return { ...item, payment, registrationCount: quantity, unitAmount };
 }
 
+async function repairAdminListIndexes(env: Env, url: URL, correctedItems: Array<Record<string, any>>) {
+  if (!env.ASSETS_BUCKET || !correctedItems.length) return;
+  const keys = clean(url.searchParams.get("keys"))
+    .split(",")
+    .map((key) => key.trim())
+    .filter(Boolean);
+  if (!keys.length) return;
+
+  const correctedById = new Map(
+    correctedItems
+      .map((item) => [clean(item.id || item.registrationId), item] as const)
+      .filter(([id]) => Boolean(id))
+  );
+
+  for (const key of keys) {
+    const objectKey = `registrations/by-key/${encodeURIComponent(key)}.json`;
+    const object = await env.ASSETS_BUCKET.get(objectKey);
+    if (!object) continue;
+    const list = await object.json().catch(() => null);
+    if (!Array.isArray(list)) continue;
+
+    let changed = false;
+    const next = list.map((row) => {
+      if (!row || typeof row !== "object") return row;
+      const id = clean((row as Record<string, any>).id || (row as Record<string, any>).registrationId);
+      const corrected = correctedById.get(id);
+      if (!corrected) return row;
+      const oldAmount = numberValue((row as Record<string, any>).payment?.amount);
+      const newAmount = numberValue(corrected.payment?.amount);
+      const oldQuantity = Math.floor(numberValue((row as Record<string, any>).payment?.quantity));
+      const newQuantity = Math.floor(numberValue(corrected.payment?.quantity));
+      if (oldAmount === newAmount && oldQuantity === newQuantity) return row;
+      changed = true;
+      return { ...(row as Record<string, any>), payment: corrected.payment };
+    });
+
+    if (changed) {
+      await env.ASSETS_BUCKET.put(objectKey, JSON.stringify(next, null, 2), {
+        httpMetadata: { contentType: "application/json; charset=utf-8", cacheControl: "no-store" }
+      });
+    }
+  }
+}
+
 async function handleQuery(request: Request, env: Env, ctx: ExecutionContext) {
   const response = await app.fetch(request, env, ctx);
   if (!response.ok) return response;
@@ -131,8 +175,11 @@ async function handleQuery(request: Request, env: Env, ctx: ExecutionContext) {
   const url = new URL(request.url);
   if (url.pathname === "/api/native-registrations/query" && payload.data && typeof payload.data === "object" && !Array.isArray(payload.data)) {
     payload.data = await correctItem(env, payload.data);
-  } else if (url.pathname === "/api/native-registrations/me" && Array.isArray(payload.data)) {
+  } else if ((url.pathname === "/api/native-registrations/me" || url.pathname === "/api/registrations/list") && Array.isArray(payload.data)) {
     payload.data = await Promise.all(payload.data.map((item: unknown) => item && typeof item === "object" ? correctItem(env, item as Record<string, any>) : item));
+    if (url.pathname === "/api/registrations/list") {
+      await repairAdminListIndexes(env, url, payload.data.filter((item: unknown) => item && typeof item === "object") as Array<Record<string, any>>);
+    }
   } else {
     return response;
   }
@@ -146,7 +193,11 @@ async function handleQuery(request: Request, env: Env, ctx: ExecutionContext) {
 export default {
   async fetch(request: Request, env: Env, ctx: ExecutionContext) {
     const url = new URL(request.url);
-    if (request.method === "GET" && (url.pathname === "/api/native-registrations/query" || url.pathname === "/api/native-registrations/me")) {
+    if (request.method === "GET" && (
+      url.pathname === "/api/native-registrations/query" ||
+      url.pathname === "/api/native-registrations/me" ||
+      url.pathname === "/api/registrations/list"
+    )) {
       return handleQuery(request, env, ctx);
     }
     return app.fetch(request, env, ctx);
