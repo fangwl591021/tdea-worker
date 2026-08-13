@@ -10,8 +10,9 @@
   const sidebarCollapsedKey = "tdea-sidebar-collapsed";
   const labels = {
     dashboard: ["活動總覽", "查看活動狀態、報名與簽到概況。"],
-    association: ["會員 CRM", "維護協會會員檔案、會員資格與點數資料，可匯入 CSV。"],
-    vendor: ["廠商 CRM", "維護廠商會員檔案、統編、窗口與備註，可匯入 CSV。"],
+    general: ["一般會員", "查看由 TDEA-DESIGN 正式註冊的一般會員資料與點數。"],
+    association: ["協會會員", "維護協會會員檔案、會員資格與點數資料，可匯入 CSV。"],
+    vendor: ["廠商會員", "維護廠商會員檔案、統編、窗口與備註，可匯入 CSV。"],
     creator: ["創建活動", "建立活動草稿，之後可直接改接 D1。"],
     keywords: ["關鍵字", "整理 LINE OA 觸發關鍵字、用途與回覆行為。"],
     adminWhitelist: ["權限名單", "後台登入、核銷與 LINE 工具使用權限。"],
@@ -19,7 +20,7 @@
     motherRegister: ["母站註冊資料", "查看由母站註冊表送回的獨立資料，不併入會員 CRM。"]
   };
   purgeLegacyManagerCache();
-  const state = { view: "dashboard", drawer: "", keywordEditId: "", data: load(), archivedActivities: [], registrationLists: {}, memberRegistrationLists: {}, memberPointAccounts: {}, memberApplications: null, adminWhitelist: null, adminWhitelistMeta: null, motherRegisterRecords: null, motherRegisterSearch: "", motherRegisterLoading: false, motherRegisterLoadedAt: "", rosterSearch: { association: "", vendor: "" } };
+  const state = { view: "dashboard", drawer: "", keywordEditId: "", data: load(), archivedActivities: [], registrationLists: {}, memberRegistrationLists: {}, memberPointAccounts: {}, memberApplications: null, generalMembers: null, generalMembersLoading: false, generalSearch: "", adminWhitelist: null, adminWhitelistMeta: null, motherRegisterRecords: null, motherRegisterSearch: "", motherRegisterLoading: false, motherRegisterLoadedAt: "", rosterSearch: { association: "", vendor: "" } };
   let managerDataSaveTimer = null;
   let managerDataLoading = false;
   let lineDraftAutoImporting = false;
@@ -1090,7 +1091,7 @@
         <aside class="sidebar">
           <div class="brand"><span>TDEA 管理中心</span><button class="sidebar-toggle" type="button" data-sidebar-toggle title="${collapsed ? "展開選單" : "收合選單"}" aria-label="${collapsed ? "展開選單" : "收合選單"}">${collapsed ? "›" : "‹"}</button></div>
           ${adminProfileHtml()}
-          <nav class="nav">${nav("dashboard", "活動總覽")}${nav("association", "會員 CRM")}${nav("vendor", "廠商 CRM")}${nav("creator", "創建活動")}${nav("redeem", "點數折抵")}</nav>
+          <nav class="nav">${nav("dashboard", "活動總覽")}${nav("general", "一般會員")}${nav("association", "協會會員")}${nav("vendor", "廠商會員")}${nav("creator", "創建活動")}${nav("redeem", "點數折抵")}</nav>
         </aside>
         <main class="main">
           <div class="topbar"><div><h1>${title}</h1><div class="subtitle">${sub}</div></div><div class="actions">${actions()}</div></div>
@@ -1105,6 +1106,7 @@
     if (state.view === "redeem" && !state.redeemRecords) loadRedeemRecords();
     if (state.view === "redeem" && !state.pointLedger) loadPointLedger();
     if (state.view === "dashboard" && state.memberApplications === null) loadMemberApplications();
+    if (state.view === "general" && state.generalMembers === null && !state.generalMembersLoading) loadGeneralMembers();
     if (state.view === "adminWhitelist" && !state.adminWhitelist) loadAdminWhitelist().then(() => render()).catch(() => undefined);
     if ((state.view === "association" || state.view === "vendor") && !rosterPointLoading[state.view]) setTimeout(() => loadRosterPointBalances(state.view), 0);
     window.TDEALineNav?.refresh?.();
@@ -1112,6 +1114,7 @@
 
   function nav(id, text) { return `<button class="${state.view === id ? "active" : ""}" data-nav="${id}" title="${esc(text)}">${text}</button>`; }
   function actions() {
+    if (state.view === "general") return `<button class="btn" data-refresh-general-members>重新載入</button>`;
     if (state.view === "association") return `<button class="btn" data-import="association">匯入名冊</button><button class="btn primary" data-drawer="association:new">新增協會會員</button>`;
     if (state.view === "vendor") return `<button class="btn" data-import="vendor">匯入 CSV</button><button class="btn primary" data-drawer="vendor:new">新增廠商會員</button>`;
     if (state.view === "creator") return `<button class="btn" data-import-line-drafts>匯入 LINE 草稿</button><button class="btn" data-reset>清空表單</button>`;
@@ -1121,6 +1124,7 @@
     return `<label class="sync-toggle"><input type="checkbox" data-auto-sync ${autoSyncEnabled() ? "checked" : ""}> 自動同步</label><button class="btn" data-sync-registrations>同步報名</button><button class="btn" data-worker>檢查 Worker</button><button class="btn danger" data-clear-test>清空測試資料</button><button class="btn primary" data-nav="creator">新增活動</button>`;
   }
   function body() {
+    if (state.view === "general") return generalMembersView();
     if (state.view === "association") return members("association");
     if (state.view === "vendor") return members("vendor");
     if (state.view === "creator") return creator();
@@ -1128,6 +1132,60 @@
     if (state.view === "keywords") return keywords();
     if (state.view === "adminWhitelist") return adminWhitelistClean();
     return memberApplicationsPanel() + dashboard();
+  }
+
+  async function loadGeneralMembers(force = false) {
+    if (state.generalMembersLoading) return state.generalMembers || [];
+    if (state.generalMembers !== null && !force) return state.generalMembers;
+    state.generalMembersLoading = true;
+    if (state.view === "general") render();
+    try {
+      const response = await fetch(api + "/api/general-members", { headers: adminHeaders(), cache: "no-store" });
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok || result.success !== true) throw new Error(result.message || "一般會員讀取失敗");
+      state.generalMembers = Array.isArray(result.data?.members) ? result.data.members : [];
+    } catch (error) {
+      state.generalMembers = [];
+      toast(error?.message || "一般會員讀取失敗");
+    } finally {
+      state.generalMembersLoading = false;
+      if (state.view === "general") render();
+    }
+    return state.generalMembers;
+  }
+
+  function generalMemberSearchValue(row) {
+    return [row.memberNumber,row.fullName,row.displayName,row.lineUserId,row.phone,row.email,row.gender]
+      .map(value => String(value || "").toLowerCase()).join(" ");
+  }
+
+  function generalMembersView() {
+    if (state.generalMembers === null || state.generalMembersLoading) return `<section class="panel"><div class="panel-head"><h2 class="panel-title">一般會員</h2></div>${empty("正在讀取 TDEA 一般會員...")}</section>`;
+    const query = String(state.generalSearch || "").trim().toLowerCase();
+    const allRows = Array.isArray(state.generalMembers) ? state.generalMembers : [];
+    const rows = query ? allRows.filter(row => generalMemberSearchValue(row).includes(query)) : allRows;
+    const search = `<div class="field" style="min-width:280px;max-width:460px;margin-left:auto"><input data-general-search value="${esc(state.generalSearch || "")}" placeholder="搜尋一般會員：編號、姓名、UID、電話、Email"></div>`;
+    const table = rows.length ? `<div class="table-wrap"><table><thead><tr><th>會員編號</th><th>姓名</th><th>LINE UID</th><th>點數</th><th>手機</th><th>Email</th><th>註冊完成</th><th>操作</th></tr></thead><tbody>${rows.map(row => `<tr><td>${esc(row.memberNumber || "-")}</td><td><strong>${esc(row.fullName || row.displayName || "-")}</strong></td><td>${esc(shortUid(row.lineUserId || ""))}</td><td>${n(row.pointBalance || 0)}</td><td>${esc(row.phone || "-")}</td><td>${esc(row.email || "-")}</td><td>${esc(formatTime(row.profileCompletedAt || ""))}</td><td><button class="link" data-drawer="general:${esc(row.userId)}">CRM 檔案</button></td></tr>`).join("")}</tbody></table></div>` : empty(query ? "沒有符合搜尋條件的一般會員" : "目前沒有已完成註冊的一般會員");
+    return `<section class="panel"><div class="panel-head"><div><h2 class="panel-title">一般會員</h2><div class="muted">直接讀取 TDEA-DESIGN D1，不建立第二份會員資料。</div></div><div class="actions">${search}<span class="badge live">${rows.length} / ${allRows.length} 筆</span></div></div>${table}</section>`;
+  }
+
+  function generalMemberProfile(userId) {
+    const row = (state.generalMembers || []).find(item => item.userId === userId) || {};
+    const name = row.fullName || row.displayName || row.memberNumber || "一般會員";
+    return `<div class="crm-member-profile-layout"><section class="crm-member-card"><div class="crm-member-section-title">一般會員資料</div><div class="form-grid crm-member-form">
+      ${field("系統會員編號", "memberNumber", row.memberNumber || "")}
+      ${field("LINE UID", "lineUserId", row.lineUserId || "")}
+      ${field("姓名", "fullName", row.fullName || "")}
+      ${field("顯示名稱", "displayName", row.displayName || "")}
+      ${field("手機", "phone", row.phone || "")}
+      ${field("Email", "email", row.email || "", "", false, "email")}
+      ${field("性別", "gender", row.gender || "")}
+      ${field("生日", "birthday", row.birthday || "")}
+      ${field("會員類型", "memberType", "一般會員")}
+      ${field("註冊完成時間", "profileCompletedAt", row.profileCompletedAt ? formatTime(row.profileCompletedAt) : "")}
+      <div class="muted" style="grid-column:1/-1">一般會員主檔以 TDEA-DESIGN D1 為準；此處目前僅供查看。</div>
+      <div class="crm-member-savebar"><button class="btn primary" type="button" data-close>關閉</button></div>
+    </div></section><aside class="crm-member-side"><section class="panel member-point-panel"><div class="panel-head"><h3>點數</h3></div><div class="crm-point-summary"><span>可用點數</span><div class="crm-point-number"><strong>${n(row.pointBalance || 0)}</strong><small>點</small></div></div></section></aside></div>`;
   }
 
   function memberApplicationsPanel() {
@@ -1418,8 +1476,8 @@
   function drawer() {
     if (!state.drawer) return `<div class="drawer" id="drawer"></div>`;
     const [type, rowId] = state.drawer.split(":");
-    const title = type === "activity" ? "編輯活動" : type === "registrations" ? "報名名單" : type === "vendor" ? "編輯廠商會員" : type === "association" ? "編輯協會會員" : type === "import-vendor" ? "匯入廠商名冊" : "匯入協會名冊";
-    const content = type === "activity" ? activityForm(rowId) : type === "registrations" ? registrationList(rowId) : type.startsWith("import-") ? importForm(type.replace("import-", "")) : memberForm(type, rowId);
+    const title = type === "activity" ? "編輯活動" : type === "registrations" ? "報名名單" : type === "general" ? "一般會員 CRM 檔案" : type === "vendor" ? "編輯廠商會員" : type === "association" ? "編輯協會會員" : type === "import-vendor" ? "匯入廠商名冊" : "匯入協會名冊";
+    const content = type === "activity" ? activityForm(rowId) : type === "registrations" ? registrationList(rowId) : type === "general" ? generalMemberProfile(rowId) : type.startsWith("import-") ? importForm(type.replace("import-", "")) : memberForm(type, rowId);
     const memberTitle = memberDrawerTitle(type, rowId);
     return `<div class="drawer open" id="drawer"><div class="drawer-backdrop" data-close></div><div class="drawer-panel"><div class="drawer-title">${memberTitle || `<h2>${title}</h2>`}<button class="btn icon" data-close>×</button></div>${content}</div></div>`;
   }
@@ -1998,6 +2056,8 @@
       applySidebarCollapsed(next);
     };
     document.querySelectorAll("[data-nav]").forEach(b => b.onclick = () => { state.view = b.dataset.nav; state.drawer = ""; render(); });
+    const generalSearch = document.querySelector("[data-general-search]"); if (generalSearch) generalSearch.oninput = () => { state.generalSearch = generalSearch.value || ""; render(); };
+    document.querySelectorAll("[data-refresh-general-members]").forEach(b => b.onclick = async () => { b.disabled = true; await loadGeneralMembers(true); });
     document.querySelectorAll("[data-roster-search]").forEach(input => {
       input.oninput = () => {
         const type = input.dataset.rosterSearch;

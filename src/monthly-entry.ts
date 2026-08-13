@@ -7205,6 +7205,18 @@ export default {
     if (request.method === "POST" && url.pathname === "/api/opnform/sync") return syncOpnFormResponses(request, env);
     if (request.method === "POST" && url.pathname === "/api/google-forms/submission") return handleFormSubmission(request, env);
     if (request.method === "POST" && url.pathname === "/api/google-forms/sync") return syncGoogleFormResponses(request, env);
+    if (request.method === "GET" && url.pathname === "/api/general-members") {
+      const guard = await requireAdmin(request, env);
+      if (guard) return guard;
+      if (!env.TDEA_DESIGN || !env.TDEA_INTERNAL_SECRET) return json({ success: false, message: "TDEA-DESIGN member service is not configured" }, 503);
+      const upstream = await env.TDEA_DESIGN.fetch("https://tdea-design.internal/internal/tdea/points/members?type=general", {
+        method: "GET",
+        headers: { "x-tdea-internal-secret": env.TDEA_INTERNAL_SECRET, accept: "application/json" }
+      });
+      const result = await upstream.json().catch(() => ({})) as Record<string, unknown>;
+      if (!upstream.ok || result.success !== true) return json({ success: false, message: clean(result.error) || "一般會員讀取失敗" }, upstream.status || 502);
+      return json({ success: true, data: result });
+    }
     if (request.method === "GET" && url.pathname === "/api/registrations/summary") return json({ success: true, data: await readRegistrationSummary(env) });
     if (request.method === "GET" && url.pathname === "/api/registrations/list") return listRegistrations(request, env);
     if (request.method === "GET" && url.pathname === "/api/registrations/export") return exportRegistrationsExcel(request, env);
