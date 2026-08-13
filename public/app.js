@@ -20,7 +20,6 @@
   };
   purgeLegacyManagerCache();
   const state = { view: "dashboard", drawer: "", keywordEditId: "", data: load(), archivedActivities: [], registrationLists: {}, memberRegistrationLists: {}, memberPointAccounts: {}, memberApplications: null, adminWhitelist: null, adminWhitelistMeta: null, motherRegisterRecords: null, motherRegisterSearch: "", motherRegisterLoading: false, motherRegisterLoadedAt: "", rosterSearch: { association: "", vendor: "" } };
-  let motherRosterMapPromise = null;
   let managerDataSaveTimer = null;
   let managerDataLoading = false;
   let lineDraftAutoImporting = false;
@@ -199,7 +198,6 @@
         ...(localRow || {}),
         ...remoteRow,
         lineUserId: memberLineUid(remoteRow) || memberLineUid(localRow),
-        legacyAccount: firstValue(remoteRow?.legacyAccount, remoteRow?.aiweMemberNo, remoteRow?.motherAccount, localRow?.legacyAccount, localRow?.aiweMemberNo, localRow?.motherAccount),
         phone: firstValue(remoteRow?.phone, remoteRow?.mobile, remoteRow?.tel, localRow?.phone, localRow?.mobile, localRow?.tel),
         email: firstValue(remoteRow?.email, remoteRow?.mail, localRow?.email, localRow?.mail),
         jobTitle: firstValue(remoteRow?.jobTitle, remoteRow?.title, remoteRow?.position, localRow?.jobTitle, localRow?.title, localRow?.position),
@@ -557,23 +555,7 @@
     state.adminWhitelistMeta = { ...(state.adminWhitelistMeta || {}), ...j };
     return state.adminWhitelist;
   }
-  async function syncRosterMemberToWorker(type, item) {
-    if (!item || (type !== "association" && type !== "vendor")) return;
-    try {
-      const member = {
-        ...item,
-        rosterType: type,
-        rosterMemberNo: item.memberNo || item.rosterMemberNo || "",
-        rosterName: type === "vendor" ? (item.companyName || item.name || "") : (item.name || item.companyName || ""),
-        lineUserId: item.lineUserId || item.LINE_user_id || item.uid || ""
-      };
-      await fetch(api + "/api/aiwe-members/import", {
-        method: "POST",
-        headers: adminHeaders({ "content-type": "application/json" }),
-        body: JSON.stringify({ source: "crm-editor", members: [member] })
-      });
-    } catch (_) {}
-  }
+  async function syncRosterMemberToWorker(type, item) { return null; }
   function deletedActivityKeys() {
     if (!Array.isArray(state.data.deletedActivityKeys)) state.data.deletedActivityKeys = [];
     return state.data.deletedActivityKeys;
@@ -1108,7 +1090,7 @@
         <aside class="sidebar">
           <div class="brand"><span>TDEA 管理中心</span><button class="sidebar-toggle" type="button" data-sidebar-toggle title="${collapsed ? "展開選單" : "收合選單"}" aria-label="${collapsed ? "展開選單" : "收合選單"}">${collapsed ? "›" : "‹"}</button></div>
           ${adminProfileHtml()}
-          <nav class="nav">${nav("dashboard", "活動總覽")}${nav("association", "會員 CRM")}${nav("vendor", "廠商 CRM")}${nav("motherRegister", "母站註冊資料")}${nav("creator", "創建活動")}${nav("redeem", "點數折抵")}</nav>
+          <nav class="nav">${nav("dashboard", "活動總覽")}${nav("association", "會員 CRM")}${nav("vendor", "廠商 CRM")}${nav("creator", "創建活動")}${nav("redeem", "點數折抵")}</nav>
         </aside>
         <main class="main">
           <div class="topbar"><div><h1>${title}</h1><div class="subtitle">${sub}</div></div><div class="actions">${actions()}</div></div>
@@ -1122,7 +1104,6 @@
     if (autoSyncEnabled()) syncRegistrations();
     if (state.view === "redeem" && !state.redeemRecords) loadRedeemRecords();
     if (state.view === "redeem" && !state.pointLedger) loadPointLedger();
-    if (state.view === "motherRegister" && !state.motherRegisterRecords && !state.motherRegisterLoading) loadMotherRegisterRecords();
     if (state.view === "dashboard" && state.memberApplications === null) loadMemberApplications();
     if (state.view === "adminWhitelist" && !state.adminWhitelist) loadAdminWhitelist().then(() => render()).catch(() => undefined);
     if ((state.view === "association" || state.view === "vendor") && !rosterPointLoading[state.view]) setTimeout(() => loadRosterPointBalances(state.view), 0);
@@ -1135,7 +1116,6 @@
     if (state.view === "vendor") return `<button class="btn" data-import="vendor">匯入 CSV</button><button class="btn primary" data-drawer="vendor:new">新增廠商會員</button>`;
     if (state.view === "creator") return `<button class="btn" data-import-line-drafts>匯入 LINE 草稿</button><button class="btn" data-reset>清空表單</button>`;
     if (state.view === "redeem") return `<button class="btn" data-load-redeem>刷新紀錄</button>`;
-    if (state.view === "motherRegister") return `<button class="btn" data-load-mother-register ${state.motherRegisterLoading ? "disabled" : ""}>${state.motherRegisterLoading ? "刷新中..." : "刷新資料"}</button><button class="btn" data-sync-mother-register>從母站同步</button><button class="btn primary" data-download-mother-register>下載 CSV</button>`;
     if (state.view === "keywords") return `<button class="btn" data-refresh-keywords>刷新列表</button><button class="btn primary" data-keyword-new>新增關鍵字</button>`;
     if (state.view === "adminWhitelist") return `<button class="btn" data-load-whitelist>重新載入</button><button class="btn primary" data-save-whitelist>儲存權限名單</button>`;
     return `<label class="sync-toggle"><input type="checkbox" data-auto-sync ${autoSyncEnabled() ? "checked" : ""}> 自動同步</label><button class="btn" data-sync-registrations>同步報名</button><button class="btn" data-worker>檢查 Worker</button><button class="btn danger" data-clear-test>清空測試資料</button><button class="btn primary" data-nav="creator">新增活動</button>`;
@@ -1145,7 +1125,6 @@
     if (state.view === "vendor") return members("vendor");
     if (state.view === "creator") return creator();
     if (state.view === "redeem") return redeem();
-    if (state.view === "motherRegister") return motherRegisterRecords();
     if (state.view === "keywords") return keywords();
     if (state.view === "adminWhitelist") return adminWhitelistClean();
     return memberApplicationsPanel() + dashboard();
@@ -1541,7 +1520,7 @@
   }
   function memberForm(type, rowId) {
     const x = state.data[type].find(r => r.id === rowId) || {}, vendor = type === "vendor";
-    const profileFields = `${field("會員編號", "memberNo", x.memberNo)}${field("LINE UID", "lineUserId", memberLineUid(x), "例如：Ub68b9724664b889e790c789ece72f717")}${field("母站帳號", "aiweMemberNo", firstValue(x.aiweMemberNo, x.motherMemberNo, x.motherAccount, x.legacyAccount), "母站會員帳號")}${field("手機", "phone", firstValue(x.phone, x.mobile, x.tel), "手機")}${field("Email", "email", x.email, "會員 Email", false, "email")}`;
+    const profileFields = `${field("會員編號", "memberNo", x.memberNo)}${field("LINE UID", "lineUserId", memberLineUid(x), "例如：Ub68b9724664b889e790c789ece72f717")}${field("手機", "phone", firstValue(x.phone, x.mobile, x.tel), "手機")}${field("Email", "email", x.email, "會員 Email", false, "email")}`;
     const vendorFields = `${field("公司名稱", "companyName", x.companyName)}${field("統一編號", "taxId", x.taxId)}${field("負責人", "owner", x.owner)}${field("聯絡窗口", "contact", x.contact)}`;
     const memberFields = `${field("身分", "identity", x.identity)}${field("姓名", "name", x.name)}${select("性別", "gender", ["", "男", "女"], x.gender)}${field("本職", "jobTitle", firstValue(x.jobTitle, x.title, x.position), "本職")}${field("公司/單位", "company", firstValue(x.company, x.companyName, x.unit), "公司/單位")}`;
     return `<div class="crm-member-profile-layout"><section class="crm-member-card"><div class="crm-member-section-title">基本資料</div><form class="form-grid crm-member-form" id="drawer-member" data-type="${type}">${hidden("id", x.id)}${profileFields}${vendor ? vendorFields : memberFields}${select("會員資格", "qualification", ["Y", "N"], x.qualification || "Y")}<label class="sync-toggle"><input type="checkbox" name="loginAccess" value="Y" ${memberLoginAllowed(x) ? "checked" : ""}> 允許此會員登入管理中心</label><div class="field"><label>備註</label><textarea name="note">${esc(x.note)}</textarea></div><div class="crm-member-savebar"><button class="btn" type="button" data-close>取消</button><button class="btn primary" type="submit">儲存檔案變更</button></div></form></section><aside class="crm-member-side" data-member-side><div data-member-point-slot></div></aside><section class="member-registration-wide" data-member-registration-slot></section></div>`;
@@ -2252,11 +2231,10 @@
       toast("會員資料已更新，背景儲存中...");
 
       const managerSave = saveManagerDataRemoteChecked();
-      const rosterSync = syncRosterMemberToWorker(type, item);
       const accessSync = syncAdminAccessForMember(type, item);
       state.adminWhitelist = null;
 
-      Promise.allSettled([managerSave, rosterSync, accessSync]).then((results) => {
+      Promise.allSettled([managerSave, accessSync]).then((results) => {
         const managerResult = results[0];
         if (managerResult.status === "rejected") {
           console.error("CRM member manager-data save failed", managerResult.reason);
@@ -2346,10 +2324,6 @@
     }
     const loadRoster = document.querySelector("[data-load-roster]"); if (loadRoster) loadRoster.onclick = () => loadRosterSeed(true);
     const worker = document.querySelector("[data-worker]"); if (worker) worker.onclick = async () => { try { const r = await fetch(api + "/api/activities"); const j = await r.json(); toast(j.success ? "Worker API 連線正常" : "Worker API 回應異常"); } catch (_) { toast("Worker API 無法連線"); } };
-    document.querySelectorAll("[data-load-mother-register]").forEach(b => b.onclick = async () => { if (state.motherRegisterLoading) return; b.disabled = true; b.textContent = "刷新中..."; await loadMotherRegisterRecords(true); });
-    document.querySelectorAll("[data-sync-mother-register]").forEach(b => b.onclick = async () => { b.disabled = true; await syncMotherRegisterRecords(); b.disabled = false; });
-    document.querySelectorAll("[data-capture-mother-register]").forEach(b => b.onclick = async () => { b.disabled = true; await captureMotherRegisterRecord(); b.disabled = false; });
-    document.querySelectorAll("[data-download-mother-register]").forEach(b => b.onclick = downloadMotherRegisterRecords);
     const exp = document.querySelector("[data-export]"); if (exp) exp.onclick = () => { navigator.clipboard.writeText(JSON.stringify(state.data, null, 2)); toast("備份 JSON 已複製"); };
     const copy = document.querySelector("[data-copy]"); if (copy) copy.onclick = () => { navigator.clipboard.writeText(location.href); toast("預覽網址已複製"); };
     const reset = document.querySelector("[data-reset]"); if (reset) reset.onclick = () => { const f = document.querySelector("#activity-form"); if (f) f.reset(); };
@@ -2370,43 +2344,8 @@
   function rosterMemberKey(row) {
     return String(row?.memberNo || row?.rosterMemberNo || row?.member_no || row?.aiweMemberNo || "").trim().toUpperCase();
   }
-  async function loadMotherRosterMap() {
-    if (motherRosterMapPromise) return motherRosterMapPromise;
-    motherRosterMapPromise = (async () => {
-      const response = await fetch(api + "/api/aiwe-members-public", { headers: adminHeaders(), cache: "no-store" });
-      const result = await response.json().catch(() => ({}));
-      if (!response.ok || !result.success) throw new Error(result.message || "母站綁定名冊讀取失敗");
-      const map = new Map();
-      for (const item of result.data || []) {
-        const uid = validLineUid(item.lineUserId || item.LINE_user_id || item.uid);
-        if (!uid) continue;
-        [item.rosterMemberNo, item.memberNo, item.member_no, item.aiweMemberNo].forEach((value) => {
-          const key = String(value || "").trim().toUpperCase();
-          if (key && !map.has(key)) map.set(key, { ...item, lineUserId: uid });
-        });
-      }
-      return map;
-    })().catch((error) => {
-      console.warn(error);
-      return new Map();
-    });
-    return motherRosterMapPromise;
-  }
   async function resolveMemberLineUidFromMother(info) {
-    const current = memberLineUid(info?.row);
-    if (current) return current;
-    const key = rosterMemberKey(info?.row);
-    if (!key) return "";
-    const map = await loadMotherRosterMap();
-    const remote = map.get(key);
-    const uid = validLineUid(remote?.lineUserId || remote?.LINE_user_id || remote?.uid);
-    if (uid && info?.row) {
-      info.row.lineUserId = uid;
-      if (!info.row.LINE_user_id) info.row.LINE_user_id = uid;
-      if (!info.row.uid) info.row.uid = uid;
-      queueManagerDataSave();
-    }
-    return uid;
+    return memberLineUid(info?.row);
   }
   function shortUid(value) {
     const text = String(value || "").trim();
@@ -2429,19 +2368,12 @@
 
   function memberPointPanelHtml(info, account) {
     const lineUserId = memberLineUid(info.row);
-    if (!lineUserId && account?.resolving) return `<div class="empty">正在比對會員 LINE UID...</div>`;
+    if (!lineUserId && account?.resolving) return `<div class="empty">正在確認 TDEA LINE UID...</div>`;
     if (!lineUserId) return `<div class="empty">本地名冊尚未取得 LINE UID，請先完成會員 LINE 綁定。</div>`;
     if (!account) return `<div class="empty">正在讀取本地點數...</div>`;
     if (account.success === false) return `<div class="empty">${esc(account.message || "本地點數讀取失敗")}</div>`;
     const balance = Number(account.balance || 0);
-    const motherLogs = Array.isArray(account.motherSynced?.list) ? account.motherSynced.list.map(item => ({
-      createdAt: item.created_at,
-      type: Number(item.get_point || 0) >= 0 ? "EARN" : "SPEND",
-      amount: Number(item.get_point || 0),
-      balanceAfter: item.point_balance,
-      reason: item.event_name || item.event_content || ""
-    })) : [];
-    const logs = Array.isArray(account.logs) && account.logs.length ? account.logs : motherLogs;
+    const logs = Array.isArray(account.logs) ? account.logs : [];
     return `<div class="crm-point-summary"><span>可用點數</span><div class="crm-point-number"><strong>${esc(balance.toLocaleString())}</strong><small>點</small></div></div><form class="crm-point-actions" data-member-point-form><input type="hidden" name="lineUserId" value="${esc(lineUserId)}"><input type="hidden" name="memberNo" value="${esc(info.row.memberNo || "")}"><div class="field"><label>異動點數</label><input name="amount" type="number" placeholder="正數贈點，負數扣點" required></div><div class="field"><label>原因</label><input name="note" placeholder="例：活動補點、人工扣點" required></div><div class="actions"><button class="btn primary" type="submit" data-point-action="add">贈點</button><button class="btn danger" type="submit" data-point-action="spend">扣點</button></div></form><div class="crm-point-history"><h3>點數歷史紀錄</h3>${memberPointRowsHtml(logs)}</div>`;
   }
 
@@ -2467,10 +2399,10 @@
     const info = row ? { type, rowId, row } : null;
     state.memberPointAccounts[key] = { resolving: true };
     if (!showMessage) render();
-    const lineUserId = info ? await resolveMemberLineUidFromMother(info) : "";
+    const lineUserId = info ? memberLineUid(info.row) : "";
     if (!lineUserId) {
-      state.memberPointAccounts[key] = { success: false, message: "會員名冊查無此會員 LINE UID" };
-      if (showMessage) toast("會員名冊查無此會員 LINE UID");
+      state.memberPointAccounts[key] = { success: false, message: "TDEA CRM 尚未綁定此會員 LINE UID" };
+      if (showMessage) toast("TDEA CRM 尚未綁定此會員 LINE UID");
       render();
       return;
     }
@@ -2499,8 +2431,8 @@
     if (!amount) return toast("請輸入點數");
     if (submitter?.dataset.pointAction === "spend") amount = -Math.abs(amount);
     if (submitter?.dataset.pointAction === "add") amount = Math.abs(amount);
-    const lineUserId = validLineUid(data.lineUserId) || await resolveMemberLineUidFromMother(info);
-    if (!lineUserId) return toast("會員名冊查無此會員 LINE UID");
+    const lineUserId = validLineUid(data.lineUserId) || memberLineUid(info.row);
+    if (!lineUserId) return toast("TDEA CRM 尚未綁定此會員 LINE UID");
     const actionName = amount >= 0 ? "贈點" : "扣點";
     if (!confirm(`確認${actionName} ${Math.abs(amount).toLocaleString()} 點？\n\n此操作會直接異動 TDEA 本地點數。`)) return;
     const response = await fetch(api + "/api/points/adjust", {
