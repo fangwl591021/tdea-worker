@@ -1,0 +1,65 @@
+name: Inspect live custom fields API once
+on:
+  push:
+    branches: [feature/tdea-identity-profile]
+    paths: [.github/workflows/inspect-live-custom-fields-api-once.yml]
+permissions:
+  contents: write
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feature/tdea-identity-profile
+      - name: Inspect live activity and native form schemas
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json, urllib.request, urllib.parse
+          base='https://tdeawork.fangwl591021.workers.dev'
+          def get(url):
+              req=urllib.request.Request(url,headers={'accept':'application/json','user-agent':'tdea-schema-inspector'})
+              with urllib.request.urlopen(req,timeout=20) as r:
+                  return json.loads(r.read().decode('utf-8'))
+          def summarize_fields(fields):
+              out=[]
+              if not isinstance(fields,list): return out
+              for f in fields:
+                  if not isinstance(f,dict): continue
+                  opts=f.get('options')
+                  out.append({'key':f.get('key',''),'label':f.get('label',''),'type':f.get('type',''),'required':bool(f.get('required')),'optionsCount':len(opts) if isinstance(opts,list) else 0})
+              return out
+          payload=get(base+'/api/activities')
+          rows=((payload.get('data') or {}).get('activities') or payload.get('activities') or []) if isinstance(payload,dict) else []
+          print('LIVE_ACTIVITY_COUNT',len(rows))
+          for row in rows:
+              if not isinstance(row,dict): continue
+              aid=str(row.get('id') or '')
+              name=str(row.get('name') or '')
+              afs=row.get('formSettings') if isinstance(row.get('formSettings'),dict) else {}
+              afields=summarize_fields(afs.get('fields'))
+              print('\nACTIVITY',aid,repr(name))
+              print(' ACTIVITY_FORMSETTINGS_FIELDS',json.dumps(afields,ensure_ascii=False))
+              formid=str(row.get('nativeFormId') or row.get('formId') or aid)
+              if not formid:
+                  print(' NATIVE_FORM missing-id'); continue
+              try:
+                  nf=get(base+'/api/native-forms/'+urllib.parse.quote(formid,safe=''))
+                  data=(nf.get('data') or {}) if isinstance(nf,dict) else {}
+                  fields=summarize_fields(data.get('fields'))
+                  print(' NATIVE_FORM_ID',formid)
+                  print(' NATIVE_FIELDS',json.dumps(fields,ensure_ascii=False))
+              except Exception as e:
+                  print(' NATIVE_FORM_ERROR',type(e).__name__,str(e))
+          PY
+      - name: Cleanup workflow
+        if: always()
+        shell: bash
+        run: |
+          git config user.name github-actions
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git rm .github/workflows/inspect-live-custom-fields-api-once.yml
+          git commit -m "Remove live custom field inspector" || true
+          git push origin HEAD:feature/tdea-identity-profile
