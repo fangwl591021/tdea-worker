@@ -868,6 +868,39 @@
     };
   }
 
+  const defaultRegistrationFieldKeys = new Set(["name","phone","email","company","memberNo","note","participantUnit"]);
+
+  function customRegistrationFieldsFor(activity = {}) {
+    const settings = storedFormSettingsForActivity(activity);
+    const fields = Array.isArray(settings.fields) ? settings.fields : [];
+    return fields.filter((field) => field && !defaultRegistrationFieldKeys.has(String(field.key || "").trim()));
+  }
+
+  function serializeCustomRegistrationFields(activity = {}) {
+    return customRegistrationFieldsFor(activity).map((field) => {
+      const type = String(field.type || "text").trim();
+      const required = field.required ? "必填" : "選填";
+      const options = Array.isArray(field.options) ? field.options.join(",") : "";
+      return [String(field.label || "").trim(), type, required, options].join(" | ");
+    }).filter(Boolean).join("\n");
+  }
+
+  function parseCustomRegistrationFields(text = "") {
+    return String(text || "").split(/\r?\n/).map((line, index) => {
+      const raw = line.trim();
+      if (!raw) return null;
+      const parts = raw.split("|").map((part) => part.trim());
+      const label = parts[0] || "";
+      if (!label) return null;
+      const rawType = (parts[1] || "text").toLowerCase();
+      const type = ["text","email","paragraph","radio","checkbox","dropdown"].includes(rawType) ? rawType : "text";
+      const required = /^(必填|required|y|yes|true|1)$/i.test(parts[2] || "");
+      const options = (parts[3] || "").split(/[,、]/).map((v) => v.trim()).filter(Boolean);
+      const keyBase = `custom_${index + 1}_${label}`.replace(/[^A-Za-z0-9_\u4e00-\u9fff]/g, "_").slice(0, 60);
+      return { key: keyBase, label, type, required, ...(options.length ? { options } : {}) };
+    }).filter(Boolean);
+  }
+
   function storedFormSettingsForActivity(activity = {}) {
     const settings = state.data.formSettings || {};
     return settings[activity.id] || settings[activity.activityNo] || {};
@@ -1844,6 +1877,7 @@
     wrap.className = "activity-extra-fields";
     wrap.innerHTML = `
       <div class="field"><label>詳細說明</label><textarea name="detailText" placeholder="活動介紹、地點、費用、注意事項...">${esc(activity.detailText || "")}</textarea></div>
+      <div class="field"><label>自訂問題</label><textarea name="customRegistrationFields" placeholder="每行一題：問題 | 類型 | 必填/選填 | 選項1,選項2\n例：是否需要素食 | radio | 必填 | 是,否">${esc(serializeCustomRegistrationFields(activity))}</textarea><div class="muted">類型支援 text、email、paragraph、radio、checkbox、dropdown；選擇題請在第 4 欄填選項。</div></div>
       <div class="field"><label>活動主圖附件</label><input type="file" accept="image/*" data-activity-poster-file><div class="muted">請直接附加圖片檔；上傳後會寫入報名頁與每月活動主圖。</div></div>
       <input name="posterUrl" type="hidden" value="${esc(activity.posterUrl || activity.imageUrl || "")}">
       <div class="field"><label>活動圖集附件 / 說明頁輪播圖</label><input type="file" accept="image/*" multiple data-activity-gallery-file><div class="muted">可一次選多張；活動說明頁會用這些圖片做輪播，每月活動會自動帶入張數。</div><div class="actions" style="justify-content:flex-start;margin-top:8px"><button class="btn danger" type="button" data-clear-activity-gallery>清除圖集</button></div></div>
@@ -2016,7 +2050,10 @@
           }
         }
         try {
-          const registrationSettings = form.__tdeaRegistrationSettings || null;
+          const defaults = nativeFormSettingsFor(activity);
+          const customFields = parseCustomRegistrationFields(d.customRegistrationFields || "");
+          const registrationSettings = { ...(form.__tdeaRegistrationSettings || {}), fields: [...(Array.isArray(defaults.fields) ? defaults.fields : []), ...customFields] };
+          form.__tdeaRegistrationSettings = registrationSettings;
           await ensureNativeFormForActivity(activity, email, registrationSettings, { update: true });
         } catch (error) {
           toast(error?.message || "報名表處理失敗");
