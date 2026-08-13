@@ -29,17 +29,27 @@ function activityUnitAmount(activity: Record<string, unknown>) {
   return Math.max(0, numberValue(activity.paymentAmount || activity.feeAmount || activity.registrationFee || activity.amount));
 }
 
-function isHeadcountField(field: NativeField) {
+function isCanonicalHeadcountField(field: NativeField) {
+  const key = normalizeName(field.key);
+  const label = normalizeName(field.label);
+  return (
+    label === "報名人數含本人" ||
+    label === "報名人數" ||
+    key === "registrationheadcount" ||
+    key === "registrationcount" ||
+    key === "participantunit"
+  );
+}
+
+function isLegacyHeadcountField(field: NativeField) {
   const key = normalizeName(field.key);
   const label = normalizeName(field.label);
   const names = [key, label].filter(Boolean);
   return names.some((name) =>
     name === "人數" ||
-    name.includes("報名人數") ||
     name.includes("參加人數") ||
     name.includes("參與人數") ||
     name.includes("同行人數") ||
-    name.includes("registrationcount") ||
     name.includes("attendeecount") ||
     name.includes("participantcount") ||
     name.includes("peoplecount") ||
@@ -49,7 +59,8 @@ function isHeadcountField(field: NativeField) {
 }
 
 function registrationHeadcount(form: NativeForm, answers: Record<string, unknown>) {
-  const field = (Array.isArray(form.fields) ? form.fields : []).find(isHeadcountField);
+  const fields = Array.isArray(form.fields) ? form.fields : [];
+  const field = fields.find(isCanonicalHeadcountField) || fields.find(isLegacyHeadcountField);
   if (!field) return 1;
   const raw = answers[clean(field.key)] ?? answers[clean(field.label)];
   const count = Math.floor(numberValue(raw));
