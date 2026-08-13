@@ -1,0 +1,22 @@
+name: Inspect activity formSettings persistence once
+on:
+  push:
+    branches: [feature/tdea-identity-profile]
+permissions:
+  contents: read
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feature/tdea-identity-profile
+      - name: Inspect persistence flow
+        shell: bash
+        run: |
+          echo '=== saveActivityRemote ==='
+          grep -n -A90 -B30 'saveActivityRemote' public/app.js | head -260 || true
+          echo '=== activityRecordsApi ==='
+          grep -n -A180 -B40 'function activityRecordsApi\|async function activityRecordsApi' src/monthly-entry.ts | head -420 || true
+          echo '=== formSettings references ==='
+          grep -n -E 'formSettings|nativeFormId|nativeFormUrl|registrationMode' src/monthly-entry.ts | head -260 || true
