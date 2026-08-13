@@ -899,24 +899,27 @@
     if (!activity || !textarea) return false;
     const formId = nativeFormIdentifier(activity);
     if (!formId) return false;
-    const before = textarea.value;
     try {
+      textarea.dataset.nativeHydrating = "true";
       const response = await fetch(api + "/api/native-forms/" + encodeURIComponent(formId), { headers: adminHeaders(), cache: "no-store" });
       const result = await response.json().catch(() => ({}));
-      if (!response.ok || !result.success) return false;
+      if (!response.ok || !result.success) throw new Error(result.message || result.error || `自訂問題讀取失敗（HTTP ${response.status}）`);
       const data = result.data?.form || result.data || {};
       const fields = Array.isArray(data.fields) ? data.fields : [];
       const customText = serializeCustomRegistrationFieldList(fields);
-      if (!customText) return false;
-      if (textarea.value === before) textarea.value = customText;
+      textarea.value = customText;
       const merged = { ...storedFormSettingsForActivity(activity), fields };
       state.data.formSettings ||= {};
       if (activity.id) state.data.formSettings[activity.id] = merged;
       if (activity.activityNo) state.data.formSettings[activity.activityNo] = merged;
       activity.formSettings = { ...(activity.formSettings || {}), ...merged };
       return true;
-    } catch (_) {
+    } catch (error) {
+      textarea.dataset.nativeHydrationError = error?.message || "自訂問題讀取失敗";
+      console.error("custom registration field hydration failed", error);
       return false;
+    } finally {
+      delete textarea.dataset.nativeHydrating;
     }
   }
   function parseCustomRegistrationFields(text = "") {
