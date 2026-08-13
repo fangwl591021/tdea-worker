@@ -970,7 +970,9 @@
       body: JSON.stringify({ activity, settings })
     });
     const result = await response.json().catch(() => ({}));
-    if (!response.ok || !result.success) return false;
+    if (!response.ok || !result.success) {
+      throw new Error(result.message || result.error || `報名表儲存失敗（HTTP ${response.status}）`);
+    }
     const formUrl = result.formUrl || result.nativeFormUrl || result.data?.formUrl || result.data?.nativeFormUrl || result.data?.form?.formUrl || "";
     const formId = result.formId || result.nativeFormId || result.data?.formId || result.data?.nativeFormId || result.data?.form?.id || currentFormId || activity.id;
     if (!formUrl || !formId) return false;
@@ -2096,7 +2098,19 @@
           const customFields = parseCustomRegistrationFields(d.customRegistrationFields || "");
           registrationSettings = { ...(form.__tdeaRegistrationSettings || {}), fields: [...(Array.isArray(defaults.fields) ? defaults.fields : []), ...customFields] };
           form.__tdeaRegistrationSettings = registrationSettings;
-          await ensureNativeFormForActivity(activity, email, registrationSettings, { update: true });
+          const nativeSaved = await ensureNativeFormForActivity(activity, email, registrationSettings, { update: true });
+          if (!nativeSaved) throw new Error("自訂問題未寫入報名表");
+          if (customFields.length) {
+            const verifyFormId = nativeFormIdentifier(activity);
+            const verifyResponse = await fetch(api + "/api/native-forms/" + encodeURIComponent(verifyFormId), { headers: adminHeaders(), cache: "no-store" });
+            const verifyResult = await verifyResponse.json().catch(() => ({}));
+            if (!verifyResponse.ok || !verifyResult.success) throw new Error(verifyResult.message || "無法驗證自訂問題是否已儲存");
+            const verifyData = verifyResult.data?.form || verifyResult.data || {};
+            const verifyFields = Array.isArray(verifyData.fields) ? verifyData.fields : [];
+            const verifyKeys = new Set(verifyFields.map((field) => String(field?.key || "").trim()));
+            const missing = customFields.filter((field) => !verifyKeys.has(String(field.key || "").trim()));
+            if (missing.length) throw new Error("自訂問題未寫入報名表：" + missing.map((field) => field.label).join("、"));
+          }
         } catch (error) {
           toast(error?.message || "報名表處理失敗");
           resetActivityUploadState(form);
