@@ -794,6 +794,14 @@
       const response = await fetch(`${api}/api/native-registrations/query?code=${encodeURIComponent(code)}`, { cache: "no-store" });
       const result = await response.json().catch(() => ({}));
       if (!response.ok || !result.success) {
+        // Old LINE menu links may still carry a stale query code.
+        // Fall back to the authenticated LINE user's registration list instead of stopping here.
+        if (code) {
+          const url = new URL(location.href);
+          url.searchParams.delete("code");
+          history.replaceState(null, "", url.toString());
+          return runLoginQuery();
+        }
         box.innerHTML = `<div class="nf-alert">${esc(result.message || "查無資料")}</div>`;
         return;
       }
