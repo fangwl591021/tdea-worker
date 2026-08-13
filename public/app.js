@@ -2186,7 +2186,7 @@
     document.querySelectorAll("[data-registration-list]").forEach(b => b.onclick = () => openRegistrationList(b.dataset.registrationList));
     document.querySelectorAll("[data-export-registrations]").forEach(b => b.onclick = () => downloadRegistrationExcel(b.dataset.exportRegistrations, b));
     document.querySelectorAll("[data-refresh-registration-list]").forEach(b => b.onclick = () => loadRegistrationList(b.dataset.refreshRegistrationList, true));
-    document.querySelectorAll("[data-payment-registration]").forEach(b => b.onclick = () => updateRegistrationPayment(b.dataset.paymentRegistration, b.dataset.paymentStatus));
+    document.querySelectorAll("[data-payment-registration]").forEach(b => b.onclick = () => updateRegistrationPayment(b.dataset.paymentRegistration, b.dataset.paymentStatus, b));
     document.querySelectorAll("[data-load-member-applications]").forEach(b => b.onclick = () => loadMemberApplications(true));
     const autoSync = document.querySelector("[data-auto-sync]"); if (autoSync) autoSync.onchange = () => { setAutoSyncEnabled(autoSync.checked); toast(autoSync.checked ? "已開啟自動同步" : "已關閉自動同步"); };
     const refreshKeywords = document.querySelector("[data-refresh-keywords]"); if (refreshKeywords) refreshKeywords.onclick = () => { render(); toast("關鍵字列表已刷新"); };
@@ -2734,8 +2734,9 @@
       }
     }
   }
-  async function updateRegistrationPayment(registrationId, status) {
-    if (!hasAdminIdentity()) return toast("請先登入管理中心");
+  async function updateRegistrationPayment(registrationId, status, button = null) {
+    const originalText = button?.textContent || (status === "paid" ? "確認收款" : "改回待核對");
+    if (button) { button.disabled = true; button.textContent = "處理中…"; }
     try {
       const response = await fetch(api + "/api/native-registrations/payment", {
         method: "POST",
@@ -2744,12 +2745,14 @@
       });
       const result = await response.json().catch(() => ({}));
       if (!response.ok || !result.success) throw new Error(result.message || "付款狀態更新失敗");
+      if (button) button.textContent = status === "paid" ? "已收款" : "已改回待核對";
       const activityId = state.drawer?.startsWith("registrations:") ? state.drawer.split(":")[1] : "";
-      if (activityId) await loadRegistrationList(activityId);
+      if (activityId) await loadRegistrationList(activityId, true);
       else render();
       toast(status === "paid" ? "已確認收款" : "已改回待核對");
     } catch (err) {
-      toast(err?.message || "付款狀態更新失敗");
+      if (button) { button.disabled = false; button.textContent = originalText; }
+      alert(err?.message || "付款狀態更新失敗");
     }
   }
 
