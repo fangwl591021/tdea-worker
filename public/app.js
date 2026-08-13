@@ -2063,6 +2063,7 @@
         state.data.formSettings ||= {};
         state.data.formSettings[activity.id] ||= {};
         Object.assign(state.data.formSettings[activity.id], {
+          fields: Array.isArray(registrationSettings?.fields) ? registrationSettings.fields : [],
           detailText: activity.detailText || "",
           posterUrl: activity.posterUrl || activity.imageUrl || "",
           imageUrl: activity.imageUrl || activity.posterUrl || "",
