@@ -1,4 +1,4 @@
-import app from "./manager-fast-entry";
+import app from "./activity-fast-entry";
 import { recognizeBusinessCard } from "./card-collection-ocr-dual";
 import { CardCollectionError, failCardImport, getCardImportImages, saveCardImportOcr } from "./card-collection";
 import { verifyLineIdToken } from "./line-login-verify";
