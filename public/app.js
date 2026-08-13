@@ -2143,7 +2143,6 @@
         activity.formSettings = { ...state.data.formSettings[activity.id] };
         if (activity.activityNo) state.data.formSettings[activity.activityNo] = state.data.formSettings[activity.id];
         try {
-          await saveManagerDataRemoteChecked();
           const saved = await saveActivityRemote(activity);
           Object.assign(activity, saved || {});
         } catch (error) {
@@ -2151,7 +2150,7 @@
           resetActivityUploadState(form);
           return;
         }
-        save();
+        persistLocalSnapshot();
         await finishSubmitState(form);
       }, true);
     }
