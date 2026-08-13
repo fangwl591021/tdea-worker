@@ -1,0 +1,71 @@
+name: Fix remittance current activity once v2
+on:
+  push:
+    branches: [feature/tdea-identity-profile]
+    paths: [.github/workflows/fix-remittance-current-activity-once-v2.yml]
+permissions:
+  contents: write
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feature/tdea-identity-profile
+          fetch-depth: 0
+      - name: Apply focused patch
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          p=Path('src/monthly-entry.ts')
+          s=p.read_text(encoding='utf-8')
+
+          anchor='function paymentIsSettled(entry: RegistrationEntry) {'
+          helper='''async function refreshRegistrationActivitySnapshot(env: Env, entry: RegistrationEntry): Promise<RegistrationEntry> {\n  const formId = clean(entry.formId);\n  if (!formId) return entry;\n  const form = await readNativeForm(env, formId).catch(() => null);\n  const activity = asRecord(form?.activity);\n  if (!Object.keys(activity).length) return entry;\n  const payment = normalizeRegistrationPayment(entry);\n  const amount = activityPaymentAmount(activity);\n  return {\n    ...entry,\n    activity: { ...asRecord(entry.activity), ...activity },\n    payment: {\n      ...payment,\n      amount,\n      status: amount <= 0 ? "free" : (payment.status === "free" ? "unpaid" : payment.status),\n      method: amount <= 0 ? "free" : (payment.method || "bank_transfer"),\n    },\n  };\n}\n\n'''
+          if 'async function refreshRegistrationActivitySnapshot' not in s:
+              if anchor not in s: raise SystemExit('paymentIsSettled anchor not found')
+              s=s.replace(anchor,helper+anchor,1)
+
+          old='if (list.length) return json({ success: true, key, data: list.map(publicRegistrationEntry) });'
+          new='if (list.length) { const current = await Promise.all(list.map((entry) => refreshRegistrationActivitySnapshot(env, entry))); return json({ success: true, key, data: current.map(publicRegistrationEntry) }); }'
+          if old in s: s=s.replace(old,new,1)
+
+          old='return json({ success: true, data: { ...publicRegistrationEntry(entry), checkinUrl: entry.checkinToken ? nativeCheckinUrl(entry.checkinToken) : "" } });'
+          new='const currentEntry = await refreshRegistrationActivitySnapshot(env, entry);\n  return json({ success: true, data: { ...publicRegistrationEntry(currentEntry), checkinUrl: entry.checkinToken ? nativeCheckinUrl(entry.checkinToken) : "" } });'
+          # First occurrence after queryNativeRegistration only. Replace one occurrence.
+          if old not in s: raise SystemExit('single registration query return anchor not found')
+          s=s.replace(old,new,1)
+
+          old='return json({ success: true, data: entries.map((entry) => ({ ...publicRegistrationEntry(entry), checkinUrl: entry.checkinToken ? nativeCheckinUrl(entry.checkinToken) : "" })) });'
+          new='const currentEntries = await Promise.all(entries.map((entry) => refreshRegistrationActivitySnapshot(env, entry)));\n  return json({ success: true, data: currentEntries.map((entry) => ({ ...publicRegistrationEntry(entry), checkinUrl: entry.checkinToken ? nativeCheckinUrl(entry.checkinToken) : "" })) });'
+          if old not in s: raise SystemExit('line registration list return anchor not found')
+          s=s.replace(old,new,1)
+          p.write_text(s,encoding='utf-8')
+
+          p=Path('public/app.js')
+          a=p.read_text(encoding='utf-8')
+          old='<div class="panel-head"><h2 class="panel-title">${esc(activity.name || "活動")} 報名名單</h2><div class="actions"><button class="btn" data-export-registrations="${esc(rowId)}">Excel</button><button class="btn" data-refresh-registration-list="${esc(rowId)}">重新載入</button></div></div>'
+          new='<div class="panel-head"><div><h2 class="panel-title">${esc(activity.name || "活動")} 報名名單</h2>${Number(activity.paymentAmount || 0) > 0 ? `<div class="muted" style="margin-top:8px;white-space:pre-wrap"><strong>報名費：</strong>NT$ ${esc(Number(activity.paymentAmount || 0).toLocaleString())}<br><strong>匯款資訊：</strong>${esc(activity.remittanceInfo || "尚未設定")}</div>` : ""}</div><div class="actions"><button class="btn" data-drawer="activity:${esc(rowId)}">修改活動付款資訊</button><button class="btn" data-export-registrations="${esc(rowId)}">Excel</button><button class="btn" data-refresh-registration-list="${esc(rowId)}">重新載入</button></div></div>'
+          if old not in a: raise SystemExit('registration header anchor not found')
+          a=a.replace(old,new,1)
+          p.write_text(a,encoding='utf-8')
+          PY
+      - name: Verify
+        shell: bash
+        run: |
+          node --check public/app.js
+          grep -q 'refreshRegistrationActivitySnapshot' src/monthly-entry.ts
+          grep -q '修改活動付款資訊' public/app.js
+          grep -q 'currentEntries = await Promise.all' src/monthly-entry.ts
+      - name: Commit and cleanup
+        shell: bash
+        run: |
+          git config user.name "fangwl591021"
+          git config user.email "50135766+fangwl591021@users.noreply.github.com"
+          git add src/monthly-entry.ts public/app.js
+          git commit -m "Sync remittance info from current activity settings"
+          git rm .github/workflows/fix-remittance-current-activity-once-v2.yml .github/workflows/fix-remittance-current-activity-once.yml .github/workflows/inspect-remittance-flow-once.yml .github/workflows/inspect-registration-member-source-once.yml || true
+          git commit -m "Remove one-time registration inspection workflows" || true
+          git push origin feature/tdea-identity-profile
