@@ -1,11 +1,8 @@
+// One-time patch: hydrate custom registration questions from the canonical native form.
 import fs from 'node:fs';
 
 const path = 'public/app.js';
 let text = fs.readFileSync(path, 'utf8');
-
-const oldSerialize = `  function serializeCustomRegistrationFields(activity = {}) {\n    return customRegistrationFieldsFor(activity).map((field) => {\n      const type = String(field.type || \"text\").trim();\n      const required = field.required ? \"必填\" : \"選填\";\n      const options = Array.isArray(field.options) ? field.options.join(\",\") : \"\";\n      return [String(field.label || \"\").trim(), type, required, options].join(\" | \" );\n    }).filter(Boolean).join(\"\\n\");\n  }`;
-
-const oldSerializeActual = `  function serializeCustomRegistrationFields(activity = {}) {\n    return customRegistrationFieldsFor(activity).map((field) => {\n      const type = String(field.type || \"text\").trim();\n      const required = field.required ? \"必填\" : \"選填\";\n      const options = Array.isArray(field.options) ? field.options.join(\",\") : \"\";\n      return [String(field.label || \"\").trim(), type, required, options].join(\" | \" );\n    }).filter(Boolean).join(\"\\n\");\n  }`;
 
 const start = text.indexOf('  function serializeCustomRegistrationFields(activity = {}) {');
 const end = start >= 0 ? text.indexOf('\n  function parseCustomRegistrationFields', start) : -1;
