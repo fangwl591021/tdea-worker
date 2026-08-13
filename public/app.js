@@ -903,7 +903,10 @@
 
   function storedFormSettingsForActivity(activity = {}) {
     const settings = state.data.formSettings || {};
-    return settings[activity.id] || settings[activity.activityNo] || activity.formSettings || {};
+    const byActivityNo = activity.activityNo ? settings[activity.activityNo] || {} : {};
+    const byId = activity.id ? settings[activity.id] || {} : {};
+    const activitySettings = activity.formSettings && typeof activity.formSettings === "object" ? activity.formSettings : {};
+    return { ...byActivityNo, ...byId, ...activitySettings };
   }
 
   function nativeFormIdentifier(activity = {}) {
