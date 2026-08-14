@@ -1,0 +1,17 @@
+/* Smart Activity compact left builder: upload is a button; preview remains on the right. */
+.smart-workbench{grid-template-columns:minmax(300px,.7fr) minmax(520px,1.3fr);gap:20px}
+
+.smart-upload-box{position:relative;display:inline-flex!important;width:auto;max-width:100%;min-height:0!important;align-items:center;justify-content:center;padding:10px 14px!important;border:0!important;border-radius:10px!important;background:#2563eb!important;text-align:left;overflow:hidden;box-shadow:none!important;transform:none!important}
+.smart-upload-box::before{content:"上傳活動海報";color:#fff;font-size:13px;font-weight:900;white-space:nowrap}
+.smart-upload-box input{position:absolute;inset:0;width:100%;height:100%;opacity:0;cursor:pointer}
+.smart-upload-box strong,.smart-upload-box span{display:none!important}
+
+.smart-upload-box.has-file{display:flex!important;width:100%;box-sizing:border-box;justify-content:flex-start;gap:10px;padding:8px!important;border:1px solid #bfdbfe!important;background:#eff6ff!important}
+.smart-upload-box.has-file::before{content:"更換活動海報";flex:0 0 auto;padding:8px 11px;border-radius:8px;background:#2563eb;color:#fff}
+.smart-upload-box.has-file strong{display:block!important;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#1d4ed8!important;font-size:12px;font-weight:800}
+
+.smart-text-button{margin-top:2px}
+.smart-builder-textarea{min-height:190px}
+
+@media(max-width:1080px){.smart-workbench{grid-template-columns:minmax(280px,.75fr) minmax(430px,1.25fr)}}
+@media(max-width:860px){.smart-workbench{grid-template-columns:1fr}.smart-upload-box{width:auto}.smart-upload-box.has-file{width:100%}}
