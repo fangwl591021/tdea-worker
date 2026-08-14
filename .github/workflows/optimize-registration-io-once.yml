@@ -18,7 +18,7 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '22'
 
       - name: Parallelize native registration R2 writes
         shell: python
@@ -142,10 +142,10 @@ jobs:
             raise SystemExit('no changes made')
           path.write_text(text, encoding='utf-8')
 
-      - name: Type check
+      - name: Production-equivalent compile check
         run: |
           npm ci
-          npx tsc --noEmit
+          npx wrangler deploy --dry-run
 
       - name: Commit optimized registration writes
         run: |
