@@ -1324,17 +1324,16 @@ function dedupeRegistrations(list: RegistrationEntry[]) {
 
 async function appendRegistrationList(env: Env, keys: string[], entry: RegistrationEntry) {
   if (!env.ASSETS_BUCKET) return;
-  let maxCount = 0;
-  for (const key of keys) {
+  const sourceId = entry.sourceId || entry.id;
+  const fingerprint = registrationFingerprint(entry);
+  const counts = await Promise.all(keys.map(async (key) => {
     const list = dedupeRegistrations(await readRegistrationList(env, key));
-    const sourceId = entry.sourceId || entry.id;
-    const fingerprint = registrationFingerprint(entry);
     const exists = list.some((item) => (item.sourceId || item.id) === sourceId || registrationFingerprint(item) === fingerprint);
     const nextList = exists ? list : [entry, ...list];
-    maxCount = Math.max(maxCount, activeRegistrations(nextList).length);
     await writeRegistrationList(env, key, nextList);
-  }
-  return maxCount;
+    return activeRegistrations(nextList).length;
+  }));
+  return counts.reduce((max, count) => Math.max(max, Number(count || 0)), 0);
 }
 
 function publicRegistrationEntry(entry: RegistrationEntry): RegistrationEntry & { checkinStatus: string; checkinStatusText: string } {
@@ -3095,8 +3094,11 @@ async function createNativeRegistration(env: Env, form: NativeForm, answers: Rec
     payment: initialRegistrationPayment(form.activity)
   };
   const keys = registrationKeys(form.activity, form.id);
-  const count = await appendRegistrationList(env, keys, entry);
-  const summary = await readRegistrationSummary(env);
+  const nativeWrite = writeNativeRegistration(env, entry);
+  const [count, summary] = await Promise.all([
+    appendRegistrationList(env, keys, entry),
+    readRegistrationSummary(env)
+  ]);
   const record: RegistrationRecord = {
     activityId: clean(form.activity.id),
     activityNo: clean(form.activity.activityNo),
@@ -3106,8 +3108,10 @@ async function createNativeRegistration(env: Env, form: NativeForm, answers: Rec
     lastSubmittedAt: submittedAt
   };
   for (const key of keys) summary.activities[key] = record;
-  await writeRegistrationSummary(env, summary);
-  await writeNativeRegistration(env, entry);
+  await Promise.all([
+    writeRegistrationSummary(env, summary),
+    nativeWrite
+  ]);
   return json({ success: true, data: { registrationId, queryCode, checkinUrl: nativeCheckinUrl(checkinToken), submittedAt, activity: form.activity, session, payment: entry.payment } }, 201);
 }
 async function submitNativeLoginRegistration(request: Request, env: Env, formId: string) {
@@ -3157,15 +3161,20 @@ async function queryNativeRegistrationsByLine(request: Request, env: Env) {
 }
 
 async function updateRegistrationEverywhere(env: Env, entry: RegistrationEntry) {
-  await writeNativeRegistration(env, entry);
   const keys = registrationKeys(entry.activity || {}, clean(entry.formId));
-  for (const key of keys) {
-    const list = await readRegistrationList(env, key);
-    const next = list.map((item) => item.id === entry.id ? { ...item, ...entry } : item);
-    await writeRegistrationList(env, key, next);
-  }
-  const summary = await readRegistrationSummary(env);
-  const count = activeRegistrations(await readRegistrationList(env, clean(entry.formId))).length;
+  await Promise.all([
+    writeNativeRegistration(env, entry),
+    Promise.all(keys.map(async (key) => {
+      const list = await readRegistrationList(env, key);
+      const next = list.map((item) => item.id === entry.id ? { ...item, ...entry } : item);
+      await writeRegistrationList(env, key, next);
+    }))
+  ]);
+  const [summary, formList] = await Promise.all([
+    readRegistrationSummary(env),
+    readRegistrationList(env, clean(entry.formId))
+  ]);
+  const count = activeRegistrations(formList).length;
   for (const key of keys) {
     const existing = summary.activities[key];
     if (existing) summary.activities[key] = { ...existing, count, lastSubmittedAt: existing.lastSubmittedAt };
