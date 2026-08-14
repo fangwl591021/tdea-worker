@@ -176,18 +176,18 @@
     appRoot.innerHTML = `
       <main class="admin-login-shell">
         <section class="admin-login-card">
-          <h1>TDEA 蝞∠?銝剖?</h1>
-          <p>隢??餃敺??/p>
+          <h1>TDEA 管理中心</h1>
+          <p>請先登入後台。</p>
           ${message ? `<div class="admin-login-alert">${escapeHtml(message)}</div>` : ""}
           <button class="admin-line-login" type="button" data-login-line>
             <span class="line-badge">LINE</span>
-            LINE ??銝?萇??
+            LINE 授權一鍵登入
           </button>
-          <div class="admin-login-sep"><span>?蝙?典??典?蝣潛??/span></div>
+          <div class="admin-login-sep"><span>或使用備用密碼登入</span></div>
           <form class="admin-password-form" data-login-form>
-            <input name="username" autocomplete="username" value="admin" aria-label="撣唾?">
-            <input name="password" type="password" autocomplete="current-password" placeholder="撖Ⅳ" aria-label="撖Ⅳ">
-            <button type="submit">撖Ⅳ?餃</button>
+            <input name="username" autocomplete="username" value="admin" aria-label="帳號">
+            <input name="password" type="password" autocomplete="current-password" placeholder="密碼" aria-label="密碼">
+            <button type="submit">密碼登入</button>
           </form>
         </section>
       </main>
@@ -230,7 +230,7 @@
     const form = event.currentTarget;
     const button = form.querySelector("button");
     button.disabled = true;
-    button.textContent = "?餃銝?..";
+    button.textContent = "登入中...";
     const username = clean(form.username.value);
     const password = clean(form.password.value);
     try {
@@ -240,12 +240,12 @@
         body: JSON.stringify({ username, password })
       });
       const result = await response.json().catch(() => ({}));
-      if (!response.ok || !result.success) throw new Error(result.message || "?餃憭望?");
+      if (!response.ok || !result.success) throw new Error(result.message || "登入失敗");
       storeIdentity(result.data || {});
       appRoot.innerHTML = "";
       await loadApp();
     } catch (error) {
-      renderLogin(error.message || "?餃憭望?");
+      renderLogin(error.message || "登入失敗");
     }
   }
 
@@ -260,7 +260,7 @@
   async function completeLineLogin({ button = null, redirectIfNeeded = true } = {}) {
     if (button) {
       button.disabled = true;
-      button.textContent = "LINE ?餃銝?..";
+      button.textContent = "LINE 登入中...";
     }
     await ensureLiffSdk();
     await liff.init({ liffId: adminLiffId });
@@ -275,7 +275,7 @@
       body: JSON.stringify({ lineUserId: profile.userId, displayName: profile.displayName })
     });
     const result = await response.json().catch(() => ({}));
-    if (!response.ok || !result.success) throw new Error(result.message || "LINE ?餃憭望?");
+    if (!response.ok || !result.success) throw new Error(result.message || "LINE 登入失敗");
     storeIdentity({ ...(result.data || {}), displayName: (result.data || {}).displayName || profile.displayName, pictureUrl: profile.pictureUrl });
     appRoot.innerHTML = "";
     await loadApp();
@@ -287,7 +287,7 @@
     try {
       await completeLineLogin({ button, redirectIfNeeded: true });
     } catch (error) {
-      renderLogin(error.message || "LINE ?餃憭望?");
+      renderLogin(error.message || "LINE 登入失敗");
     }
   }
 
@@ -297,7 +297,7 @@
       const script = document.createElement("script");
       script.src = "https://static.line-scdn.net/liff/edge/2/sdk.js";
       script.onload = resolve;
-      script.onerror = () => reject(new Error("LIFF SDK 頛憭望?"));
+      script.onerror = () => reject(new Error("LIFF SDK 載入失敗"));
       document.head.appendChild(script);
     });
   }
@@ -308,12 +308,12 @@
       return;
     }
     if (searchParams().has("adminLogin")) {
-      renderLogin("LINE ?餃蝣箄?銝?..");
+      renderLogin("LINE 登入確認中...");
       try {
         const completed = await completeLineLogin({ redirectIfNeeded: true });
         if (completed) return;
       } catch (error) {
-        renderLogin(error.message || "LINE ?餃憭望?");
+        renderLogin(error.message || "LINE 登入失敗");
         return;
       }
     }
@@ -330,7 +330,7 @@
     renderLogin();
   }
 
-  boot().catch((error) => renderLogin(error.message || "?亙頛憭望?"));
+  boot().catch((error) => renderLogin(error.message || "入口載入失敗"));
 })();
 
 
