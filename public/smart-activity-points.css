@@ -1,0 +1,31 @@
+/* Smart Activity optional check-in point policy. */
+.smart-point-section{gap:10px!important}
+.smart-point-switch{display:grid;grid-template-columns:1fr 1fr;gap:9px}
+.smart-point-switch button{display:grid;gap:3px;text-align:left;padding:11px 12px;border:1px solid #dbe3ef;border-radius:11px;background:#fff;color:#475569;cursor:pointer}
+.smart-point-switch button strong{font-size:13px;color:#0f172a}
+.smart-point-switch button span{font-size:10px;line-height:1.45;color:#94a3b8}
+.smart-point-switch button.active{border-color:#2563eb;background:#eff6ff;box-shadow:0 0 0 2px rgba(37,99,235,.07)}
+.smart-point-switch button.active strong{color:#1d4ed8}
+.smart-point-input-wrap{display:grid;gap:7px;padding:11px 12px;border:1px solid #dbeafe;border-radius:11px;background:#f8fbff}
+.smart-point-input-wrap[hidden]{display:none!important}
+.smart-point-input-wrap>label{font-size:11px;font-weight:900;color:#475569}
+.smart-point-input-line{display:flex;align-items:center;gap:8px}
+.smart-point-input-line input{width:140px;max-width:70%;box-sizing:border-box;padding:10px 11px;border:1px solid #cbd5e1;border-radius:9px;background:#fff;color:#0f172a;font-size:14px;font-weight:900;outline:none}
+.smart-point-input-line input:focus{border-color:#60a5fa;box-shadow:0 0 0 3px rgba(59,130,246,.1)}
+.smart-point-input-line span{font-size:12px;font-weight:900;color:#475569}
+.smart-point-input-wrap p{margin:0;color:#64748b;font-size:10px;line-height:1.55}
+.smart-point-preview{display:grid;gap:2px;margin-top:12px;padding:10px 12px;border:1px solid #c7d2fe;border-radius:11px;background:#eef2ff;color:#3730a3}
+.smart-point-preview>span{font-size:9px;font-weight:900;letter-spacing:.04em}
+.smart-point-preview>strong{font-size:13px;color:#312e81}
+.smart-point-preview>small{font-size:10px;color:#6366f1}
+.smart-point-sheet-note{display:grid;gap:3px;margin-bottom:12px;padding:11px 12px;border:1px solid #c7d2fe;border-radius:10px;background:#eef2ff;color:#3730a3}
+.smart-point-sheet-note strong{font-size:12px;color:#312e81}
+.smart-point-sheet-note span{font-size:10px;line-height:1.55}
+.smart-point-rule-card{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:14px;border-radius:12px;background:#111827;color:#fff}
+.smart-point-rule-card span{font-size:11px}
+.smart-point-rule-card strong{font-size:18px}
+.smart-point-rule-list{display:grid;gap:8px;margin-top:12px}
+.smart-point-rule-list>div{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;padding:10px 11px;border:1px solid #eef2f7;border-radius:10px;background:#f8fafc}
+.smart-point-rule-list b{font-size:11px;color:#475569}
+.smart-point-rule-list span{text-align:right;font-size:11px;color:#0f172a;font-weight:800}
+@media(max-width:560px){.smart-point-switch{grid-template-columns:1fr}.smart-point-input-line input{width:100%;max-width:none}}
