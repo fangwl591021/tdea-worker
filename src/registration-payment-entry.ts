@@ -5,7 +5,7 @@ type Env = {
   [key: string]: unknown;
 };
 
-type NativeField = { key?: string; label?: string };
+type NativeField = { key?: string; label?: string; type?: string; options?: unknown[] };
 type NativeForm = {
   activity?: Record<string, unknown>;
   fields?: NativeField[];
@@ -27,6 +27,56 @@ function normalizeName(value: unknown) {
 
 function activityUnitAmount(activity: Record<string, unknown>) {
   return Math.max(0, numberValue(activity.paymentAmount || activity.feeAmount || activity.registrationFee || activity.amount));
+}
+
+function pricedChoiceAmount(value: unknown) {
+  const text = clean(value).replace(/，/g, ",");
+  if (!text) return 0;
+  const normalized = text.replace(/,/g, "");
+  const patterns = [
+    /(?:NT\s*\$|NTD\s*\$?|TWD\s*\$?|\$)\s*([0-9]+(?:\.[0-9]+)?)/i,
+    /([0-9]+(?:\.[0-9]+)?)\s*(?:元|塊)(?:\s*[/／]?\s*(?:人|位))?/i,
+    /(?:每人|每位|單價|費用|價格|價錢)\s*(?:NT\s*\$|NTD\s*\$?|TWD\s*\$?|\$)?\s*([0-9]+(?:\.[0-9]+)?)/i
+  ];
+  for (const pattern of patterns) {
+    const match = normalized.match(pattern);
+    if (match) {
+      const amount = Number(match[1]);
+      if (Number.isFinite(amount) && amount > 0) return amount;
+    }
+  }
+  return 0;
+}
+
+function isPricedChoiceField(field: NativeField) {
+  const type = normalizeName(field.type);
+  if (type && !["radio", "dropdown", "select"].includes(type)) return false;
+  const name = normalizeName(field.label || field.key);
+  return ["房型", "住宿", "方案", "票種", "票價", "費用", "價格", "價錢", "餐別", "套餐"].some((keyword) => name.includes(keyword));
+}
+
+function answerForField(field: NativeField, answers: Record<string, unknown>) {
+  return answers[clean(field.key)] ?? answers[clean(field.label)];
+}
+
+function selectedOptionUnitAmount(form: NativeForm, answers: Record<string, unknown>) {
+  const fields = Array.isArray(form.fields) ? form.fields : [];
+  for (const field of fields) {
+    if (!isPricedChoiceField(field)) continue;
+    const raw = answerForField(field, answers);
+    const values = Array.isArray(raw) ? raw : [raw];
+    for (const value of values) {
+      const amount = pricedChoiceAmount(value);
+      if (amount > 0) return amount;
+    }
+  }
+  return 0;
+}
+
+function registrationUnitAmount(form: NativeForm, answers: Record<string, unknown>) {
+  const selectedAmount = selectedOptionUnitAmount(form, answers);
+  if (selectedAmount > 0) return selectedAmount;
+  return activityUnitAmount(form.activity && typeof form.activity === "object" ? form.activity : {});
 }
 
 function isCanonicalHeadcountField(field: NativeField) {
@@ -62,7 +112,7 @@ function registrationHeadcount(form: NativeForm, answers: Record<string, unknown
   const fields = Array.isArray(form.fields) ? form.fields : [];
   const field = fields.find(isCanonicalHeadcountField) || fields.find(isLegacyHeadcountField);
   if (!field) return 1;
-  const raw = answers[clean(field.key)] ?? answers[clean(field.label)];
+  const raw = answerForField(field, answers);
   const count = Math.floor(numberValue(raw));
   return Number.isFinite(count) && count > 0 ? Math.min(count, 1000) : 1;
 }
@@ -141,11 +191,11 @@ async function handleNativeRegistrationAmount(request: Request, env: Env, ctx: E
   if (!formObject) return app.fetch(request, env, ctx);
   const form = await formObject.json().catch(() => ({})) as NativeForm;
   const activity = form.activity && typeof form.activity === "object" ? form.activity : {};
-  const unitAmount = activityUnitAmount(activity);
+  const unitAmount = registrationUnitAmount(form, answers);
   const quantity = registrationHeadcount(form, answers);
 
   const response = await app.fetch(request, env, ctx);
-  if (!response.ok || unitAmount <= 0 || quantity <= 1) return response;
+  if (!response.ok || unitAmount <= 0 || quantity <= 0) return response;
 
   const payload = await response.clone().json().catch(() => null) as Record<string, any> | null;
   if (!payload?.success || payload?.data?.duplicate) return response;
@@ -154,7 +204,9 @@ async function handleNativeRegistrationAmount(request: Request, env: Env, ctx: E
 
   const currentAmount = numberValue(payload?.data?.payment?.amount);
   const expectedAmount = unitAmount * quantity;
-  if (currentAmount === expectedAmount) return response;
+  const currentUnitAmount = numberValue(payload?.data?.payment?.unitAmount);
+  const currentQuantity = Math.floor(numberValue(payload?.data?.payment?.quantity));
+  if (currentAmount === expectedAmount && currentUnitAmount === unitAmount && currentQuantity === quantity) return response;
 
   await patchStoredRegistration(env, registrationId, formId, activity, unitAmount, quantity);
 
@@ -185,9 +237,10 @@ async function correctQueriedRegistration(env: Env, item: Record<string, any>) {
   const answers = item.answers && typeof item.answers === "object" ? item.answers as Record<string, unknown> : {};
   const payment = item.payment && typeof item.payment === "object" ? item.payment as Record<string, unknown> : {};
 
+  const selectedAmount = selectedOptionUnitAmount(form, answers);
   const savedUnitAmount = numberValue(payment.unitAmount);
   const savedQuantity = Math.floor(numberValue(payment.quantity));
-  const unitAmount = savedUnitAmount > 0 ? savedUnitAmount : activityUnitAmount(activity);
+  const unitAmount = selectedAmount > 0 ? selectedAmount : (savedUnitAmount > 0 ? savedUnitAmount : activityUnitAmount(activity));
   const quantity = savedQuantity > 0 ? savedQuantity : registrationHeadcount(form, answers);
   if (unitAmount <= 0 || quantity <= 0) return item;
 
@@ -195,7 +248,7 @@ async function correctQueriedRegistration(env: Env, item: Record<string, any>) {
   const correctedPayment = updatePayment(payment, unitAmount, quantity);
   const registrationId = clean(item.id || item.registrationId);
 
-  if (registrationId && numberValue(payment.amount) !== expectedAmount) {
+  if (registrationId && (numberValue(payment.amount) !== expectedAmount || savedUnitAmount !== unitAmount || savedQuantity !== quantity)) {
     await patchStoredRegistration(env, registrationId, formId, activity, unitAmount, quantity).catch(() => undefined);
   }
 
