@@ -2397,7 +2397,7 @@ registrationSettings = structuredEditorPresent
       }
     };
     // Activity editor submit is handled by the enhanced listener above so registration settings and media remain editable.
-    const mf = document.querySelector("#drawer-member"); if (mf) mf.onsubmit = e => {
+    const mf = document.querySelector("#drawer-member"); if (mf) mf.onsubmit = async e => {
       e.preventDefault();
       const type = mf.dataset.type;
       const d = Object.fromEntries(new FormData(mf));
@@ -2407,19 +2407,28 @@ registrationSettings = structuredEditorPresent
       const item = { ...d, id: d.id || uid(), loginAccess, allowLogin: loginAccess, canLogin: loginAccess };
       old ? Object.assign(old, item) : rows.unshift(item);
 
-      // Explicit CRM edits win immediately in the UI. Persist a local snapshot first,
-      // then do the three remote jobs in parallel instead of blocking the drawer.
+      // R2 manager/state.json is the source of truth for roster lookup.
+      // Do not close the drawer or report success until that write is confirmed.
       persistLocalSnapshot();
-      state.drawer = "";
-      render();
-      toast("會員資料已更新，背景儲存中...");
+      const submitButton = mf.querySelector('button[type="submit"]');
+      const originalSubmitText = submitButton?.textContent || "儲存檔案變更";
+      if (submitButton) { submitButton.disabled = true; submitButton.textContent = "儲存中…"; }
+      try {
+        await saveManagerDataRemoteChecked();
+        state.drawer = "";
+        render();
+        toast("會員資料已儲存");
+      } catch (error) {
+        if (submitButton) { submitButton.disabled = false; submitButton.textContent = originalSubmitText; }
+        toast(error?.message || "會員名冊儲存失敗");
+        return;
+      }
 
-      const managerSave = saveManagerDataRemoteChecked();
       const accessSync = syncAdminAccessForMember(type, item);
       state.adminWhitelist = null;
 
-      Promise.allSettled([managerSave, accessSync]).then((results) => {
-        const managerResult = results[0];
+      Promise.allSettled([accessSync]).then((results) => {
+        const managerResult = { status: "fulfilled" };
         if (managerResult.status === "rejected") {
           console.error("CRM member manager-data save failed", managerResult.reason);
           toast(managerResult.reason?.message || "會員資料背景儲存失敗，請再按一次儲存");
