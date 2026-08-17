@@ -1,0 +1,39 @@
+name: Fix member save source of truth once
+on:
+  push:
+    branches: [main]
+    paths: ['.github/workflows/fix-member-save-source-of-truth-once.yml']
+permissions:
+  contents: write
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+      - name: Make roster save authoritative
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          p=Path('public/app.js')
+          s=p.read_text()
+          old='''      // Explicit CRM edits win immediately in the UI. Persist a local snapshot first,\n      // then do the three remote jobs in parallel instead of blocking the drawer.\n      persistLocalSnapshot();\n      state.drawer = "";\n      render();\n      toast("會員資料已更新，背景儲存中...");\n\n      const managerSave = saveManagerDataRemoteChecked();\n      const accessSync = syncAdminAccessForMember(type, item);\n      state.adminWhitelist = null;\n\n      Promise.allSettled([managerSave, accessSync]).then((results) => {\n        const managerResult = results[0];'''
+          new='''      // R2 manager/state.json is the source of truth for roster lookup.\n      // Do not close the drawer or report success until that write is confirmed.\n      persistLocalSnapshot();\n      const submitButton = mf.querySelector('button[type="submit"]');\n      const originalSubmitText = submitButton?.textContent || "儲存檔案變更";\n      if (submitButton) { submitButton.disabled = true; submitButton.textContent = "儲存中…"; }\n      try {\n        await saveManagerDataRemoteChecked();\n        state.drawer = "";\n        render();\n        toast("會員資料已儲存");\n      } catch (error) {\n        if (submitButton) { submitButton.disabled = false; submitButton.textContent = originalSubmitText; }\n        toast(error?.message || "會員名冊儲存失敗");\n        return;\n      }\n\n      const accessSync = syncAdminAccessForMember(type, item);\n      state.adminWhitelist = null;\n\n      Promise.allSettled([accessSync]).then((results) => {\n        const managerResult = { status: "fulfilled" };'''
+          if old not in s:
+              raise SystemExit('target block not found')
+          p.write_text(s.replace(old,new))
+          PY
+      - name: Verify
+        run: |
+          grep -q 'R2 manager/state.json is the source of truth' public/app.js
+          grep -q 'await saveManagerDataRemoteChecked()' public/app.js
+          node --check public/app.js
+      - name: Commit
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add public/app.js
+          git commit -m 'fix: confirm member roster save before success'
+          git push origin HEAD:main
