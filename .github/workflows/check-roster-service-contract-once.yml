@@ -1,0 +1,36 @@
+name: Check roster service contract once
+on:
+  push:
+    branches: [feature/tdea-identity-profile]
+    paths: [.github/workflows/check-roster-service-contract-once.yml]
+permissions:
+  contents: write
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feature/tdea-identity-profile
+      - name: Check tdea-worker
+        run: |
+          npm ci
+          npx tsc --noEmit
+          npx wrangler deploy --dry-run
+          grep -q 'url.pathname === "/api/roster"' src/registration-payment-entry.ts
+      - name: Check TDEA-DESIGN roster client
+        run: |
+          git clone --depth 1 --branch agent/full-project-transplant https://github.com/fangwl591021/TDEA-DESIGN.git /tmp/tdea-design
+          cd /tmp/tdea-design
+          npm ci
+          node --check src/tdea-roster.js
+          npm run check
+          npx wrangler deploy --dry-run
+          grep -q '"/api/roster"' src/tdea-roster.js
+      - name: Cleanup one-time workflow
+        run: |
+          git config user.name fangwl591021
+          git config user.email 50135766+fangwl591021@users.noreply.github.com
+          git rm .github/workflows/check-roster-service-contract-once.yml
+          git commit -m "Cleanup roster service contract check"
+          git push origin feature/tdea-identity-profile
