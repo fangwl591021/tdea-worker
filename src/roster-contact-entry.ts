@@ -1,6 +1,6 @@
 import app from "./smart-activity-entry";
 
-type Env = { ASSETS_BUCKET?: R2Bucket; [key:string]: unknown };
+type Env = { ASSETS_BUCKET?: R2Bucket; ADMIN_EMAILS?: string; [key:string]: unknown };
 type ContactRecord = { memberType:string; memberNumber:string; phone:string; updatedAt:string };
 type ManagerRow = Record<string, unknown>;
 
@@ -33,6 +33,11 @@ async function readManagerRoster(env:Env):Promise<{association:ManagerRow[];vend
 }
 function recordKey(type:string,number:string){return `${type}:${number}`.toLowerCase();}
 function validInternalHost(request:Request){return new URL(request.url).hostname === "tdea-roster.internal";}
+function diagnosticAllowed(request:Request,env:Env){
+  const email=clean(request.headers.get("x-admin-email"),320).toLowerCase();
+  const allowed=clean(env.ADMIN_EMAILS,2000).split(",").map((item)=>item.trim().toLowerCase()).filter(Boolean);
+  return Boolean(email && allowed.includes(email));
+}
 
 async function saveContact(request:Request,env:Env){
   if (!validInternalHost(request)) return json({success:false,error:"Not Found"},404);
@@ -108,15 +113,45 @@ function mergeRows(baseRows:unknown[][]|undefined,liveRows:(unknown[]|null)[],ty
   });
 }
 
+async function buildMergedRoster(env:Env,ctx:ExecutionContext){
+  const baseRequest=new Request("https://tdea-roster.internal/roster.json",{method:"GET",headers:{accept:"application/json"}});
+  const base=await app.fetch(baseRequest,env as never,ctx);
+  if(!base.ok) throw new Error(`Base roster read failed: ${base.status}`);
+  const roster=await base.json().catch(()=>null) as {a?:unknown[][];v?:unknown[][];[key:string]:unknown} | null;
+  if(!roster) throw new Error("Base roster JSON invalid");
+  const [overrides,manager]=await Promise.all([readOverrides(env),readManagerRoster(env)]);
+  const a=mergeRows(roster.a,manager.association.map(managerAssociationRow),"association",overrides);
+  const v=mergeRows(roster.v,manager.vendor.map(managerVendorRow),"vendor",overrides);
+  return {roster:{...roster,a,v},manager};
+}
+
 async function mergedRoster(request:Request,env:Env,ctx:ExecutionContext){
-  const base = await app.fetch(request,env as never,ctx);
-  if (!base.ok) return base;
-  const roster = await base.clone().json().catch(()=>null) as {a?:unknown[][];v?:unknown[][];[key:string]:unknown} | null;
-  if (!roster) return base;
-  const [overrides,manager] = await Promise.all([readOverrides(env),readManagerRoster(env)]);
-  const a = mergeRows(roster.a,manager.association.map(managerAssociationRow),"association",overrides);
-  const v = mergeRows(roster.v,manager.vendor.map(managerVendorRow),"vendor",overrides);
-  return json({...roster,a,v,liveManagerRosterMerged:true,liveManagerUpdatedAt:new Date().toISOString()});
+  const {roster}=await buildMergedRoster(env,ctx);
+  return json({...roster,liveManagerRosterMerged:true,liveManagerUpdatedAt:new Date().toISOString()});
+}
+
+async function diagnoseRosterMember(request:Request,env:Env,ctx:ExecutionContext){
+  if(!diagnosticAllowed(request,env)) return json({success:false,error:"Unauthorized"},401);
+  const url=new URL(request.url);
+  const memberNo=clean(url.searchParams.get("memberNo"),80).toUpperCase();
+  if(!memberNo) return json({success:false,error:"memberNo is required"},400);
+  const {roster,manager}=await buildMergedRoster(env,ctx);
+  const managerAssociation=manager.association.find((row)=>clean(row.memberNo || row.rosterMemberNo,80).toUpperCase()===memberNo) || null;
+  const managerVendor=manager.vendor.find((row)=>clean(row.memberNo || row.rosterMemberNo,80).toUpperCase()===memberNo) || null;
+  const associationRow=Array.isArray(roster.a) ? roster.a.find((row)=>clean(row?.[0],80).toUpperCase()===memberNo) : null;
+  const vendorRow=Array.isArray(roster.v) ? roster.v.find((row)=>clean(row?.[0],80).toUpperCase()===memberNo) : null;
+  return json({
+    success:true,
+    memberNo,
+    managerStateFound:Boolean(managerAssociation || managerVendor),
+    managerType:managerAssociation?"association":managerVendor?"vendor":"",
+    managerName:clean((managerAssociation?.name || managerAssociation?.displayName || managerVendor?.companyName || managerVendor?.name),120),
+    mergedRosterFound:Boolean(associationRow || vendorRow),
+    mergedType:associationRow?"association":vendorRow?"vendor":"",
+    mergedName:associationRow?clean(associationRow?.[2],120):vendorRow?clean(vendorRow?.[1] || vendorRow?.[4] || vendorRow?.[3],120):"",
+    associationCount:Array.isArray(roster.a)?roster.a.length:0,
+    vendorCount:Array.isArray(roster.v)?roster.v.length:0,
+  });
 }
 
 export default {
@@ -124,6 +159,10 @@ export default {
     const url = new URL(request.url);
     if (request.method === "POST" && url.pathname === "/api/roster/member-contact") {
       try { return await saveContact(request,env); }
+      catch(error){ return json({success:false,error:error instanceof Error?error.message:String(error)},500); }
+    }
+    if (request.method === "GET" && url.pathname === "/api/roster/diagnose") {
+      try { return await diagnoseRosterMember(request,env,ctx); }
       catch(error){ return json({success:false,error:error instanceof Error?error.message:String(error)},500); }
     }
     if (request.method === "GET" && url.pathname === "/roster.json" && validInternalHost(request)) {
