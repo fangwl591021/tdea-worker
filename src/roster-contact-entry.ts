@@ -125,7 +125,7 @@ async function buildMergedRoster(env:Env,ctx:ExecutionContext){
   return {roster:{...roster,a,v},manager};
 }
 
-async function mergedRoster(request:Request,env:Env,ctx:ExecutionContext){
+async function mergedRoster(env:Env,ctx:ExecutionContext){
   const {roster}=await buildMergedRoster(env,ctx);
   return json({...roster,liveManagerRosterMerged:true,liveManagerUpdatedAt:new Date().toISOString()});
 }
@@ -161,12 +161,16 @@ export default {
       try { return await saveContact(request,env); }
       catch(error){ return json({success:false,error:error instanceof Error?error.message:String(error)},500); }
     }
+    if (request.method === "GET" && url.pathname === "/api/roster/live") {
+      try { return await mergedRoster(env,ctx); }
+      catch(error){ return json({success:false,error:error instanceof Error?error.message:String(error)},500); }
+    }
     if (request.method === "GET" && url.pathname === "/api/roster/diagnose") {
       try { return await diagnoseRosterMember(request,env,ctx); }
       catch(error){ return json({success:false,error:error instanceof Error?error.message:String(error)},500); }
     }
     if (request.method === "GET" && url.pathname === "/roster.json") {
-      try { return await mergedRoster(request,env,ctx); }
+      try { return await mergedRoster(env,ctx); }
       catch(error){ console.error("Roster live merge failed",error); return app.fetch(request,env as never,ctx); }
     }
     return app.fetch(request,env as never,ctx);
