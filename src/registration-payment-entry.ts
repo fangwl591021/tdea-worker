@@ -2,6 +2,7 @@ import app from "./monthly-entry";
 
 type Env = {
   ASSETS_BUCKET?: R2Bucket;
+  ASSETS?: { fetch(request: Request): Promise<Response> };
   [key: string]: unknown;
 };
 
@@ -87,6 +88,31 @@ function updatePayment(payment: Record<string, unknown>, unitAmount: number, qua
       })
     : [];
   return { ...payment, amount, unitAmount, quantity, updatedAt: now, transactions };
+}
+
+async function serveRosterAsset(request: Request, env: Env) {
+  if (!env.ASSETS?.fetch) {
+    return new Response(JSON.stringify({ success: false, error: "Roster asset binding unavailable" }), {
+      status: 503,
+      headers: { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" }
+    });
+  }
+  const assetUrl = new URL("/roster.json", request.url);
+  const assetResponse = await env.ASSETS.fetch(new Request(assetUrl.toString(), {
+    method: "GET",
+    headers: { accept: "application/json", "cache-control": "no-cache" }
+  }));
+  if (!assetResponse.ok) {
+    return new Response(JSON.stringify({ success: false, error: "Roster asset not found" }), {
+      status: assetResponse.status,
+      headers: { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" }
+    });
+  }
+  const headers = new Headers(assetResponse.headers);
+  headers.set("content-type", "application/json; charset=utf-8");
+  headers.set("cache-control", "no-store");
+  headers.delete("content-length");
+  return new Response(assetResponse.body, { status: 200, headers });
 }
 
 async function patchStoredRegistration(
@@ -175,6 +201,7 @@ async function handleNativeRegistrationAmount(request: Request, env: Env, ctx: E
 export default {
   async fetch(request: Request, env: Env, ctx: ExecutionContext) {
     const url = new URL(request.url);
+    if (request.method === "GET" && url.pathname === "/api/roster") return serveRosterAsset(request, env);
     const match = request.method === "POST" ? url.pathname.match(/^\/api\/native-forms\/([^/]+)$/) : null;
     if (match) return handleNativeRegistrationAmount(request, env, ctx, decodeURIComponent(match[1]));
     return app.fetch(request, env, ctx);
