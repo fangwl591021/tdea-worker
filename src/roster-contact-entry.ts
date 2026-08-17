@@ -53,14 +53,18 @@ async function saveContact(request:Request,env:Env){
 function managerAssociationRow(row:ManagerRow):unknown[] | null {
   const memberNo = clean(row.memberNo || row.rosterMemberNo,80).toUpperCase();
   if (!memberNo) return null;
+  const qualification = clean(row.qualification || "Y",20).toUpperCase();
   return [
     memberNo,
     clean(row.identity || row.role || row.jobTitle,120),
     clean(row.name || row.displayName,120),
     clean(row.gender,20),
-    clean(row.qualification || "Y",20).toUpperCase(),
-    clean(row.jobTitle || row.title || row.position,120),
+    qualification,
+    qualification,
     normalizePhone(row.phone || row.mobile || row.tel),
+    clean(row.email || row.mail,320),
+    clean(row.jobTitle || row.title || row.position,120),
+    clean(row.company || row.companyName || row.unit,180),
   ];
 }
 function managerVendorRow(row:ManagerRow):unknown[] | null {
