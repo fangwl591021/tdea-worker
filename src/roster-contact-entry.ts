@@ -165,7 +165,7 @@ export default {
       try { return await diagnoseRosterMember(request,env,ctx); }
       catch(error){ return json({success:false,error:error instanceof Error?error.message:String(error)},500); }
     }
-    if (request.method === "GET" && url.pathname === "/roster.json" && validInternalHost(request)) {
+    if (request.method === "GET" && url.pathname === "/roster.json") {
       try { return await mergedRoster(request,env,ctx); }
       catch(error){ console.error("Roster live merge failed",error); return app.fetch(request,env as never,ctx); }
     }
