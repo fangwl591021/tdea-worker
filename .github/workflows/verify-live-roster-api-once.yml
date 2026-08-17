@@ -1,0 +1,38 @@
+name: Verify live roster API once
+on:
+  push:
+    branches: [feature/tdea-identity-profile]
+    paths: [.github/workflows/verify-live-roster-api-once.yml]
+permissions:
+  contents: write
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feature/tdea-identity-profile
+      - name: Verify live API
+        run: |
+          set -euo pipefail
+          curl -fsS --retry 2 --retry-delay 1 -H 'Cache-Control: no-cache' 'https://tdeawork.fangwl591021.workers.dev/api/roster?verify=20260817-2306' -o /tmp/roster.json
+          python - <<'PY'
+          import json
+          d=json.load(open('/tmp/roster.json',encoding='utf-8'))
+          rows=d.get('a') or []
+          m=[r for r in rows if isinstance(r,list) and r and str(r[0]).strip().upper()=='B1150011']
+          print('keys=', list(d.keys())[:10])
+          print('updatedAt=', d.get('updatedAt'))
+          print('match=', m)
+          if not m: raise SystemExit('B1150011 missing from live /api/roster')
+          if str(m[0][2]).strip()!='童子恩': raise SystemExit('name mismatch')
+          print('LIVE_API_ROSTER_OK')
+          PY
+      - name: Cleanup
+        if: always()
+        run: |
+          git config user.name fangwl591021
+          git config user.email 50135766+fangwl591021@users.noreply.github.com
+          git rm .github/workflows/verify-live-roster-api-once.yml
+          git commit -m 'Cleanup live roster API verification' || true
+          git push origin feature/tdea-identity-profile
