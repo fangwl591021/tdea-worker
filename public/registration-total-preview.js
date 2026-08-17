@@ -11,6 +11,24 @@
     return match ? Number(match[0]) : 0;
   };
   const activityUnitAmount = (activity = {}) => Math.max(0, numberValue(activity.paymentAmount || activity.feeAmount || activity.registrationFee || activity.amount));
+  const pricedChoiceAmount = (value) => {
+    const text = clean(value).replace(/，/g, ",");
+    if (!text) return 0;
+    const normalized = text.replace(/,/g, "");
+    const patterns = [
+      /(?:NT\s*\$|NTD\s*\$?|TWD\s*\$?|\$)\s*([0-9]+(?:\.[0-9]+)?)/i,
+      /([0-9]+(?:\.[0-9]+)?)\s*(?:元|塊)(?:\s*[/／]?\s*(?:人|位))?/i,
+      /(?:每人|每位|單價|費用|價格|價錢)\s*(?:NT\s*\$|NTD\s*\$?|TWD\s*\$?|\$)?\s*([0-9]+(?:\.[0-9]+)?)/i
+    ];
+    for (const pattern of patterns) {
+      const match = normalized.match(pattern);
+      if (match) {
+        const amount = Number(match[1]);
+        if (Number.isFinite(amount) && amount > 0) return amount;
+      }
+    }
+    return 0;
+  };
   const headcountNames = [
     "報名人數含本人",
     "報名人數",
@@ -25,10 +43,18 @@
     "quantity",
     "qty"
   ];
+  const pricedFieldKeywords = ["房型", "住宿", "方案", "票種", "票價", "費用", "價格", "價錢", "餐別", "套餐"];
 
   function fieldMatchesHeadcount(field = {}) {
     const names = [normalize(field.key), normalize(field.label)].filter(Boolean);
     return names.some((name) => headcountNames.some((candidate) => name === candidate || name.includes(candidate)));
+  }
+
+  function fieldMatchesPricedChoice(field = {}) {
+    const type = normalize(field.type);
+    if (type && !["radio", "dropdown", "select"].includes(type)) return false;
+    const name = normalize(field.label || field.key);
+    return pricedFieldKeywords.some((keyword) => name.includes(keyword));
   }
 
   function injectStyle() {
@@ -44,16 +70,28 @@
     document.head.appendChild(style);
   }
 
-  function findControl(form, field) {
+  function findControls(form, field) {
     const keys = [clean(field?.key), clean(field?.label)].filter(Boolean);
+    const controls = [];
     for (const key of keys) {
       const byName = form.elements?.[key];
-      if (byName) return byName;
+      if (!byName) continue;
+      if (typeof byName.length === "number" && !byName.tagName) controls.push(...Array.from(byName));
+      else controls.push(byName);
     }
     for (const control of form.querySelectorAll("input,select,textarea")) {
-      if (keys.some((key) => normalize(control.name) === normalize(key))) return control;
+      if (keys.some((key) => normalize(control.name) === normalize(key))) controls.push(control);
     }
-    return null;
+    return [...new Set(controls)];
+  }
+
+  function readControlValue(controls) {
+    if (!controls?.length) return "";
+    const checked = controls.find((control) => (control.type === "radio" || control.type === "checkbox") && control.checked);
+    if (checked) return checked.value;
+    const select = controls.find((control) => control.tagName === "SELECT");
+    if (select) return select.value;
+    return controls[0]?.value || "";
   }
 
   function readQuantity(control) {
@@ -73,10 +111,11 @@
       return;
     }
 
-    const unitAmount = activityUnitAmount(schema.activity || {});
+    const fallbackUnitAmount = activityUnitAmount(schema.activity || {});
     const fields = Array.isArray(schema.fields) ? schema.fields : [];
     const headcountField = fields.find(fieldMatchesHeadcount);
-    if (unitAmount <= 0 || !headcountField) return;
+    const pricedChoiceFields = fields.filter(fieldMatchesPricedChoice);
+    if (fallbackUnitAmount <= 0 && !pricedChoiceFields.length) return;
 
     injectStyle();
     const observer = new MutationObserver(() => attach());
@@ -86,8 +125,9 @@
     function attach() {
       const form = document.querySelector("form.nf-form, .nf-form form, form[data-native-form], form");
       if (!form || form.dataset.totalPreviewReady === "1") return;
-      const control = findControl(form, headcountField);
-      if (!control) return;
+      const headcountControl = headcountField ? findControls(form, headcountField)[0] : null;
+      const pricedControls = pricedChoiceFields.flatMap((field) => findControls(form, field));
+      if (!headcountControl && !pricedControls.length && fallbackUnitAmount <= 0) return;
       form.dataset.totalPreviewReady = "1";
 
       const box = document.createElement("div");
@@ -98,16 +138,39 @@
       else form.appendChild(box);
 
       const render = () => {
-        const quantity = readQuantity(control);
+        const quantity = readQuantity(headcountControl);
+        let unitAmount = 0;
+        let sourceLabel = "";
+        for (const field of pricedChoiceFields) {
+          const value = readControlValue(findControls(form, field));
+          const amount = pricedChoiceAmount(value);
+          if (amount > 0) {
+            unitAmount = amount;
+            sourceLabel = clean(field.label || field.key);
+            break;
+          }
+        }
+        if (unitAmount <= 0) unitAmount = fallbackUnitAmount;
+
+        if (unitAmount <= 0) {
+          box.innerHTML = `
+            <div class="nf-total-preview-label">應付總金額</div>
+            <div class="nf-total-preview-main">請先選擇計價方案</div>
+            <div class="nf-total-preview-detail">選擇房型／票種後，系統會自動計算金額。</div>`;
+          return;
+        }
+
         const total = unitAmount * quantity;
         box.innerHTML = `
           <div class="nf-total-preview-label">應付總金額</div>
           <div class="nf-total-preview-main">NT$ ${total.toLocaleString("zh-TW")}</div>
-          <div class="nf-total-preview-detail">單價 NT$ ${unitAmount.toLocaleString("zh-TW")} × ${quantity} 人（含本人）</div>`;
+          <div class="nf-total-preview-detail">${sourceLabel ? `${sourceLabel}：` : ""}單價 NT$ ${unitAmount.toLocaleString("zh-TW")} × ${quantity} 人（含本人）</div>`;
       };
 
-      control.addEventListener("change", render);
-      control.addEventListener("input", render);
+      [headcountControl, ...pricedControls].filter(Boolean).forEach((control) => {
+        control.addEventListener("change", render);
+        control.addEventListener("input", render);
+      });
       form.addEventListener("submit", render, true);
       render();
     }
