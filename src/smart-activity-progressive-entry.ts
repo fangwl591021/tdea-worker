@@ -1,7 +1,8 @@
 import app from "./custom-field-id-entry";
-import { analyzeSmartActivity, type SmartActivityEnv } from "./smart-activity-analyzer";
+import { buildSmartActivityFromText, type SmartTextBuildEnv } from "./smart-activity-text-builder";
 
-type Env = SmartActivityEnv & {
+type Env = SmartTextBuildEnv & {
+  GEMINI_MODEL?: string;
   GEMINI_OCR_MODEL?: string;
   [key: string]: unknown;
 };
@@ -49,10 +50,7 @@ async function ocrPoster(env: Env, posterDataUrl: string) {
     signal: AbortSignal.timeout(15000),
     body: JSON.stringify({
       contents: [{ role: "user", parts: [{ text: prompt }, { inline_data: { mime_type: image.mimeType, data: image.data } }] }],
-      generationConfig: {
-        thinkingConfig: { thinkingLevel: "minimal" },
-        maxOutputTokens: 5000
-      }
+      generationConfig: { thinkingConfig: { thinkingLevel: "minimal" }, maxOutputTokens: 5000 }
     })
   });
   const body: any = await response.json().catch(() => ({}));
@@ -97,8 +95,8 @@ export default {
         const input = await request.json().catch(() => ({})) as Record<string, unknown>;
         const text = clean(input.text, 12000);
         if (!text) return json({ success: false, message: "缺少 OCR 文字" }, 400);
-        const analysis = await analyzeSmartActivity(env, "", text);
-        return json({ success: true, data: analysis, providerUsed: analysis.providerUsed, modelUsed: analysis.modelUsed, fallbackUsed: analysis.fallbackUsed });
+        const built = await buildSmartActivityFromText(env, text);
+        return json({ success: true, data: { ...built.data, providerUsed: "gemini", modelUsed: built.model, fallbackUsed: false }, providerUsed: "gemini", modelUsed: built.model, fallbackUsed: false });
       } catch (error) {
         const message = error instanceof Error ? error.message : "報名欄位分析失敗";
         return json({ success: false, message }, 500);
