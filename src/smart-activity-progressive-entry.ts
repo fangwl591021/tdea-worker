@@ -1,8 +1,7 @@
 import app from "./custom-field-id-entry";
+import { analyzeSmartActivity, type SmartActivityEnv } from "./smart-activity-analyzer";
 
-type Env = {
-  GEMINI_API_KEY?: string;
-  GEMINI_MODEL?: string;
+type Env = SmartActivityEnv & {
   GEMINI_OCR_MODEL?: string;
   [key: string]: unknown;
 };
@@ -63,9 +62,22 @@ async function ocrPoster(env: Env, posterDataUrl: string) {
   return { text, model };
 }
 
+async function ensureAdmin(request: Request, env: Env, ctx: ExecutionContext) {
+  const probeUrl = new URL("/api/admin-whitelist", request.url);
+  const headers = new Headers();
+  ["authorization", "x-admin-email", "x-admin-member-no", "x-line-user-id"].forEach((name) => {
+    const value = request.headers.get(name);
+    if (value) headers.set(name, value);
+  });
+  if (![...headers.keys()].length) return false;
+  const probe = await app.fetch(new Request(probeUrl, { method: "GET", headers }), env as never, ctx);
+  return probe.ok;
+}
+
 export default {
   async fetch(request: Request, env: Env, ctx: ExecutionContext) {
     const url = new URL(request.url);
+
     if (request.method === "POST" && url.pathname === "/api/smart-activities/ocr") {
       try {
         const input = await request.json().catch(() => ({})) as Record<string, unknown>;
@@ -78,6 +90,21 @@ export default {
         return json({ success: false, message }, 500);
       }
     }
+
+    if (request.method === "POST" && url.pathname === "/api/smart-activities/analyze") {
+      try {
+        if (!await ensureAdmin(request, env, ctx)) return json({ success: false, message: "請先登入管理中心" }, 401);
+        const input = await request.json().catch(() => ({})) as Record<string, unknown>;
+        const text = clean(input.text, 12000);
+        if (!text) return json({ success: false, message: "缺少 OCR 文字" }, 400);
+        const analysis = await analyzeSmartActivity(env, "", text);
+        return json({ success: true, data: analysis, providerUsed: analysis.providerUsed, modelUsed: analysis.modelUsed, fallbackUsed: analysis.fallbackUsed });
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "報名欄位分析失敗";
+        return json({ success: false, message }, 500);
+      }
+    }
+
     return app.fetch(request, env as never, ctx);
   },
   scheduled(controller: ScheduledController, env: Env, ctx: ExecutionContext) {
