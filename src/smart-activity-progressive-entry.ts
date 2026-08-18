@@ -3,6 +3,7 @@ import app from "./custom-field-id-entry";
 type Env = {
   GEMINI_API_KEY?: string;
   GEMINI_MODEL?: string;
+  GEMINI_OCR_MODEL?: string;
   [key: string]: unknown;
 };
 
@@ -33,22 +34,26 @@ function geminiText(body: any) {
 async function ocrPoster(env: Env, posterDataUrl: string) {
   const key = clean(env.GEMINI_API_KEY, 500);
   if (!key) throw new Error("GEMINI_API_KEY is not configured");
-  const model = clean(env.GEMINI_MODEL, 120) || "gemini-3.6-flash";
+  const model = clean(env.GEMINI_OCR_MODEL, 120) || "gemini-3.5-flash-lite";
   const image = imageBlob(posterDataUrl);
   const prompt = [
-    "你只做活動海報 OCR，不做摘要、不做分類、不建立報名欄位。",
-    "請依圖片閱讀順序完整抄錄所有可辨識文字。",
-    "日期、時間、地址、費用、計價單位、人數、房型、桿數、餐費、點數、截止日、規則、備註、主辦協辦與聯絡資訊全部保留。",
+    "你只做活動海報 OCR。",
+    "依圖片閱讀順序完整抄錄所有可辨識文字。",
+    "不要摘要、不要分類、不要推理、不要建立報名欄位。",
+    "日期、時間、地址、費用、單位、人數、房型、桿數、餐費、點數、截止日、規則、備註、主辦協辦與聯絡資訊全部保留。",
     "看不清楚處寫 [辨識不清]，不要猜。",
     "只輸出純文字。"
   ].join("\n");
   const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`, {
     method: "POST",
     headers: { "x-goog-api-key": key, "content-type": "application/json" },
-    signal: AbortSignal.timeout(12000),
+    signal: AbortSignal.timeout(15000),
     body: JSON.stringify({
       contents: [{ role: "user", parts: [{ text: prompt }, { inline_data: { mime_type: image.mimeType, data: image.data } }] }],
-      generationConfig: { temperature: 0, maxOutputTokens: 5000 }
+      generationConfig: {
+        thinkingConfig: { thinkingLevel: "minimal" },
+        maxOutputTokens: 5000
+      }
     })
   });
   const body: any = await response.json().catch(() => ({}));
