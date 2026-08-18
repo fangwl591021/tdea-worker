@@ -1,7 +1,8 @@
 import app from "./custom-field-id-entry";
 import { buildSmartActivityFromText, type SmartTextBuildEnv } from "./smart-activity-text-builder";
+import { analyzeActivityRules, refineActivityRules, type SmartRuleChatEnv } from "./smart-activity-rule-chat";
 
-type Env = SmartTextBuildEnv & {
+type Env = SmartTextBuildEnv & SmartRuleChatEnv & {
   GEMINI_MODEL?: string;
   GEMINI_OCR_MODEL?: string;
   [key: string]: unknown;
@@ -16,17 +17,12 @@ const clean = (v: unknown, max = 12000) => String(v ?? "").trim().slice(0, max);
 function imageBlob(value: string) {
   const match = value.match(/^data:(image\/(?:jpeg|jpg|png|webp));base64,([\s\S]+)$/i);
   if (!match) throw new Error("活動海報格式錯誤");
-  return {
-    mimeType: match[1].toLowerCase() === "image/jpg" ? "image/jpeg" : match[1].toLowerCase(),
-    data: match[2]
-  };
+  return { mimeType: match[1].toLowerCase() === "image/jpg" ? "image/jpeg" : match[1].toLowerCase(), data: match[2] };
 }
 
 function geminiText(body: any) {
   for (const c of Array.isArray(body?.candidates) ? body.candidates : []) {
-    for (const p of Array.isArray(c?.content?.parts) ? c.content.parts : []) {
-      if (typeof p?.text === "string") return p.text;
-    }
+    for (const p of Array.isArray(c?.content?.parts) ? c.content.parts : []) if (typeof p?.text === "string") return p.text;
   }
   return "";
 }
@@ -48,10 +44,7 @@ async function ocrPoster(env: Env, posterDataUrl: string) {
     method: "POST",
     headers: { "x-goog-api-key": key, "content-type": "application/json" },
     signal: AbortSignal.timeout(15000),
-    body: JSON.stringify({
-      contents: [{ role: "user", parts: [{ text: prompt }, { inline_data: { mime_type: image.mimeType, data: image.data } }] }],
-      generationConfig: { thinkingConfig: { thinkingLevel: "minimal" }, maxOutputTokens: 5000 }
-    })
+    body: JSON.stringify({ contents: [{ role: "user", parts: [{ text: prompt }, { inline_data: { mime_type: image.mimeType, data: image.data } }] }], generationConfig: { thinkingConfig: { thinkingLevel: "minimal" }, maxOutputTokens: 5000 } })
   });
   const body: any = await response.json().catch(() => ({}));
   if (!response.ok) throw new Error(clean(body?.error?.message || body?.message || `Gemini OCR HTTP ${response.status}`, 500));
@@ -64,8 +57,7 @@ async function ensureAdmin(request: Request, env: Env, ctx: ExecutionContext) {
   const probeUrl = new URL("/api/admin-whitelist", request.url);
   const headers = new Headers();
   ["authorization", "x-admin-email", "x-admin-member-no", "x-line-user-id"].forEach((name) => {
-    const value = request.headers.get(name);
-    if (value) headers.set(name, value);
+    const value = request.headers.get(name); if (value) headers.set(name, value);
   });
   if (![...headers.keys()].length) return false;
   const probe = await app.fetch(new Request(probeUrl, { method: "GET", headers }), env as never, ctx);
@@ -83,29 +75,43 @@ export default {
         if (!posterDataUrl) return json({ success: false, message: "請先上傳活動海報" }, 400);
         const result = await ocrPoster(env, posterDataUrl);
         return json({ success: true, ocrText: result.text, modelUsed: result.model });
-      } catch (error) {
-        const message = error instanceof Error ? error.message : "圖片文字辨識失敗";
-        return json({ success: false, message }, 500);
-      }
+      } catch (error) { const message = error instanceof Error ? error.message : "圖片文字辨識失敗"; return json({ success: false, message }, 500); }
+    }
+
+    if (request.method === "POST" && url.pathname === "/api/smart-activities/rules") {
+      try {
+        if (!await ensureAdmin(request, env, ctx)) return json({ success:false, message:"請先登入管理中心" },401);
+        const input = await request.json().catch(() => ({})) as Record<string, unknown>;
+        const ocrText = clean(input.ocrText,12000); const note = clean(input.note,4000);
+        if (!ocrText) return json({ success:false, message:"缺少 OCR 文字" },400);
+        const result = await analyzeActivityRules(env, ocrText, note);
+        return json({ success:true, ruleText:result.text, modelUsed:result.model });
+      } catch (error) { const message = error instanceof Error ? error.message : "規則解析失敗"; return json({ success:false,message },500); }
+    }
+
+    if (request.method === "POST" && url.pathname === "/api/smart-activities/rules/refine") {
+      try {
+        if (!await ensureAdmin(request, env, ctx)) return json({ success:false, message:"請先登入管理中心" },401);
+        const input = await request.json().catch(() => ({})) as Record<string, unknown>;
+        const ocrText=clean(input.ocrText,12000), currentRules=clean(input.currentRules,10000), message=clean(input.message,4000);
+        if (!ocrText || !currentRules || !message) return json({ success:false,message:"缺少規則溝通資料" },400);
+        const result = await refineActivityRules(env,ocrText,currentRules,message);
+        return json({ success:true, ruleText:result.text, modelUsed:result.model });
+      } catch (error) { const message = error instanceof Error ? error.message : "規則修正失敗"; return json({ success:false,message },500); }
     }
 
     if (request.method === "POST" && url.pathname === "/api/smart-activities/analyze") {
       try {
         if (!await ensureAdmin(request, env, ctx)) return json({ success: false, message: "請先登入管理中心" }, 401);
         const input = await request.json().catch(() => ({})) as Record<string, unknown>;
-        const text = clean(input.text, 12000);
-        if (!text) return json({ success: false, message: "缺少 OCR 文字" }, 400);
+        const text = clean(input.text, 16000);
+        if (!text) return json({ success: false, message: "缺少已確認規則文字" }, 400);
         const built = await buildSmartActivityFromText(env, text);
         return json({ success: true, data: { ...built.data, providerUsed: "gemini", modelUsed: built.model, fallbackUsed: false }, providerUsed: "gemini", modelUsed: built.model, fallbackUsed: false });
-      } catch (error) {
-        const message = error instanceof Error ? error.message : "報名欄位分析失敗";
-        return json({ success: false, message }, 500);
-      }
+      } catch (error) { const message = error instanceof Error ? error.message : "報名欄位分析失敗"; return json({ success: false, message }, 500); }
     }
 
     return app.fetch(request, env as never, ctx);
   },
-  scheduled(controller: ScheduledController, env: Env, ctx: ExecutionContext) {
-    return (app as any).scheduled?.(controller, env, ctx);
-  }
+  scheduled(controller: ScheduledController, env: Env, ctx: ExecutionContext) { return (app as any).scheduled?.(controller, env, ctx); }
 };
