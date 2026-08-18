@@ -3,6 +3,9 @@ import app from "./monthly-entry";
 type Env = {
   ASSETS_BUCKET?: R2Bucket;
   ASSETS?: { fetch(request: Request): Promise<Response> };
+  TDEA_DESIGN?: { fetch(request: Request): Promise<Response> };
+  TDEA_INTERNAL_SECRET?: string;
+  ADMIN_EMAILS?: string;
   [key: string]: unknown;
 };
 
@@ -88,6 +91,116 @@ function updatePayment(payment: Record<string, unknown>, unitAmount: number, qua
       })
     : [];
   return { ...payment, amount, unitAmount, quantity, updatedAt: now, transactions };
+}
+
+function json(data: unknown, status = 200) {
+  return new Response(JSON.stringify(data), {
+    status,
+    headers: {
+      "content-type": "application/json; charset=utf-8",
+      "cache-control": "no-store"
+    }
+  });
+}
+
+function staticAdminAuthorized(request: Request, env: Env) {
+  const email = clean(request.headers.get("x-admin-email")).toLowerCase();
+  if (!email) return false;
+  const allowed = clean(env.ADMIN_EMAILS)
+    .split(",")
+    .map((item) => item.trim().toLowerCase())
+    .filter(Boolean);
+  return allowed.includes(email);
+}
+
+function asRecord(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : {};
+}
+
+function firstClean(...values: unknown[]) {
+  for (const value of values) {
+    const text = clean(value);
+    if (text) return text;
+  }
+  return "";
+}
+
+async function fetchTdeaMemberType(env: Env, type: "association" | "vendor") {
+  const secret = clean(env.TDEA_INTERNAL_SECRET);
+  if (!env.TDEA_DESIGN?.fetch) throw new Error("TDEA-DESIGN 會員服務尚未連線");
+  if (!secret) throw new Error("TDEA 內部服務密鑰尚未設定");
+  const upstream = await env.TDEA_DESIGN.fetch(new Request(
+    `https://tdea-design.internal/internal/tdea/points/members?type=${encodeURIComponent(type)}`,
+    {
+      method: "GET",
+      headers: {
+        "x-tdea-internal-secret": secret,
+        accept: "application/json"
+      }
+    }
+  ));
+  const result = asRecord(await upstream.json().catch(() => ({})));
+  if (!upstream.ok || result.success !== true) {
+    throw new Error(firstClean(result.error, result.message) || `TDEA ${type} 會員讀取失敗（HTTP ${upstream.status}）`);
+  }
+  return Array.isArray(result.members) ? result.members.map(asRecord) : [];
+}
+
+async function readTdeaUidMembers(request: Request, env: Env) {
+  if (!staticAdminAuthorized(request, env)) {
+    return json({ success: false, message: "Unauthorized" }, 401);
+  }
+  try {
+    const data: Record<string, unknown>[] = [];
+    for (const type of ["association", "vendor"] as const) {
+      const members = await fetchTdeaMemberType(env, type);
+      for (const member of members) {
+        const memberNo = firstClean(
+          member.rosterMemberNumber,
+          member.companyMemberNumber,
+          member.memberNumber
+        ).toUpperCase();
+        if (!memberNo) continue;
+        const name = firstClean(member.fullName, member.displayName);
+        data.push({
+          rosterType: type,
+          rosterMemberNo: memberNo,
+          memberNo,
+          rosterName: name,
+          name,
+          lineUserId: clean(member.lineUserId),
+          phone: clean(member.phone),
+          email: clean(member.email),
+          pointBalance: Number(member.pointBalance || 0),
+          source: "tdea-design-d1"
+        });
+      }
+    }
+    return json({ success: true, data, total: data.length, source: "tdea-design-d1" });
+  } catch (error) {
+    return json({
+      success: false,
+      message: `TDEA UID 即時名單讀取失敗：${clean((error as Error)?.message || error)}`
+    }, 502);
+  }
+}
+
+async function refreshTdeaUidMembers(request: Request, env: Env) {
+  const response = await readTdeaUidMembers(request, env);
+  const payload = asRecord(await response.clone().json().catch(() => ({})));
+  if (!response.ok || payload.success !== true) return response;
+  const rows = Array.isArray(payload.data) ? payload.data.map(asRecord) : [];
+  const withUid = rows.filter((row) => /^U[0-9a-f]{32}$/i.test(clean(row.lineUserId))).length;
+  const withPhone = rows.filter((row) => Boolean(clean(row.phone))).length;
+  return json({
+    success: true,
+    source: "tdea-design-d1",
+    fetched: rows.length,
+    withUid,
+    withPhone
+  });
 }
 
 async function serveRosterAsset(request: Request, env: Env) {
@@ -202,6 +315,12 @@ export default {
   async fetch(request: Request, env: Env, ctx: ExecutionContext) {
     const url = new URL(request.url);
     if (request.method === "GET" && url.pathname === "/api/roster") return serveRosterAsset(request, env);
+    if (request.method === "GET" && (url.pathname === "/api/tdea-members-public" || url.pathname === "/api/aiwe-members-public")) {
+      return readTdeaUidMembers(request, env);
+    }
+    if (request.method === "POST" && url.pathname === "/api/aiwe-members/sync") {
+      return refreshTdeaUidMembers(request, env);
+    }
     const match = request.method === "POST" ? url.pathname.match(/^\/api\/native-forms\/([^/]+)$/) : null;
     if (match) return handleNativeRegistrationAmount(request, env, ctx, decodeURIComponent(match[1]));
     return app.fetch(request, env, ctx);
