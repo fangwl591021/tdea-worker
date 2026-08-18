@@ -1,0 +1,165 @@
+name: Fix TDEA UID source once
+on:
+  push:
+    branches: [feature/tdea-identity-profile]
+    paths: [.github/workflows/fix-tdea-uid-source-once.yml]
+permissions:
+  contents: write
+jobs:
+  fix:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feature/tdea-identity-profile
+      - name: Patch UID source
+        run: |
+          python - <<'PY'
+from pathlib import Path
+
+# Keep monthly-entry bytes/line endings intact: targeted byte replacement only.
+p = Path('src/monthly-entry.ts')
+b = p.read_bytes()
+old = '''async function listAiweMembersPublicApi(request: Request, env: Env) {
+  const guard = await requireAdmin(request, env);
+  if (guard) return guard;
+  const rows = await readAiweMembers(env);
+  return json({ success: true, data: rows.map(publicAiweMember), total: rows.length });
+}'''.encode('utf-8')
+new = '''async function listTdeaMembersPublicApi(request: Request, env: Env) {
+  const guard = await requireAdmin(request, env);
+  if (guard) return guard;
+  if (!env.TDEA_DESIGN || !clean(env.TDEA_INTERNAL_SECRET)) {
+    return json({ success: false, message: "TDEA-DESIGN member service is not configured" }, 503);
+  }
+  const data: Record<string, unknown>[] = [];
+  for (const type of ["association", "vendor"] as const) {
+    const upstream = await env.TDEA_DESIGN.fetch(`https://tdea-design.internal/internal/tdea/points/members?type=${type}`, {
+      method: "GET",
+      headers: { "x-tdea-internal-secret": clean(env.TDEA_INTERNAL_SECRET), accept: "application/json" }
+    });
+    const result = asRecord(await upstream.json().catch(() => ({})));
+    if (!upstream.ok || result.success !== true) {
+      return json({ success: false, message: clean(result.error || result.message) || `TDEA ${type} member read failed` }, upstream.status || 502);
+    }
+    const members = Array.isArray(result.members) ? result.members.map(asRecord) : [];
+    for (const member of members) {
+      const memberNo = firstClean(member.rosterMemberNumber, member.companyMemberNumber, member.memberNumber).toUpperCase();
+      if (!memberNo) continue;
+      const name = firstClean(member.fullName, member.displayName);
+      data.push({
+        rosterType: type,
+        rosterMemberNo: memberNo,
+        memberNo,
+        rosterName: name,
+        name,
+        lineUserId: clean(member.lineUserId),
+        phone: clean(member.phone),
+        email: clean(member.email),
+        pointBalance: Number(member.pointBalance || 0),
+        source: "tdea-design-d1"
+      });
+    }
+  }
+  return json({ success: true, data, total: data.length, source: "tdea-design-d1" });
+}
+
+async function listAiweMembersPublicApi(request: Request, env: Env) {
+  return listTdeaMembersPublicApi(request, env);
+}'''.encode('utf-8')
+if old not in b:
+    raise SystemExit('listAiweMembersPublicApi target not found')
+b = b.replace(old, new, 1)
+route = b'    if (request.method === "GET" && url.pathname === "/api/aiwe-members-public") return listAiweMembersPublicApi(request, env);'
+route_new = b'    if (request.method === "GET" && url.pathname === "/api/tdea-members-public") return listTdeaMembersPublicApi(request, env);\n' + route
+if route not in b:
+    raise SystemExit('AIWE route target not found')
+b = b.replace(route, route_new, 1)
+p.write_bytes(b)
+
+# uid-column.js is UTF-8; still use bounded replacements.
+p = Path('public/uid-column.js')
+s = p.read_text(encoding='utf-8')
+s = s.replace('${apiBase}/api/aiwe-members-public', '${apiBase}/api/tdea-members-public')
+s = s.replace('AIWE UID 讀取失敗', 'TDEA UID 讀取失敗')
+s = s.replace('母站 UID 讀取失敗', 'TDEA UID 讀取失敗')
+s = s.replace('同步母站 UID', '刷新 TDEA UID')
+s = s.replace('同步母站 UID 失敗', '刷新 TDEA UID 失敗')
+old_sync = '''  async function refreshAiweRowsFromMother() {
+    const token = getToken();
+    const headers = hasAdminIdentity() ? adminHeaders({ "content-type": "application/json" }) : { "x-aiwe-token": token, "content-type": "application/json" };
+    if (!token && !hasAdminIdentity()) throw new Error("請先以管理者身份進入後台");
+    const response = await fetch(`${apiBase}/api/aiwe-members/sync`, {
+      method: "POST",
+      headers,
+      cache: "no-store"
+    });
+    const result = await response.json().catch(() => ({}));
+    if (!response.ok || !result.success) throw new Error(result.message || `母站會員同步失敗 HTTP ${response.status}`);
+    uidMapPromise = null;
+    return result;
+  }'''
+new_sync = '''  async function refreshTdeaUidRows() {
+    if (!hasAdminIdentity()) throw new Error("請先以管理者身份進入後台");
+    uidMapPromise = null;
+    const rows = await loadAiweRows();
+    return {
+      fetched: rows.length,
+      withUid: rows.filter((row) => Boolean(lineUidOf(row))).length
+    };
+  }'''
+if old_sync not in s:
+    raise SystemExit('refreshAiweRowsFromMother target not found')
+s = s.replace(old_sync, new_sync, 1)
+s = s.replace('const remoteReport = await refreshAiweRowsFromMother();', 'const remoteReport = await refreshTdeaUidRows();', 1)
+s = s.replace('alert(`母站資料同步完成\\n母站刷新：抓取 ${remoteReport.fetched || 0}，含 UID ${remoteReport.withUid || 0}，含手機 ${remoteReport.withPhone || 0}\\n${lines.join("\\n")}`);', 'alert(`TDEA UID 刷新完成\\nD1 會員 ${remoteReport.fetched || 0} 筆，含 UID ${remoteReport.withUid || 0} 筆\\n${lines.join("\\n")}`);', 1)
+# UID list is an admin-only canonical D1 read; remove legacy token fallback in the two read functions.
+s = s.replace('''      const token = getToken();
+      if (!token && !hasAdminIdentity()) return new Map();
+      const response = await fetch(`${apiBase}/api/tdea-members-public`, {
+        headers: hasAdminIdentity() ? adminHeaders() : { "x-aiwe-token": token },
+        cache: "no-store"
+      });
+      if (response.status === 401) {
+        sessionStorage.removeItem(tokenKey);
+        uidMapPromise = null;
+        return new Map();
+      }''', '''      if (!hasAdminIdentity()) return new Map();
+      const response = await fetch(`${apiBase}/api/tdea-members-public`, {
+        headers: adminHeaders(),
+        cache: "no-store"
+      });
+      if (response.status === 401) {
+        uidMapPromise = null;
+        return new Map();
+      }''', 1)
+s = s.replace('''    const token = getToken();
+    if (!token && !hasAdminIdentity()) throw new Error("請先以管理者身份進入後台");
+    const response = await fetch(`${apiBase}/api/tdea-members-public`, {
+      headers: hasAdminIdentity() ? adminHeaders() : { "x-aiwe-token": token },
+      cache: "no-store"
+    });''', '''    if (!hasAdminIdentity()) throw new Error("請先以管理者身份進入後台");
+    const response = await fetch(`${apiBase}/api/tdea-members-public`, {
+      headers: adminHeaders(),
+      cache: "no-store"
+    });''', 1)
+p.write_text(s, encoding='utf-8')
+PY
+      - name: Verify
+        run: |
+          node --check public/uid-column.js
+          npm ci
+          npx wrangler deploy --dry-run
+          grep -q '/api/tdea-members-public' public/uid-column.js
+          grep -q '/api/tdea-members-public' src/monthly-entry.ts
+          ! grep -q '/api/aiwe-members/sync' public/uid-column.js
+          grep -q 'source: "tdea-design-d1"' src/monthly-entry.ts
+      - name: Commit and cleanup
+        run: |
+          git config user.name fangwl591021
+          git config user.email 50135766+fangwl591021@users.noreply.github.com
+          git add src/monthly-entry.ts public/uid-column.js
+          git commit -m 'Use TDEA D1 for live member UID list'
+          git rm .github/workflows/fix-tdea-uid-source-once.yml
+          git commit -m 'Cleanup one-time TDEA UID source workflow'
+          git push origin feature/tdea-identity-profile
