@@ -88,6 +88,26 @@ function dedupeRosterRows(rows: Row[]): Row[] {
   return [...byMemberNo.values()];
 }
 
+function hasCompletedProfileMarker(row: Row) {
+  return Boolean(clean(
+    row.profileCompletedAt ||
+    row.profile_completed_at ||
+    row.rosterVerifiedAt ||
+    row.roster_verified_at ||
+    row.registrationCompletedAt ||
+    row.registration_completed_at ||
+    row.completedAt ||
+    row.completed_at,
+    80
+  ));
+}
+
+function preferCompletedCandidates(rows: Row[]): Row[] {
+  if (rows.length <= 1) return rows;
+  const completed = rows.filter(hasCompletedProfileMarker);
+  return completed.length ? completed : rows;
+}
+
 function rosterNameOf(row: Row, type: "association" | "vendor") {
   return type === "association"
     ? clean(row.name || row.rosterName || row.memberName || row.displayName, 240)
@@ -129,6 +149,7 @@ async function handleMemberNumberLookup(request: Request, env: Env) {
   const exact = rows.filter((row) => normalizedSearch(rosterNameOf(row, type)) === needle);
   let matches = exact;
   if (!matches.length) matches = rows.filter((row) => normalizedSearch(rosterNameOf(row, type)).includes(needle));
+  matches = preferCompletedCandidates(matches);
 
   if (!matches.length) {
     return json({ success: false, message: `查無「${fullName}」的${type === "association" ? "協會" : "廠商"}會員資料` }, 404);
