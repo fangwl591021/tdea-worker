@@ -42,14 +42,20 @@ export type SmartActivityAnalysis = SmartActivityBlueprint & {
 const clean = (value: unknown, max = 4000) => String(value ?? "").trim().slice(0, max);
 
 const PROMPT = [
-  "你是活動海報分析與報名頁規劃助理。請從活動海報與使用者補充文字，建立繁體中文 Activity Blueprint。",
-  "使用者補充文字的優先權高於海報內容；海報有明確資訊時才採用，不要自行編造日期、地點、金額、名額、付款方式。",
-  "billingMode 只可為 free、simple_paid、advanced_paid。免費活動用 free；只有票種或單純每人價格用 simple_paid；含住宿、餐點、接駁、攤位、停車或不同計價單位時用 advanced_paid。",
-  "pricing 每個項目要分開，unit 只可為 person、room、item、ticket、group、fixed。不同項目不能全部拿總人數相乘。",
-  "registrationFields 請依活動性質提出精簡建議，通常包含姓名與手機，其餘只在合理時加入。",
-  "缺少但發布前應確認的重要資料放入 missingFields。不要把 AI 推測寫成已確認事實。",
-  "日期格式 YYYY-MM-DD；時間格式 HH:MM；無法辨識的字串輸出空字串，數字輸出 0。",
-  "只輸出 JSON。confidence 為 0 到 1。"
+  "你是『活動海報 OCR 分析 + 報名規則建模』助理。第一優先不是摘要，而是完整讀懂海報，再依海報規則生成可執行的報名設定。請建立繁體中文 Activity Blueprint。",
+  "【步驟1：先讀圖】先逐區辨識海報上的：活動名稱、日期時間、地點地址、報名截止、參加資格、報名方式、費用、計價單位、方案差異、比賽規則、名額限制、加購/現場費用、獎項與其他重要規則。不要只抓標題與日期。",
+  "【步驟2：規則不能被摘要掉】description 必須整理成可直接放到活動詳情頁的結構化文字，至少包含：活動說明、活動日期時間地點、參加/報名方式、費用與計價規則、重要規則、截止日期；海報有比賽規則或抽獎機制時也要保留。不要把明確規則改寫成空泛宣傳文。",
+  "【步驟3：依規則生成報名欄位】registrationFields 不是泛用建議，而要依海報實際規則產生真正需要填寫/選擇的欄位。姓名、手機通常保留；若海報有公協會、參加方案、釣竿數、餐敘人數、房型、梯次、票種、攜伴、用餐等規則，要生成對應欄位，例如『所屬公協會』『參加方式』『釣蝦竿數』『餐敘人數』。不要漏掉會影響資格、價格或名額的欄位。",
+  "【步驟4：價格要拆成計價元件】billingMode 只可為 free、simple_paid、advanced_paid。免費活動用 free；只有單一票價/單純每人價格用 simple_paid；只要同時存在不同方案、不同計價單位、住宿、餐點、接駁、攤位、停車、加購，就用 advanced_paid。",
+  "pricing 每個可計價元件分開，unit 只可為 person、room、item、ticket、group、fixed。『750元/竿 + 500元/人』必須拆成兩項：釣蝦竿 750/item 與餐敘 500/person；『只參加餐敘 600元』要另外保留成餐敘方案，不可把 750、500、600 合併成一個價格。不同項目不能全部拿總人數相乘。",
+  "若海報提到現場另繳費（例如抽獎每人現場繳100元），要保留在 description；若它不是報名時必收費，不要誤算進主要應付金額，pricing 可列為選配且 required=false。",
+  "使用者補充文字的優先權高於海報內容；但使用者未補充的部分要以海報可辨識內容為準。不要自行編造日期、地點、金額、名額、付款方式。",
+  "若海報有『每公協會派代表8-10人』之類條件，保留在 description，並在 registrationFields 增加可驗證該條件的欄位（如所屬公協會），不要誤把8-10當成全活動 capacity。",
+  "capacity 只填『全活動總名額』且海報明確提供時才填；座位限制、單一單位人數、每會人數等局部限制不要當總 capacity。",
+  "paymentRequired 代表報名流程是否需要付款/繳費。若有報名費但海報寫由各協會秘書處統一登記或現場收費，仍視實際規則填寫 paymentMethod 並在 description 說明，不要自行假設線上刷卡。",
+  "missingFields 只放海報真的缺少、但正式建立報名流程前必須確認的資料。例如付款帳號、精確總名額、方案是否可複選。不要把海報已寫清楚的資訊列為缺失。",
+  "日期格式 YYYY-MM-DD；時間格式 HH:MM；無法辨識的字串輸出空字串，數字輸出0。",
+  "只輸出 JSON。confidence 為0到1。"
 ].join("\n");
 
 function validateImage(value: string) {
@@ -141,8 +147,8 @@ function normalize(value: Record<string, unknown>): SmartActivityBlueprint {
   return {
     title: clean(value.title, 240), category: clean(value.category, 120), date: clean(value.date, 20), startTime: clean(value.startTime, 20), endTime: clean(value.endTime, 20), venueName: clean(value.venueName, 240), address: clean(value.address, 500), capacity: Math.max(0, Math.round(Number(value.capacity) || 0)), billingMode,
     pricing: normalizePricing(value.pricing),
-    registrationFields: (Array.isArray(value.registrationFields) ? value.registrationFields : []).map((item) => clean(item, 100)).filter(Boolean).slice(0, 20),
-    description: clean(value.description, 5000), paymentRequired: value.paymentRequired === true, paymentMethod: clean(value.paymentMethod, 200),
+    registrationFields: (Array.isArray(value.registrationFields) ? value.registrationFields : []).map((item) => clean(item, 100)).filter(Boolean).slice(0, 30),
+    description: clean(value.description, 8000), paymentRequired: value.paymentRequired === true, paymentMethod: clean(value.paymentMethod, 400),
     missingFields: (Array.isArray(value.missingFields) ? value.missingFields : []).map((item) => clean(item, 160)).filter(Boolean).slice(0, 20),
     confidence: Math.max(0, Math.min(1, Number(value.confidence) || 0))
   };
