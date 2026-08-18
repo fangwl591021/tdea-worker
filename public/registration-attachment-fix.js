@@ -8,76 +8,108 @@
   const formId = params.get('register');
   if (!formId) return;
   const api = location.hostname.endsWith('github.io') ? 'https://tdeawork.fangwl591021.workers.dev' : '';
-  let enabled = null;
+  let schema = null;
+  let attachmentUrl = '';
 
-  async function attachmentEnabled() {
-    if (enabled !== null) return enabled;
+  async function loadSchema() {
+    if (schema) return schema;
     try {
       const response = await fetch(`${api}/api/native-forms/${encodeURIComponent(formId)}`, { cache:'no-store' });
       const result = await response.json().catch(() => ({}));
-      const form = result?.data?.form || result?.data || {};
-      enabled = Array.isArray(form.fields) && form.fields.some((f) => String(f?.key || '') === 'imageUpload' || String(f?.type || '') === 'file');
-    } catch (_) { enabled = false; }
-    return enabled;
+      schema = result?.data?.form || result?.data || {};
+    } catch (_) { schema = {}; }
+    return schema;
+  }
+
+  function isEnabled(form) {
+    const fields = Array.isArray(form?.fields) ? form.fields : [];
+    const settings = form?.settings || {};
+    const activity = form?.activity || {};
+    const flag = String(settings.requireImageUpload ?? activity.requireImageUpload ?? '').toUpperCase();
+    return flag === 'Y' || flag === 'TRUE' || flag === '1' || fields.some((f) => String(f?.key || '') === 'imageUpload' || String(f?.type || '') === 'file');
+  }
+
+  async function uploadFile(file, status, input) {
+    attachmentUrl = '';
+    if (!file) { status.textContent = '尚未選擇附件'; return; }
+    if (file.size > 8 * 1024 * 1024) { status.textContent = '附件不可超過 8MB'; input.value = ''; return; }
+    status.textContent = '附件上傳中…';
+    input.disabled = true;
+    try {
+      const body = new FormData();
+      body.append('file', file);
+      body.append('formId', formId);
+      const response = await fetch(`${api}/api/registration-attachments`, { method:'POST', body });
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok || result.success !== true) throw new Error(result.message || '附件上傳失敗');
+      attachmentUrl = result.url || '';
+      status.textContent = `已上傳：${file.name}`;
+    } catch (error) {
+      attachmentUrl = '';
+      status.textContent = error?.message || '附件上傳失敗';
+      input.value = '';
+    } finally {
+      input.disabled = false;
+    }
   }
 
   async function enhance() {
-    if (!await attachmentEnabled()) return;
+    const native = await loadSchema();
+    if (!isEnabled(native)) return;
     const form = document.querySelector('form.nf-form, .nf-form form, form[data-native-form]');
     if (!form || form.dataset.attachmentFixReady === '1') return;
-
-    let old = form.querySelector('[name="imageUpload"]');
-    if (!old) return;
-    const host = old.closest('.nf-field') || old.parentElement;
-    if (!host) return;
     form.dataset.attachmentFixReady = '1';
 
-    const hidden = document.createElement('input');
-    hidden.type = 'hidden';
-    hidden.name = 'imageUpload';
-    hidden.value = old.value || '';
+    let old = form.querySelector('[name="imageUpload"]');
+    let host = old?.closest('.nf-field') || old?.parentElement || null;
+    if (!host) {
+      host = document.createElement('div');
+      host.className = 'nf-field';
+      const actions = form.querySelector('.nf-actions') || form.querySelector('button[type="submit"]')?.parentElement;
+      if (actions) actions.insertAdjacentElement('beforebegin', host);
+      else form.appendChild(host);
+    }
 
     host.innerHTML = `
       <label>附件上傳</label>
       <input data-registration-attachment type="file" accept="image/jpeg,image/png,image/webp,image/gif,application/pdf">
+      <input data-registration-attachment-url name="imageUpload" type="hidden">
       <small data-registration-attachment-status style="color:#667085">支援 JPG、PNG、WEBP、GIF、PDF，單檔上限 8MB。</small>`;
-    host.appendChild(hidden);
 
     const input = host.querySelector('[data-registration-attachment]');
+    const hidden = host.querySelector('[data-registration-attachment-url]');
     const status = host.querySelector('[data-registration-attachment-status]');
     input.addEventListener('change', async () => {
-      const file = input.files?.[0];
-      hidden.value = '';
-      if (!file) { status.textContent = '尚未選擇附件'; return; }
-      if (file.size > 8 * 1024 * 1024) { status.textContent = '附件不可超過 8MB'; input.value = ''; return; }
-      status.textContent = '附件上傳中…';
-      input.disabled = true;
-      try {
-        const body = new FormData();
-        body.append('file', file);
-        body.append('formId', formId);
-        const response = await fetch(`${api}/api/registration-attachments`, { method:'POST', body });
-        const result = await response.json().catch(() => ({}));
-        if (!response.ok || result.success !== true) throw new Error(result.message || '附件上傳失敗');
-        hidden.value = result.url || '';
-        status.textContent = `已上傳：${file.name}`;
-      } catch (error) {
-        hidden.value = '';
-        status.textContent = error?.message || '附件上傳失敗';
-        input.value = '';
-      } finally {
-        input.disabled = false;
-      }
+      await uploadFile(input.files?.[0], status, input);
+      hidden.value = attachmentUrl;
     });
 
     form.addEventListener('submit', (event) => {
-      if (input.files?.length && !hidden.value) {
+      if (input.files?.length && !attachmentUrl) {
         event.preventDefault();
         event.stopImmediatePropagation();
         status.textContent = '附件尚未上傳完成，請稍候。';
       }
     }, true);
   }
+
+  // Native form 可能沒有把 imageUpload 留在 fields；在送出 JSON 時補回附件答案。
+  const originalFetch = window.fetch.bind(window);
+  window.fetch = async (resource, options = {}) => {
+    try {
+      const url = typeof resource === 'string' ? resource : resource?.url || '';
+      const method = String(options?.method || (typeof resource !== 'string' ? resource?.method : '') || 'GET').toUpperCase();
+      if (attachmentUrl && method === 'POST' && url.includes(`/api/native-forms/${encodeURIComponent(formId)}`) && options?.body && typeof options.body === 'string') {
+        const payload = JSON.parse(options.body);
+        if (payload && typeof payload === 'object') {
+          payload.answers = payload.answers && typeof payload.answers === 'object' ? payload.answers : {};
+          payload.answers.imageUpload = attachmentUrl;
+          options = { ...options, body: JSON.stringify(payload) };
+        }
+      }
+    } catch (_) {}
+    return originalFetch(resource, options);
+  };
 
   new MutationObserver(() => { enhance(); }).observe(document.documentElement, { childList:true, subtree:true });
   enhance();
