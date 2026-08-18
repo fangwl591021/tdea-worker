@@ -34,7 +34,7 @@
     const rules = Array.isArray(latest.activityRules) ? latest.activityRules : [];
     const onsite = Array.isArray(latest.optionalOnsiteItems) ? latest.optionalOnsiteItems : [];
 
-    box.innerHTML = `
+    const html = `
       <label class="smart-builder-label">4. AI 規則解析</label>
       <div style="display:grid;gap:10px;font-size:13px">
         <div><strong>活動類型：</strong>${esc(latest.activityType || latest.category || '一般活動')}</div>
@@ -47,6 +47,9 @@
         ${rules.length ? `<details><summary style="cursor:pointer;font-weight:700">活動規則 ${rules.length} 項</summary><div style="margin-top:6px;display:grid;gap:4px">${rules.map(r => `<span>• ${esc(r)}</span>`).join('')}</div></details>` : ''}
       </div>
       <small style="display:block;margin-top:8px;color:#667085">人、房、桿、餐、桌、張等數量會分開建模，不再共用單一人數。</small>`;
+    if (box.dataset.renderSignature === html) return;
+    box.dataset.renderSignature = html;
+    box.innerHTML = html;
   }
 
   window.fetch = async (resource, options = {}) => {
@@ -59,14 +62,11 @@
         if (payload?.success && payload?.data) {
           latest = payload.data;
           setTimeout(renderPanel, 0);
-          setTimeout(renderPanel, 250);
+          setTimeout(renderPanel, 300);
+          setTimeout(renderPanel, 800);
         }
       }
     } catch (_) {}
     return response;
   };
-
-  new MutationObserver(() => {
-    if (latest) renderPanel();
-  }).observe(document.documentElement, {childList:true, subtree:true});
 })();
