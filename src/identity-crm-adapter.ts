@@ -5,7 +5,6 @@ type IdentityCrmAdapterEnv = {
 };
 
 const managerDataKey = "manager/state.json";
-const aiweMembersKey = "aiwe/members.json";
 
 const clean = (value: unknown, max = 500) =>
   String(value ?? "").trim().slice(0, max);
@@ -33,10 +32,7 @@ function rowMemberNo(row: Record<string, unknown>) {
     firstClean(
       row.memberNo,
       row.rosterMemberNo,
-      row.member_no,
-      row.aiweMemberNo,
-      row.motherMemberNo,
-      row.user_login
+      row.member_no
     )
   );
 }
@@ -48,11 +44,6 @@ function rowPhone(row: Record<string, unknown>) {
     row.tel,
     row.telephone,
     row.contactPhone,
-    row.billing_phone,
-    row.shipping_phone,
-    row.phone_number,
-    row.mobile_number,
-    row.user_phone,
     row["手機"],
     row["手機號碼"],
     row["行動電話"],
@@ -89,17 +80,8 @@ function rowName(
         row.rosterName,
         row.memberName,
         row.displayName,
-        row.display_name,
-        row.user_nicename
+        row.display_name
       );
-}
-
-function rowRosterType(
-  row: Record<string, unknown>
-): "association" | "vendor" {
-  return clean(row.rosterType).toLowerCase() === "vendor"
-    ? "vendor"
-    : "association";
 }
 
 function toIdentityCrmMember(
@@ -113,10 +95,7 @@ function toIdentityCrmMember(
     memberNo: rowMemberNo(row),
     name,
     phone: rowPhone(row),
-    email: firstClean(
-      row.email,
-      row.user_email
-    ),
+    email: firstClean(row.email, row.mail),
     company:
       rosterType === "vendor"
         ? firstClean(
@@ -141,58 +120,16 @@ function toIdentityCrmMember(
   };
 }
 
-async function readJsonObject(
-  env: IdentityCrmAdapterEnv,
-  key: string
+async function readManagerData(
+  env: IdentityCrmAdapterEnv
 ): Promise<Record<string, unknown> | null> {
   if (!env.ASSETS_BUCKET) return null;
-
-  const object = await env.ASSETS_BUCKET.get(key);
+  const object = await env.ASSETS_BUCKET.get(managerDataKey);
   if (!object) return null;
-
   const data = await object.json().catch(() => null);
-
-  return data &&
-    typeof data === "object" &&
-    !Array.isArray(data)
-    ? (data as Record<string, unknown>)
+  return data && typeof data === "object" && !Array.isArray(data)
+    ? data as Record<string, unknown>
     : null;
-}
-
-async function readJsonRows(
-  env: IdentityCrmAdapterEnv,
-  key: string
-): Promise<Array<Record<string, unknown>>> {
-  if (!env.ASSETS_BUCKET) return [];
-
-  const object = await env.ASSETS_BUCKET.get(key);
-  if (!object) return [];
-
-  const data = await object.json().catch(() => []);
-
-  if (Array.isArray(data)) {
-    return data.filter(
-      (row): row is Record<string, unknown> =>
-        Boolean(row) &&
-        typeof row === "object" &&
-        !Array.isArray(row)
-    );
-  }
-
-  if (
-    data &&
-    typeof data === "object" &&
-    Array.isArray(
-      (data as Record<string, unknown>).records
-    )
-  ) {
-    return (
-      (data as Record<string, unknown>)
-        .records as Array<Record<string, unknown>>
-    );
-  }
-
-  return [];
 }
 
 export async function findIdentityCrmMemberByMemberNo(
@@ -203,49 +140,13 @@ export async function findIdentityCrmMemberByMemberNo(
   const memberNo = normalizeMemberNo(memberNoInput);
   if (!memberNo) return null;
 
-  const managerData = await readJsonObject(
-    env,
-    managerDataKey
-  );
+  const managerData = await readManagerData(env);
+  const rows = managerData && Array.isArray(managerData[rosterType])
+    ? managerData[rosterType] as Array<Record<string, unknown>>
+    : [];
 
-  const managerRows =
-    managerData &&
-    Array.isArray(managerData[rosterType])
-      ? (
-          managerData[
-            rosterType
-          ] as Array<Record<string, unknown>>
-        )
-      : [];
-
-  const managerMatch = managerRows.find(
-    (row) => rowMemberNo(row) === memberNo
-  );
-
-  if (managerMatch) {
-    return toIdentityCrmMember(
-      managerMatch,
-      rosterType
-    );
-  }
-
-  const aiweRows = await readJsonRows(
-    env,
-    aiweMembersKey
-  );
-
-  const aiweMatch = aiweRows.find(
-    (row) =>
-      rowRosterType(row) === rosterType &&
-      rowMemberNo(row) === memberNo
-  );
-
-  if (!aiweMatch) return null;
-
-  return toIdentityCrmMember(
-    aiweMatch,
-    rosterType
-  );
+  const match = rows.find((row) => rowMemberNo(row) === memberNo);
+  return match ? toIdentityCrmMember(match, rosterType) : null;
 }
 
 export function crmPhoneMatches(
