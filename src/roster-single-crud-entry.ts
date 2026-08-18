@@ -108,6 +108,17 @@ function preferCompletedCandidates(rows: Row[]): Row[] {
   return completed.length ? completed : rows;
 }
 
+function pickBestCandidate(rows: Row[]): Row | null {
+  if (!rows.length) return null;
+  return rows.slice().sort((a, b) => {
+    const completedDelta = Number(hasCompletedProfileMarker(b)) - Number(hasCompletedProfileMarker(a));
+    if (completedDelta) return completedDelta;
+    const timeDelta = rowTimestamp(b) - rowTimestamp(a);
+    if (timeDelta) return timeDelta;
+    return rowCompleteness(b) - rowCompleteness(a);
+  })[0] || null;
+}
+
 function rosterNameOf(row: Row, type: "association" | "vendor") {
   return type === "association"
     ? clean(row.name || row.rosterName || row.memberName || row.displayName, 240)
@@ -140,6 +151,7 @@ async function handleMemberNumberLookup(request: Request, env: Env) {
   const input = await request.json().catch(() => ({})) as Row;
   const type = normalizeType(input.memberType);
   const fullName = clean(input.fullName, 240);
+  const phone = normalizedPhone(input.phone);
   if (!type) return json({ success: false, message: "會員類型錯誤" }, 400);
   if (!fullName) return json({ success: false, message: "請輸入姓名／公司名稱" }, 400);
 
@@ -151,11 +163,19 @@ async function handleMemberNumberLookup(request: Request, env: Env) {
   if (!matches.length) matches = rows.filter((row) => normalizedSearch(rosterNameOf(row, type)).includes(needle));
   matches = preferCompletedCandidates(matches);
 
+  if (matches.length > 1 && phone) {
+    const phoneMatches = matches.filter((row) => normalizedPhone(rosterPhoneOf(row)) === phone);
+    if (phoneMatches.length) {
+      const best = pickBestCandidate(phoneMatches);
+      matches = best ? [best] : [];
+    }
+  }
+
   if (!matches.length) {
     return json({ success: false, message: `查無「${fullName}」的${type === "association" ? "協會" : "廠商"}會員資料` }, 404);
   }
   if (matches.length > 1) {
-    return json({ success: false, message: `找到 ${matches.length} 筆不同會員編號的相符資料，請輸入更完整的${type === "association" ? "姓名" : "公司名稱"}` }, 409);
+    return json({ success: false, message: `找到 ${matches.length} 筆同名資料，請輸入行動電話確認` }, 409);
   }
 
   return json({ success: true, match: lookupMatch(matches[0], type) });
