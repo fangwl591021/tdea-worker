@@ -24,17 +24,8 @@
     const statusNode = box.querySelector('[data-smart-ocr-status]');
     const textNode = box.querySelector('[data-smart-ocr-text]');
     if (statusNode) statusNode.textContent = status;
-    if (textNode && text) textNode.value = text;
+    if (textNode && text && textNode.value !== text) textNode.value = text;
   }
-
-  new MutationObserver(() => {
-    const box = ensureBox();
-    if (box && lastOcrText) {
-      box.style.display = 'grid';
-      const textNode = box.querySelector('[data-smart-ocr-text]');
-      if (textNode) textNode.value = lastOcrText;
-    }
-  }).observe(document.documentElement, { childList: true, subtree: true });
 
   window.fetch = async (resource, options = {}) => {
     const url = typeof resource === 'string' ? resource : resource?.url || '';
@@ -70,7 +61,10 @@
       text: `${originalText}\n\n【海報 OCR 文字】\n${lastOcrText}`.trim()
     };
     const finalResponse = await originalFetch(resource, { ...options, body: JSON.stringify(nextPayload) });
-    if (finalResponse.ok) showOcr('第一階段完成；第二階段報名欄位已生成。', lastOcrText);
+    if (finalResponse.ok) {
+      showOcr('第一階段完成；第二階段報名欄位已生成。', lastOcrText);
+      setTimeout(() => showOcr('第一階段完成；第二階段報名欄位已生成。', lastOcrText), 350);
+    }
     return finalResponse;
   };
 })();
