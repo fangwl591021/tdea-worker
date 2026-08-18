@@ -80,7 +80,7 @@ async function readNativeForm(env: Env, formId: string) {
   return data && typeof data === "object" && !Array.isArray(data) ? data as NativeForm : null;
 }
 
-async function correctItem(env: Env, item: Record<string, any>) {
+async function correctItem(env: Env, item: Record<string, any>, ctx: ExecutionContext) {
   const registrationId = clean(item.id || item.registrationId);
   const raw = await readRawRegistration(env, registrationId);
   const source = raw || item;
@@ -112,10 +112,10 @@ async function correctItem(env: Env, item: Record<string, any>) {
     const rawQuantity = Math.floor(numberValue(rawPayment.quantity));
     const rawUnitAmount = numberValue(rawPayment.unitAmount);
     if (rawAmount !== amount || rawQuantity !== quantity || rawUnitAmount !== unitAmount) {
-      raw.payment = { ...rawPayment, amount, unitAmount, quantity, updatedAt: new Date().toISOString() };
-      await env.ASSETS_BUCKET.put(`registrations/native/${encodeURIComponent(registrationId)}.json`, JSON.stringify(raw, null, 2), {
+      const nextRaw = { ...raw, payment: { ...rawPayment, amount, unitAmount, quantity, updatedAt: new Date().toISOString() } };
+      ctx.waitUntil(env.ASSETS_BUCKET.put(`registrations/native/${encodeURIComponent(registrationId)}.json`, JSON.stringify(nextRaw, null, 2), {
         httpMetadata: { contentType: "application/json; charset=utf-8", cacheControl: "no-store" }
-      });
+      }).catch((error) => console.error("registration repair write failed", error)));
     }
   }
 
@@ -174,11 +174,12 @@ async function handleQuery(request: Request, env: Env, ctx: ExecutionContext) {
 
   const url = new URL(request.url);
   if (url.pathname === "/api/native-registrations/query" && payload.data && typeof payload.data === "object" && !Array.isArray(payload.data)) {
-    payload.data = await correctItem(env, payload.data);
+    payload.data = await correctItem(env, payload.data, ctx);
   } else if ((url.pathname === "/api/native-registrations/me" || url.pathname === "/api/registrations/list") && Array.isArray(payload.data)) {
-    payload.data = await Promise.all(payload.data.map((item: unknown) => item && typeof item === "object" ? correctItem(env, item as Record<string, any>) : item));
+    payload.data = await Promise.all(payload.data.map((item: unknown) => item && typeof item === "object" ? correctItem(env, item as Record<string, any>, ctx) : item));
     if (url.pathname === "/api/registrations/list") {
-      await repairAdminListIndexes(env, url, payload.data.filter((item: unknown) => item && typeof item === "object") as Array<Record<string, any>>);
+      const corrected = payload.data.filter((item: unknown) => item && typeof item === "object") as Array<Record<string, any>>;
+      ctx.waitUntil(repairAdminListIndexes(env, url, corrected).catch((error) => console.error("registration index repair failed", error)));
     }
   } else {
     return response;
@@ -187,6 +188,7 @@ async function handleQuery(request: Request, env: Env, ctx: ExecutionContext) {
   const headers = new Headers(response.headers);
   headers.delete("content-length");
   headers.set("content-type", "application/json; charset=utf-8");
+  headers.set("x-tdea-registration-repair", "background");
   return new Response(JSON.stringify(payload), { status: response.status, statusText: response.statusText, headers });
 }
 
