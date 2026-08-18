@@ -1,4 +1,4 @@
-import app from "./registration-query-payment-entry";
+import app from "./payment-speed-entry";
 
 type Env = {
   ASSETS_BUCKET?: R2Bucket;
