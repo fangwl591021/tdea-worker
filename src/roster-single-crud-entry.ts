@@ -59,6 +59,35 @@ function rosterRows(data: Record<string, unknown>, type: "association" | "vendor
     : [];
 }
 
+function rowTimestamp(row: Row) {
+  const value = clean(row.updatedAt || row.updated_at || row.modifiedAt || row.modified_at || row.createdAt || row.created_at, 80);
+  const parsed = Date.parse(value);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function rowCompleteness(row: Row) {
+  return Object.values(row).reduce((score, value) => score + (clean(value, 500) ? 1 : 0), 0);
+}
+
+function dedupeRosterRows(rows: Row[]): Row[] {
+  const byMemberNo = new Map<string, Row>();
+  for (const row of rows) {
+    const memberNo = memberNoOf(row);
+    if (!memberNo) continue;
+    const previous = byMemberNo.get(memberNo);
+    if (!previous) {
+      byMemberNo.set(memberNo, row);
+      continue;
+    }
+    const previousTime = rowTimestamp(previous);
+    const currentTime = rowTimestamp(row);
+    if (currentTime > previousTime || (currentTime === previousTime && rowCompleteness(row) > rowCompleteness(previous))) {
+      byMemberNo.set(memberNo, row);
+    }
+  }
+  return [...byMemberNo.values()];
+}
+
 function rosterNameOf(row: Row, type: "association" | "vendor") {
   return type === "association"
     ? clean(row.name || row.rosterName || row.memberName || row.displayName, 240)
@@ -95,7 +124,7 @@ async function handleMemberNumberLookup(request: Request, env: Env) {
   if (!fullName) return json({ success: false, message: "請輸入姓名／公司名稱" }, 400);
 
   const data = await readState(env);
-  const rows = rosterRows(data, type).filter((row) => memberNoOf(row) && rosterNameOf(row, type));
+  const rows = dedupeRosterRows(rosterRows(data, type).filter((row) => memberNoOf(row) && rosterNameOf(row, type)));
   const needle = normalizedSearch(fullName);
   const exact = rows.filter((row) => normalizedSearch(rosterNameOf(row, type)) === needle);
   let matches = exact;
@@ -105,7 +134,7 @@ async function handleMemberNumberLookup(request: Request, env: Env) {
     return json({ success: false, message: `查無「${fullName}」的${type === "association" ? "協會" : "廠商"}會員資料` }, 404);
   }
   if (matches.length > 1) {
-    return json({ success: false, message: `找到 ${matches.length} 筆相符資料，請輸入更完整的${type === "association" ? "姓名" : "公司名稱"}` }, 409);
+    return json({ success: false, message: `找到 ${matches.length} 筆不同會員編號的相符資料，請輸入更完整的${type === "association" ? "姓名" : "公司名稱"}` }, 409);
   }
 
   return json({ success: true, match: lookupMatch(matches[0], type) });
@@ -121,7 +150,7 @@ async function handleMemberLookup(request: Request, env: Env) {
   if (!memberNumber) return json({ success: false, message: "請提供會員編號" }, 400);
 
   const data = await readState(env);
-  const row = rosterRows(data, type).find((item) => memberNoOf(item) === memberNumber);
+  const row = dedupeRosterRows(rosterRows(data, type)).find((item) => memberNoOf(item) === memberNumber);
   if (!row) return json({ success: false, message: `查無會員編號 ${memberNumber}` }, 404);
 
   const rosterName = rosterNameOf(row, type);
