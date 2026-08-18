@@ -116,3 +116,4 @@ for (const name of [...new Set(names)]) {
 
 fs.writeFileSync(file, src);
 console.log('canonical manager roster patch applied');
+// retrigger: 2026-08-18 canonical roster source-of-truth
