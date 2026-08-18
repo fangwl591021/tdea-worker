@@ -10,6 +10,13 @@ const json = (data: unknown, status = 200) => new Response(JSON.stringify(data),
 });
 const clean = (value: unknown, max = 500) => String(value ?? "").trim().slice(0, max);
 const memberNoOf = (row: Row) => clean(row.memberNo || row.rosterMemberNo || row.member_no, 100).toUpperCase();
+const lineUidOf = (row: Row) => clean(row.lineUserId || row.LINE_user_id || row.uid || row.lineUid || row.line_user_id, 256);
+
+function loginAllowed(row: Row) {
+  if ([row.loginAccess, row.loginAllowed, row.allowLogin, row.canLogin, row.adminAccess].some((value) => value === true)) return true;
+  return [row.loginAccess, row.loginAllowed, row.allowLogin, row.canLogin, row.adminAccess]
+    .some((value) => ["1", "TRUE", "Y", "YES", "ALLOW", "ALLOWED", "允許", "啟用"].includes(clean(value, 30).toUpperCase()));
+}
 
 async function adminAllowed(request: Request, env: Env, ctx: ExecutionContext) {
   const probeUrl = new URL(request.url);
@@ -59,6 +66,19 @@ function normalizeMember(input: Row, type: "association" | "vendor") {
       : { companyName: clean(input.companyName || input.name, 220) }),
     updatedAt: now
   };
+}
+
+async function internalAdminSubjects(request: Request, env: Env) {
+  const url = new URL(request.url);
+  if (url.hostname !== "tdea-permission.internal") return json({ success: false, message: "Not found" }, 404);
+  const data = await readState(env);
+  const rows: Row[] = ["association", "vendor"].flatMap((type) =>
+    Array.isArray(data[type])
+      ? (data[type] as unknown[]).filter((row): row is Row => Boolean(row) && typeof row === "object" && !Array.isArray(row))
+      : []
+  );
+  const lineUserIds = Array.from(new Set(rows.filter(loginAllowed).map(lineUidOf).filter((uid) => /^U[0-9a-f]{32}$/i.test(uid))));
+  return json({ success: true, lineUserIds, total: lineUserIds.length, source: MANAGER_KEY });
 }
 
 async function handleMemberCrud(request: Request, env: Env, ctx: ExecutionContext) {
@@ -120,6 +140,10 @@ async function handleMemberCrud(request: Request, env: Env, ctx: ExecutionContex
 export default {
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
     const url = new URL(request.url);
+    if (request.method === "GET" && url.pathname === "/api/internal/tdea-design/admin-subjects") {
+      try { return await internalAdminSubjects(request, env); }
+      catch (error) { return json({ success: false, message: error instanceof Error ? error.message : String(error) }, 500); }
+    }
     if (url.pathname === "/api/roster/member" && ["POST", "PUT", "DELETE"].includes(request.method)) {
       try { return await handleMemberCrud(request, env, ctx); }
       catch (error) { return json({ success: false, message: error instanceof Error ? error.message : String(error) }, 500); }
