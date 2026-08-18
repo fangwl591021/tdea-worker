@@ -26,7 +26,15 @@
     const settings = form?.settings || {};
     const activity = form?.activity || {};
     const flag = String(settings.requireImageUpload ?? activity.requireImageUpload ?? '').toUpperCase();
-    return flag === 'Y' || flag === 'TRUE' || flag === '1' || fields.some((f) => String(f?.key || '') === 'imageUpload' || String(f?.type || '') === 'file');
+    const configured = flag === 'Y' || flag === 'TRUE' || flag === '1' || fields.some((f) => String(f?.key || '') === 'imageUpload' || String(f?.type || '') === 'file');
+    if (configured) return true;
+
+    // Emergency compatibility: the Tianjin activity was saved with the admin selector set to Y,
+    // but older native-form snapshots did not persist requireImageUpload into settings/fields.
+    // Scope the fallback only to Tianjin so other activities remain unchanged.
+    const activityText = [activity.name, activity.title, activity.activityName, activity.detailText].filter(Boolean).join(' ');
+    const pageText = String(document.querySelector('.nf-title')?.textContent || document.body?.innerText || '');
+    return /天津/.test(activityText) || /天津/.test(pageText);
   }
 
   async function uploadFile(file, status, input) {
@@ -93,7 +101,6 @@
     }, true);
   }
 
-  // Native form 可能沒有把 imageUpload 留在 fields；在送出 JSON 時補回附件答案。
   const originalFetch = window.fetch.bind(window);
   window.fetch = async (resource, options = {}) => {
     try {
