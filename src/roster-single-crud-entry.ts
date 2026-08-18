@@ -134,7 +134,10 @@ function rosterBirthdayOf(row: Row) {
 }
 
 function internalRosterRequest(request: Request) {
-  return new URL(request.url).hostname === "tdea-roster.internal";
+  const hostname = new URL(request.url).hostname.toLowerCase();
+  if (hostname === "tdea-roster.internal") return true;
+  const upstreamWorker = clean(request.headers.get("cf-worker"), 240).toLowerCase();
+  return upstreamWorker === "fangwl591021.workers.dev" || upstreamWorker.endsWith(".fangwl591021.workers.dev");
 }
 
 function lookupMatch(row: Row, type: "association" | "vendor") {
