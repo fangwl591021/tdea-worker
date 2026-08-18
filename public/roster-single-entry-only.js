@@ -1,12 +1,21 @@
 (() => {
-  const hideBatchImports = () => {
-    document.querySelectorAll('[data-import="association"], [data-import="vendor"]').forEach((el) => {
+  const selectors = [
+    '[data-import="association"]',
+    '[data-import="vendor"]',
+    '[data-sync-google-members]',
+    '[data-sync-aiwe-uid]'
+  ];
+
+  const hideLegacyRosterControls = () => {
+    document.querySelectorAll(selectors.join(',')).forEach((el) => {
       el.hidden = true;
       el.style.display = 'none';
       el.setAttribute('aria-hidden', 'true');
       el.setAttribute('tabindex', '-1');
     });
   };
-  hideBatchImports();
-  new MutationObserver(hideBatchImports).observe(document.documentElement, { childList: true, subtree: true });
+
+  hideLegacyRosterControls();
+  new MutationObserver(hideLegacyRosterControls)
+    .observe(document.documentElement, { childList: true, subtree: true });
 })();
