@@ -11,6 +11,12 @@ const json = (data: unknown, status = 200) => new Response(JSON.stringify(data),
 const clean = (value: unknown, max = 500) => String(value ?? "").trim().slice(0, max);
 const memberNoOf = (row: Row) => clean(row.memberNo || row.rosterMemberNo || row.member_no, 100).toUpperCase();
 const lineUidOf = (row: Row) => clean(row.lineUserId || row.LINE_user_id || row.uid || row.lineUid || row.line_user_id, 256);
+const normalizedSearch = (value: unknown) => clean(value, 240).toLocaleLowerCase().replace(/\s+/g, "");
+const normalizedPhone = (value: unknown) => {
+  let phone = clean(value, 60).replace(/[^0-9+]/g, "");
+  if (phone.startsWith("+886")) phone = `0${phone.slice(4)}`;
+  return phone.replace(/\D/g, "");
+};
 
 function loginAllowed(row: Row) {
   if ([row.loginAccess, row.loginAllowed, row.allowLogin, row.canLogin, row.adminAccess].some((value) => value === true)) return true;
@@ -45,6 +51,97 @@ async function writeState(env: Env, data: Record<string, unknown>) {
 function normalizeType(value: unknown): "association" | "vendor" | "" {
   const type = clean(value, 30).toLowerCase();
   return type === "association" || type === "vendor" ? type : "";
+}
+
+function rosterRows(data: Record<string, unknown>, type: "association" | "vendor"): Row[] {
+  return Array.isArray(data[type])
+    ? (data[type] as unknown[]).filter((row): row is Row => Boolean(row) && typeof row === "object" && !Array.isArray(row))
+    : [];
+}
+
+function rosterNameOf(row: Row, type: "association" | "vendor") {
+  return type === "association"
+    ? clean(row.name || row.rosterName || row.memberName || row.displayName, 240)
+    : clean(row.companyName || row.company || row.name || row.rosterName || row.displayName, 240);
+}
+
+function rosterPhoneOf(row: Row) {
+  return clean(row.phone || row.mobile || row.tel || row.telephone || row.contactPhone, 60);
+}
+
+function rosterBirthdayOf(row: Row) {
+  return clean(row.birthday || row.birthDate || row.birth_date || row["生日"], 30);
+}
+
+function internalRosterRequest(request: Request) {
+  return new URL(request.url).hostname === "tdea-roster.internal";
+}
+
+function lookupMatch(row: Row, type: "association" | "vendor") {
+  return {
+    memberNumber: memberNoOf(row),
+    rosterName: rosterNameOf(row, type),
+    source: MANAGER_KEY,
+    phone: rosterPhoneOf(row)
+  };
+}
+
+async function handleMemberNumberLookup(request: Request, env: Env) {
+  if (!internalRosterRequest(request)) return json({ success: false, message: "Not found" }, 404);
+  const input = await request.json().catch(() => ({})) as Row;
+  const type = normalizeType(input.memberType);
+  const fullName = clean(input.fullName, 240);
+  if (!type) return json({ success: false, message: "會員類型錯誤" }, 400);
+  if (!fullName) return json({ success: false, message: "請輸入姓名／公司名稱" }, 400);
+
+  const data = await readState(env);
+  const rows = rosterRows(data, type).filter((row) => memberNoOf(row) && rosterNameOf(row, type));
+  const needle = normalizedSearch(fullName);
+  const exact = rows.filter((row) => normalizedSearch(rosterNameOf(row, type)) === needle);
+  let matches = exact;
+  if (!matches.length) matches = rows.filter((row) => normalizedSearch(rosterNameOf(row, type)).includes(needle));
+
+  if (!matches.length) {
+    return json({ success: false, message: `查無「${fullName}」的${type === "association" ? "協會" : "廠商"}會員資料` }, 404);
+  }
+  if (matches.length > 1) {
+    return json({ success: false, message: `找到 ${matches.length} 筆相符資料，請輸入更完整的${type === "association" ? "姓名" : "公司名稱"}` }, 409);
+  }
+
+  return json({ success: true, match: lookupMatch(matches[0], type) });
+}
+
+async function handleMemberLookup(request: Request, env: Env) {
+  if (!internalRosterRequest(request)) return json({ success: false, message: "Not found" }, 404);
+  const input = await request.json().catch(() => ({})) as Row;
+  const type = normalizeType(input.memberType);
+  const memberNumber = clean(input.memberNumber || input.memberNo, 100).toUpperCase();
+  const fullName = clean(input.fullName, 240);
+  if (!type) return json({ success: false, message: "會員類型錯誤" }, 400);
+  if (!memberNumber) return json({ success: false, message: "請提供會員編號" }, 400);
+
+  const data = await readState(env);
+  const row = rosterRows(data, type).find((item) => memberNoOf(item) === memberNumber);
+  if (!row) return json({ success: false, message: `查無會員編號 ${memberNumber}` }, 404);
+
+  const rosterName = rosterNameOf(row, type);
+  if (fullName && normalizedSearch(rosterName) !== normalizedSearch(fullName)) {
+    return json({ success: false, message: "會員姓名／公司名稱與名冊不符" }, 409);
+  }
+
+  const requestPhone = normalizedPhone(input.phone);
+  const rosterPhone = normalizedPhone(rosterPhoneOf(row));
+  if (requestPhone && rosterPhone && requestPhone !== rosterPhone) {
+    return json({ success: false, message: "會員電話與名冊不符" }, 409);
+  }
+
+  const requestBirthday = clean(input.birthday, 30).replace(/[^0-9]/g, "");
+  const rosterBirthday = rosterBirthdayOf(row).replace(/[^0-9]/g, "");
+  if (requestBirthday && rosterBirthday && requestBirthday !== rosterBirthday) {
+    return json({ success: false, message: "會員生日與名冊不符" }, 409);
+  }
+
+  return json({ success: true, match: lookupMatch(row, type) });
 }
 
 function normalizeMember(input: Row, type: "association" | "vendor") {
@@ -90,9 +187,7 @@ async function handleMemberCrud(request: Request, env: Env, ctx: ExecutionContex
   if (!type) return json({ success: false, message: "會員類型錯誤" }, 400);
 
   const data = await readState(env);
-  const rows = Array.isArray(data[type])
-    ? (data[type] as unknown[]).filter((row): row is Row => Boolean(row) && typeof row === "object" && !Array.isArray(row))
-    : [];
+  const rows = rosterRows(data, type);
 
   if (request.method === "POST") {
     const member = normalizeMember(input, type);
@@ -140,6 +235,14 @@ async function handleMemberCrud(request: Request, env: Env, ctx: ExecutionContex
 export default {
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
     const url = new URL(request.url);
+    if (request.method === "POST" && url.pathname === "/api/internal/tdea-design/member-number-lookup") {
+      try { return await handleMemberNumberLookup(request, env); }
+      catch (error) { return json({ success: false, message: error instanceof Error ? error.message : String(error) }, 500); }
+    }
+    if (request.method === "POST" && url.pathname === "/api/internal/tdea-design/member-lookup") {
+      try { return await handleMemberLookup(request, env); }
+      catch (error) { return json({ success: false, message: error instanceof Error ? error.message : String(error) }, 500); }
+    }
     if (request.method === "GET" && url.pathname === "/api/internal/tdea-design/admin-subjects") {
       try { return await internalAdminSubjects(request, env); }
       catch (error) { return json({ success: false, message: error instanceof Error ? error.message : String(error) }, 500); }
