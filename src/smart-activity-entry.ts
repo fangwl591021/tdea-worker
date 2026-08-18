@@ -1,5 +1,5 @@
 import app from "./card-ocr-legacy-entry";
-import { analyzeSmartActivity, type SmartActivityEnv } from "./smart-activity-analyzer";
+import { analyzeSmartActivity, type SmartActivityEnv } from "./smart-activity-ocr-first";
 
 type Env = SmartActivityEnv & { [key: string]: unknown };
 
@@ -40,7 +40,7 @@ export default {
       const posterDataUrl = String(input.posterDataUrl || "").trim();
       const text = String(input.text || "").trim();
       const analysis = await analyzeSmartActivity(env, posterDataUrl, text);
-      return json({ success: true, data: analysis, providerUsed: analysis.providerUsed, modelUsed: analysis.modelUsed, fallbackUsed: analysis.fallbackUsed });
+      return json({ success: true, data: analysis, ocrText: analysis.ocrText, providerUsed: analysis.providerUsed, modelUsed: analysis.modelUsed, fallbackUsed: analysis.fallbackUsed });
     } catch (error) {
       const message = error instanceof Error ? error.message : "智能活動分析失敗";
       return json({ success: false, message, error: message }, 500);
