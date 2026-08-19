@@ -37,7 +37,7 @@
     "push-manager.js?v=push6",
     "calendar-manager.js?v=calendar3",
     "monthly-activity.js?v=monthly-add-sync1",
-    "native-form.js?v=registration-quick1",
+    "native-form.js?v=registration-options2",
     "liff-detail.js?v=liff-detail14",
     "personal-message.js?v=pm4",
     "keyword-extra.js?v=kw2",
@@ -158,7 +158,7 @@
     if (params.has("personalMessages")) return ["personal-message.js?v=pm4"];
     if (params.has("memberHome")) return ["member-home.js?v=home5"];
     if (params.has("checkinModule")) return ["checkin-module.js?v=identity1"];
-    return ["native-form.js?v=registration-quick1"];
+    return ["native-form.js?v=registration-options2"];
   }
 
   function loadScript(src) {
