@@ -80,6 +80,12 @@
     node.style.color = error ? "#b42318" : "#027a48";
   }
 
+  function sameOptions(expected, actual) {
+    const left = (Array.isArray(expected) ? expected : []).map(clean).filter(Boolean);
+    const right = (Array.isArray(actual) ? actual : []).map(clean).filter(Boolean);
+    return left.length === right.length && left.every((value, index) => value === right[index]);
+  }
+
   async function sync(form) {
     if (!form || form.id !== "drawer-activity") return;
     const fields = collectFields(form);
@@ -93,7 +99,7 @@
     try {
       const response = await nativeFetch(`/api/native-forms/${encodeURIComponent(formId)}/direct-fields`, {
         method: "PUT",
-        headers: headers({ "content-type": "application/json" }),
+        headers: headers({ "content-type":"application/json" }),
         body: JSON.stringify({ activityId, activityNo, formId, fields })
       });
       const result = await response.json().catch(() => ({}));
@@ -109,10 +115,19 @@
         : Array.isArray(verified?.data?.form?.fields)
           ? verified.data.form.fields
           : [];
-      const savedLabels = new Set(savedFields.map((field) => clean(field?.label)));
-      const missing = fields.filter((field) => !savedLabels.has(field.label));
+      const missing = [];
+      const optionMismatch = [];
+      for (const field of fields) {
+        const saved = savedFields.find((item) => clean(item?.label) === field.label);
+        if (!saved) {
+          missing.push(field);
+          continue;
+        }
+        if (field.options?.length && !sameOptions(field.options, saved.options)) optionMismatch.push(field);
+      }
       if (missing.length) throw new Error("前台報名表仍缺少：" + missing.map((field) => field.label).join("、"));
-      setStatus(form, `自訂題目已同步完成（${fields.length} 題），前台報名表已更新。`);
+      if (optionMismatch.length) throw new Error("前台選項未完整保存：" + optionMismatch.map((field) => field.label).join("、"));
+      setStatus(form, `自訂題目已同步完成（${fields.length} 題），前台報名表與選項已更新。`);
     } catch (error) {
       setStatus(form, error?.message || "自訂題目同步失敗", true);
     }
@@ -121,7 +136,6 @@
   document.addEventListener("submit", (event) => {
     const form = event.target;
     if (!(form instanceof HTMLFormElement) || form.id !== "drawer-activity") return;
-    // 基本活動資料由 fast-save 先存；自訂題目獨立直寫 Native Form，不再依賴舊的循環同步。
     setTimeout(() => sync(form), 150);
   }, true);
 })();
