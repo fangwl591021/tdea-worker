@@ -37,8 +37,13 @@
     });
   }
 
-  function cleanText(value) { return String(value ?? "").trim(); }
-  function fieldLabelKey(field) { return cleanText(field?.label).toLowerCase().replace(/\s+/g, " "); }
+  function cleanText(value) {
+    return String(value ?? "").trim();
+  }
+
+  function fieldLabelKey(field) {
+    return cleanText(field?.label).toLowerCase().replace(/\s+/g, " ");
+  }
 
   async function uploadFile(file, activityId) {
     const body = new FormData();
@@ -81,8 +86,6 @@
     });
     next.id = String(fd.get("id") || base.id || "").trim();
     next.galleryUrls = cleanUrlList(fd.get("galleryUrls") || base.galleryUrls || "");
-    if (!cleanText(next.posterUrl)) next.posterUrl = cleanText(base.posterUrl || base.imageUrl);
-    if (!cleanText(next.imageUrl)) next.imageUrl = cleanText(base.imageUrl || base.posterUrl);
     if (next.posterUrl) next.imageUrl = next.posterUrl;
     return next;
   }
@@ -100,7 +103,9 @@
       const label = cleanText(row.querySelector("[name='customLabel']")?.value);
       if (!label) return null;
       const type = cleanText(row.querySelector("[name='customType']")?.value || "text");
-      const options = [...row.querySelectorAll("[name='customOption']")].map((input) => cleanText(input.value)).filter(Boolean);
+      const options = [...row.querySelectorAll("[name='customOption']")]
+        .map((input) => cleanText(input.value))
+        .filter(Boolean);
       return {
         key: preserveFieldKey(label, canonicalFields, `custom_${index + 1}`),
         label,
@@ -119,7 +124,14 @@
       const startTime = cleanText(row.querySelector("[name='sessionTime']")?.value);
       const capacity = Number(row.querySelector("[name='sessionCapacity']")?.value || 0) || 0;
       const previous = canonicalSessions[index] || {};
-      return { ...previous, id: cleanText(previous.id) || `session_${index + 1}`, name, startTime, capacity, status: cleanText(previous.status) || "open" };
+      return {
+        ...previous,
+        id: cleanText(previous.id) || `session_${index + 1}`,
+        name,
+        startTime,
+        capacity,
+        status: cleanText(previous.status) || "open"
+      };
     }).filter((session) => session.name);
   }
 
@@ -137,19 +149,28 @@
   }
 
   function settingsFromForm(form, canonical) {
-    const live = form.__tdeaRegistrationSettings && typeof form.__tdeaRegistrationSettings === "object" ? form.__tdeaRegistrationSettings : {};
+    const live = form.__tdeaRegistrationSettings && typeof form.__tdeaRegistrationSettings === "object"
+      ? form.__tdeaRegistrationSettings
+      : {};
     const previous = canonical?.form?.settings && typeof canonical.form.settings === "object" ? canonical.form.settings : {};
     const canonicalFields = Array.isArray(canonical?.form?.fields) ? canonical.form.fields : [];
     const canonicalSessions = Array.isArray(canonical?.form?.sessions) ? canonical.form.sessions : [];
     const settings = { ...previous, ...live };
+
     const liveFields = Array.isArray(live.fields) ? live.fields : [];
-    const systemFields = (liveFields.length ? liveFields : canonicalFields).filter((field) => systemFieldKeys.has(cleanText(field?.key)));
+    const systemFields = (liveFields.length ? liveFields : canonicalFields)
+      .filter((field) => systemFieldKeys.has(cleanText(field?.key)));
+
     const domCustomFields = collectStructuredCustomFields(form, canonicalFields);
-    const fallbackCustomFields = Array.isArray(live.customFields) ? live.customFields : canonicalFields.filter((field) => !systemFieldKeys.has(cleanText(field?.key)));
+    const fallbackCustomFields = Array.isArray(live.customFields)
+      ? live.customFields
+      : canonicalFields.filter((field) => !systemFieldKeys.has(cleanText(field?.key)));
     const customFields = domCustomFields ?? fallbackCustomFields;
+
     const fields = dedupeByLabelPreferLast([...systemFields, ...customFields]);
     const domSessions = collectSessionsFromDom(form, canonicalSessions);
     const sessions = domSessions ?? (Array.isArray(live.sessions) ? live.sessions : canonicalSessions);
+
     settings.fields = fields;
     settings.customFields = customFields;
     settings.sessions = sessions;
@@ -159,6 +180,7 @@
   document.addEventListener("submit", async (event) => {
     const form = event.target;
     if (!(form instanceof HTMLFormElement) || form.id !== "drawer-activity") return;
+
     event.preventDefault();
     event.stopImmediatePropagation();
     if (form.dataset.canonicalSaving === "true") return;
@@ -166,18 +188,21 @@
     const button = form.querySelector("button[type='submit']");
     const oldText = button?.textContent || "儲存";
     if (button) { button.disabled = true; button.textContent = "儲存中..."; }
+
     try {
       const id = String(form.querySelector("[name='id']")?.value || "").trim();
       if (!id) throw new Error("缺少活動 ID");
       setStatus(form, "讀取正式資料...");
       const canonical = await currentCanonical(id);
       const activity = activityFromForm(form, canonical.activity || {});
+
       const posterFile = form.querySelector("[data-activity-poster-file]")?.files?.[0];
       if (posterFile) {
         setStatus(form, "主圖上傳中...");
         activity.posterUrl = await uploadFile(posterFile, id);
         activity.imageUrl = activity.posterUrl;
       }
+
       const galleryFiles = [...(form.querySelector("[data-activity-gallery-file]")?.files || [])];
       if (galleryFiles.length) {
         const uploaded = [];
@@ -188,11 +213,13 @@
         }
         activity.galleryUrls = cleanUrlList([activity.galleryUrls, uploaded]);
       }
+
       const { settings, fields, sessions } = settingsFromForm(form, canonical);
       settings.registrationMode = activity.registrationMode || settings.registrationMode || "form";
       if (activity.posterUrl) settings.posterUrl = activity.posterUrl;
       if (activity.galleryUrls) settings.galleryUrls = activity.galleryUrls;
       if (activity.youtubeUrl) settings.youtubeUrl = activity.youtubeUrl;
+
       setStatus(form, `寫入正式活動資料（${fields.length} 個欄位）...`);
       const response = await fetch(`${api}/api/admin-activities/${encodeURIComponent(id)}/canonical`, {
         method:"PUT",
@@ -201,6 +228,7 @@
       });
       const result = await response.json().catch(() => ({}));
       if (!response.ok || !result.success) throw new Error(result.message || "正式資料儲存失敗");
+
       const verify = await currentCanonical(id);
       if (!verify?.form || !Array.isArray(verify.form.fields)) throw new Error("儲存後驗證失敗");
       const expectedByLabel = new Map(fields.map((field) => [fieldLabelKey(field), field]));
@@ -209,7 +237,9 @@
         if (!expected) continue;
         const wanted = Array.isArray(expected.options) ? expected.options.map(cleanText) : [];
         const got = Array.isArray(saved.options) ? saved.options.map(cleanText) : [];
-        if (wanted.join("\u0001") !== got.join("\u0001")) throw new Error(`欄位「${saved.label}」儲存驗證失敗`);
+        if (wanted.join("\u0001") !== got.join("\u0001")) {
+          throw new Error(`欄位「${saved.label}」儲存驗證失敗`);
+        }
       }
       form.__tdeaRegistrationSettings = { ...(verify.form.settings || {}), fields:verify.form.fields, sessions:verify.form.sessions || [] };
       const posterInput = form.querySelector("[name='posterUrl']");
