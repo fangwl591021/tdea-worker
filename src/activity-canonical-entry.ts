@@ -4,6 +4,7 @@ type Env = { ASSETS_BUCKET?: R2Bucket; [key:string]: unknown };
 type Row = Record<string, any>;
 
 const clean = (value: unknown, max = 1000) => String(value ?? "").trim().slice(0, max);
+const systemKeys = new Set(["name","phone","email","company","memberNo","note","gender","isMember","meal","imageUpload","participantUnit"]);
 const cors = {
   "access-control-allow-origin": "*",
   "access-control-allow-methods": "GET,PUT,OPTIONS",
@@ -56,6 +57,10 @@ function dedupeFields(fields: unknown): Row[] {
   return out;
 }
 
+function customOnly(fields: Row[]) {
+  return fields.filter((field) => !systemKeys.has(clean(field.key, 160)));
+}
+
 async function getActivity(request: Request, env: Env, ctx: ExecutionContext, activityId: string) {
   const response = await app.fetch(new Request(new URL("/api/activities", request.url), { headers:request.headers, method:"GET" }), env as never, ctx);
   const result = await response.json().catch(() => ({})) as Row;
@@ -75,9 +80,10 @@ async function saveCanonical(request: Request, env: Env, ctx: ExecutionContext, 
   if (!currentForm) return json({ success:false, message:"找不到正式報名表" }, 404);
 
   const fields = dedupeFields(input.fields ?? incomingSettings.fields ?? currentForm.fields ?? []);
+  const customFields = customOnly(fields);
   const sessions = Array.isArray(input.sessions) ? input.sessions : Array.isArray(incomingSettings.sessions) ? incomingSettings.sessions : (Array.isArray(currentForm.sessions) ? currentForm.sessions : []);
   const nextActivity = { ...currentActivity, ...incomingActivity, id: clean(currentActivity.id || activityId, 160) || activityId };
-  const nextSettings = { ...(currentForm.settings || {}), ...incomingSettings, fields, customFields: fields, sessions };
+  const nextSettings = { ...(currentForm.settings || {}), ...incomingSettings, fields, customFields, sessions };
   const nextForm: Row = {
     ...currentForm,
     activity: { ...(currentForm.activity || {}), ...nextActivity },
@@ -107,7 +113,7 @@ async function saveCanonical(request: Request, env: Env, ctx: ExecutionContext, 
   manager.updatedAt = new Date().toISOString();
   await putJson(env, "manager/state.json", manager);
 
-  return json({ success:true, activity:nextActivity, form:nextForm, formId, fields, sessions, updatedAt:nextForm.updatedAt });
+  return json({ success:true, activity:nextActivity, form:nextForm, formId, fields, customFields, sessions, updatedAt:nextForm.updatedAt });
 }
 
 async function getCanonical(request: Request, env: Env, ctx: ExecutionContext, activityId: string) {
