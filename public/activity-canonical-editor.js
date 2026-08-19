@@ -1,6 +1,7 @@
 (() => {
   const api = "https://tdeawork.fangwl591021.workers.dev";
   const numericKeys = new Set(["capacity","checkinPoints","feePoints","paymentAmount","reg","check"]);
+  const systemFieldKeys = new Set(["name","phone","email","company","memberNo","note","gender","isMember","meal","imageUpload","participantUnit"]);
   const activityKeys = [
     "id","templateMode","name","type","courseTime","deadline","capacity","checkinPoints","feePoints","paymentAmount",
     "remittanceInfo","registrationMode","reg","check","status","formUrl","detailText","posterUrl","galleryUrls","nativeFormUrl","youtubeUrl"
@@ -93,8 +94,11 @@
     const sessions = Array.isArray(live.sessions)
       ? live.sessions
       : (Array.isArray(canonical?.form?.sessions) ? canonical.form.sessions : []);
+    const customFields = Array.isArray(live.customFields)
+      ? live.customFields
+      : fields.filter((field) => !systemFieldKeys.has(String(field?.key || "").trim()));
     settings.fields = fields;
-    settings.customFields = fields;
+    settings.customFields = customFields;
     settings.sessions = sessions;
     return { settings, fields, sessions };
   }
