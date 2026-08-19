@@ -1,8 +1,4 @@
 (() => {
-  const PUBLIC_KEYS = ["cardCollection","register","query","memberQr","calendar","checkin","redeem","redeemSession","monthlyDetail","monthlyShare","personalMessages","close","marquee","motherRegister","memberHome","checkinModule"];
-  const params = new URLSearchParams(location.search);
-  if (PUBLIC_KEYS.some((key) => params.has(key))) return;
-
   let latestAnalysis = null;
   let lastResult = null;
   let saving = false;
@@ -10,6 +6,11 @@
   const storedValue=(...keys)=>{for(const key of keys){const value=sessionStorage.getItem(key)||localStorage.getItem(key)||"";if(String(value).trim())return String(value).trim();}return "";};
   const adminHeaders=(extra={})=>{const h={...extra};const email=storedValue("tdea-admin-email");const memberNo=storedValue("tdea-admin-member-no","tdea-member-no");const uid=storedValue("tdea-admin-line-user-id","tdea-line-user-id","lineUserId");if(email)h["x-admin-email"]=email;if(memberNo)h["x-admin-member-no"]=memberNo;if(uid)h["x-line-user-id"]=uid;return h;};
   const esc=(v)=>String(v??"").replace(/[&<>"']/g,ch=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#039;"}[ch]));
+
+  function smartHost(){
+    const generate=document.querySelector("[data-smart-generate]");
+    return document.querySelector(".smart-ai-section") || generate?.closest(".smart-builder-section") || generate?.parentElement || null;
+  }
 
   const originalFetch=window.fetch.bind(window);
   window.fetch=async(resource,options={})=>{
@@ -33,7 +34,7 @@
   function statusBox(){
     let box=document.querySelector("[data-smart-publish-status]");
     if(box)return box;
-    const host=document.querySelector(".smart-ai-section");if(!host)return null;
+    const host=smartHost();if(!host)return null;
     box=document.createElement("div");box.dataset.smartPublishStatus="";box.style.marginTop="10px";host.appendChild(box);return box;
   }
   function showStatus(message,type="ok"){
@@ -63,7 +64,7 @@
   }
 
   function ensureControls(){
-    const host=document.querySelector(".smart-ai-section");if(!host)return;
+    const host=smartHost();if(!host)return;
     let row=host.querySelector("[data-smart-publish-actions]");
     if(!row){
       row=document.createElement("div");row.dataset.smartPublishActions="";row.style.cssText="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:12px";
@@ -73,10 +74,12 @@
       row.querySelector("[data-smart-publish]")?.addEventListener("click",()=>save("published"));
     }
     row.querySelectorAll("button").forEach(button=>{button.disabled=saving||!latestAnalysis;button.style.opacity=button.disabled?".55":"1";});
-    const note=host.querySelector("[data-smart-publish-note]");
-    if(!note){const p=document.createElement("p");p.dataset.smartPublishNote="";p.textContent="AI 生成後可先存草稿；「確認並上架」會建立正式活動、Native Form 與報名連結。";row.insertAdjacentElement("afterend",p);}
+    if(!host.querySelector("[data-smart-publish-note]")){
+      const p=document.createElement("p");p.dataset.smartPublishNote="";p.textContent="AI 生成後可先存草稿；「確認並上架」會建立正式活動、Native Form 與報名連結。";row.insertAdjacentElement("afterend",p);
+    }
   }
 
   new MutationObserver(ensureControls).observe(document.documentElement,{childList:true,subtree:true});
+  setInterval(ensureControls,1000);
   ensureControls();
 })();
