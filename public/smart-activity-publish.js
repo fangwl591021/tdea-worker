@@ -8,8 +8,12 @@
   const esc=(v)=>String(v??"").replace(/[&<>"']/g,ch=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#039;"}[ch]));
 
   function smartHost(){
+    const staged=document.querySelector("[data-smart-final-section]") || document.querySelector("[data-smart-finalize]")?.closest(".smart-builder-section");
+    if(staged) return staged;
+    const ai=document.querySelector(".smart-ai-section");
+    if(ai && getComputedStyle(ai).display!=="none") return ai;
     const generate=document.querySelector("[data-smart-generate]");
-    return document.querySelector(".smart-ai-section") || generate?.closest(".smart-builder-section") || generate?.parentElement || null;
+    return generate?.closest(".smart-builder-section") || generate?.parentElement || null;
   }
 
   const originalFetch=window.fetch.bind(window);
@@ -33,7 +37,8 @@
 
   function statusBox(){
     let box=document.querySelector("[data-smart-publish-status]");
-    if(box)return box;
+    if(box && smartHost()?.contains(box)) return box;
+    if(box) box.remove();
     const host=smartHost();if(!host)return null;
     box=document.createElement("div");box.dataset.smartPublishStatus="";box.style.marginTop="10px";host.appendChild(box);return box;
   }
@@ -44,8 +49,8 @@
 
   async function save(mode){
     if(saving)return;
-    if(!latestAnalysis){showStatus("請先完成 AI 生成，再儲存或上架。","error");return;}
-    if(!String(latestAnalysis.title||"").trim()){showStatus("活動名稱尚未完成，請重新 AI 生成。","error");return;}
+    if(!latestAnalysis){showStatus("請先按『產生報名欄位』，完成後才能儲存或上架。","error");return;}
+    if(!String(latestAnalysis.title||"").trim()){showStatus("活動名稱尚未完成，請重新產生報名欄位。","error");return;}
     saving=true;ensureControls();showStatus(mode==="draft"?"正在儲存草稿…":"正在建立正式活動與報名表…");
     try{
       const response=await originalFetch("/api/smart-activities/publish",{method:"POST",headers:adminHeaders({"content-type":"application/json"}),body:JSON.stringify(currentPayload(mode))});
@@ -65,6 +70,8 @@
 
   function ensureControls(){
     const host=smartHost();if(!host)return;
+    document.querySelectorAll("[data-smart-publish-actions]").forEach(node=>{if(!host.contains(node))node.remove();});
+    document.querySelectorAll("[data-smart-publish-note]").forEach(node=>{if(!host.contains(node))node.remove();});
     let row=host.querySelector("[data-smart-publish-actions]");
     if(!row){
       row=document.createElement("div");row.dataset.smartPublishActions="";row.style.cssText="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:12px";
@@ -75,7 +82,7 @@
     }
     row.querySelectorAll("button").forEach(button=>{button.disabled=saving||!latestAnalysis;button.style.opacity=button.disabled?".55":"1";});
     if(!host.querySelector("[data-smart-publish-note]")){
-      const p=document.createElement("p");p.dataset.smartPublishNote="";p.textContent="AI 生成後可先存草稿；「確認並上架」會建立正式活動、Native Form 與報名連結。";row.insertAdjacentElement("afterend",p);
+      const p=document.createElement("p");p.dataset.smartPublishNote="";p.style.cssText="margin:8px 0 0;color:#667085;font-size:11px;text-align:center";p.textContent="先完成「產生報名欄位」；完成後可儲存草稿或確認並上架。";row.insertAdjacentElement("afterend",p);
     }
   }
 
