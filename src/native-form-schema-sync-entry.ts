@@ -18,6 +18,10 @@ function normalizeField(field: Row, index: number) {
   };
 }
 
+function isGenderLabel(value: unknown) {
+  return ["性別", "gender"].includes(clean(value, 80).toLowerCase());
+}
+
 async function syncNativeFormSchema(env: Env, formId: string) {
   if (!env.ASSETS_BUCKET || !formId) return false;
   const formKey = `forms/native/${encodeURIComponent(formId)}.json`;
@@ -51,7 +55,14 @@ async function syncNativeFormSchema(env: Env, formId: string) {
     nextFields.push(field);
   };
 
-  if (clean(settings.genderField) !== "none" && clean(settings.genderField)) {
+  const customFields = (Array.isArray(settings.customFields) ? settings.customFields : [])
+    .map((field: unknown, index: number) => field && typeof field === "object" ? normalizeField(field as Row, index) : null)
+    .filter((field): field is Row => Boolean(field));
+  const customGenderField = customFields.find((field) => isGenderLabel(field.label));
+
+  // 若管理者把「性別」當作自訂題目編輯，必須以自訂題目為準。
+  // 舊邏輯會在每次 GET Native Form 時重新塞回固定「男性/女性」，導致「其他」等新增選項被洗掉。
+  if (!customGenderField && clean(settings.genderField) !== "none" && clean(settings.genderField)) {
     ensure({ key:"gender", label:"性別", type:"radio", options:["男性","女性"], required: clean(settings.genderField) === "required" });
   }
   if (clean(settings.memberField) !== "none" && !["", "login"].includes(clean(settings.memberField))) {
@@ -64,11 +75,7 @@ async function syncNativeFormSchema(env: Env, formId: string) {
     ensure({ key:"imageUpload", label:"附件上傳", type:"file", required:false });
   }
 
-  const customFields = Array.isArray(settings.customFields) ? settings.customFields : [];
-  customFields.forEach((field: unknown, index: number) => {
-    if (!field || typeof field !== "object") return;
-    const normalized = normalizeField(field as Row, index);
-    // 管理端目前以 custom_1, custom_2... 為正式順序；舊 snapshot 的 custom 題目全部由最新設定取代。
+  customFields.forEach((normalized) => {
     ensure(normalized);
   });
 
