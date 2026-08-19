@@ -37,6 +37,14 @@
     });
   }
 
+  function cleanText(value) {
+    return String(value ?? "").trim();
+  }
+
+  function fieldLabelKey(field) {
+    return cleanText(field?.label).toLowerCase().replace(/\s+/g, " ");
+  }
+
   async function uploadFile(file, activityId) {
     const body = new FormData();
     body.append("file", file);
@@ -82,21 +90,87 @@
     return next;
   }
 
+  function preserveFieldKey(label, canonicalFields, fallback) {
+    const wanted = cleanText(label).toLowerCase().replace(/\s+/g, " ");
+    const found = canonicalFields.find((field) => fieldLabelKey(field) === wanted);
+    return cleanText(found?.key) || fallback;
+  }
+
+  function collectStructuredCustomFields(form, canonicalFields) {
+    const rows = [...form.querySelectorAll("[data-custom-field]")];
+    if (!rows.length) return null;
+    return rows.map((row, index) => {
+      const label = cleanText(row.querySelector("[name='customLabel']")?.value);
+      if (!label) return null;
+      const type = cleanText(row.querySelector("[name='customType']")?.value || "text");
+      const options = [...row.querySelectorAll("[name='customOption']")]
+        .map((input) => cleanText(input.value))
+        .filter(Boolean);
+      return {
+        key: preserveFieldKey(label, canonicalFields, `custom_${index + 1}`),
+        label,
+        type,
+        required: Boolean(row.querySelector("[name='customRequired']")?.checked),
+        ...(options.length ? { options } : {})
+      };
+    }).filter(Boolean);
+  }
+
+  function collectSessionsFromDom(form, canonicalSessions) {
+    const rows = [...form.querySelectorAll("[data-session-row]")];
+    if (!rows.length) return null;
+    return rows.map((row, index) => {
+      const name = cleanText(row.querySelector("[name='sessionName']")?.value);
+      const startTime = cleanText(row.querySelector("[name='sessionTime']")?.value);
+      const capacity = Number(row.querySelector("[name='sessionCapacity']")?.value || 0) || 0;
+      const previous = canonicalSessions[index] || {};
+      return {
+        ...previous,
+        id: cleanText(previous.id) || `session_${index + 1}`,
+        name,
+        startTime,
+        capacity,
+        status: cleanText(previous.status) || "open"
+      };
+    }).filter((session) => session.name);
+  }
+
+  function dedupeByLabelPreferLast(fields) {
+    const seen = new Set();
+    const out = [];
+    for (let i = fields.length - 1; i >= 0; i -= 1) {
+      const field = fields[i];
+      const identity = fieldLabelKey(field) || cleanText(field?.key);
+      if (!identity || seen.has(identity)) continue;
+      seen.add(identity);
+      out.push(field);
+    }
+    return out.reverse();
+  }
+
   function settingsFromForm(form, canonical) {
     const live = form.__tdeaRegistrationSettings && typeof form.__tdeaRegistrationSettings === "object"
       ? form.__tdeaRegistrationSettings
       : {};
     const previous = canonical?.form?.settings && typeof canonical.form.settings === "object" ? canonical.form.settings : {};
+    const canonicalFields = Array.isArray(canonical?.form?.fields) ? canonical.form.fields : [];
+    const canonicalSessions = Array.isArray(canonical?.form?.sessions) ? canonical.form.sessions : [];
     const settings = { ...previous, ...live };
-    const fields = Array.isArray(live.fields) && live.fields.length
-      ? live.fields
-      : (Array.isArray(canonical?.form?.fields) ? canonical.form.fields : []);
-    const sessions = Array.isArray(live.sessions)
-      ? live.sessions
-      : (Array.isArray(canonical?.form?.sessions) ? canonical.form.sessions : []);
-    const customFields = Array.isArray(live.customFields)
+
+    const liveFields = Array.isArray(live.fields) ? live.fields : [];
+    const systemFields = (liveFields.length ? liveFields : canonicalFields)
+      .filter((field) => systemFieldKeys.has(cleanText(field?.key)));
+
+    const domCustomFields = collectStructuredCustomFields(form, canonicalFields);
+    const fallbackCustomFields = Array.isArray(live.customFields)
       ? live.customFields
-      : fields.filter((field) => !systemFieldKeys.has(String(field?.key || "").trim()));
+      : canonicalFields.filter((field) => !systemFieldKeys.has(cleanText(field?.key)));
+    const customFields = domCustomFields ?? fallbackCustomFields;
+
+    const fields = dedupeByLabelPreferLast([...systemFields, ...customFields]);
+    const domSessions = collectSessionsFromDom(form, canonicalSessions);
+    const sessions = domSessions ?? (Array.isArray(live.sessions) ? live.sessions : canonicalSessions);
+
     settings.fields = fields;
     settings.customFields = customFields;
     settings.sessions = sessions;
@@ -146,7 +220,7 @@
       if (activity.galleryUrls) settings.galleryUrls = activity.galleryUrls;
       if (activity.youtubeUrl) settings.youtubeUrl = activity.youtubeUrl;
 
-      setStatus(form, "寫入正式活動資料...");
+      setStatus(form, `寫入正式活動資料（${fields.length} 個欄位）...`);
       const response = await fetch(`${api}/api/admin-activities/${encodeURIComponent(id)}/canonical`, {
         method:"PUT",
         headers:headers({ "content-type":"application/json" }),
@@ -157,6 +231,16 @@
 
       const verify = await currentCanonical(id);
       if (!verify?.form || !Array.isArray(verify.form.fields)) throw new Error("儲存後驗證失敗");
+      const expectedByLabel = new Map(fields.map((field) => [fieldLabelKey(field), field]));
+      for (const saved of verify.form.fields) {
+        const expected = expectedByLabel.get(fieldLabelKey(saved));
+        if (!expected) continue;
+        const wanted = Array.isArray(expected.options) ? expected.options.map(cleanText) : [];
+        const got = Array.isArray(saved.options) ? saved.options.map(cleanText) : [];
+        if (wanted.join("\u0001") !== got.join("\u0001")) {
+          throw new Error(`欄位「${saved.label}」儲存驗證失敗`);
+        }
+      }
       form.__tdeaRegistrationSettings = { ...(verify.form.settings || {}), fields:verify.form.fields, sessions:verify.form.sessions || [] };
       const posterInput = form.querySelector("[name='posterUrl']");
       if (posterInput && verify.activity?.posterUrl) posterInput.value = verify.activity.posterUrl;
