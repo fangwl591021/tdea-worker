@@ -27,6 +27,7 @@
     "lottery.js?v=lottery4",
     "activity-types.js?v=types4",
     "form-builder.js?v=form17",
+    "activity-canonical-editor.js?v=canonical1",
     "google-form-engine.js?v=gform17",
     "activity-detail.js?v=activity-detail7",
     "uid-column.js?v=uid21",
@@ -60,9 +61,7 @@
         decoded.forEach((value, key) => {
           if (!params.has(key)) params.set(key, value);
         });
-      } catch (_error) {
-        // LINE may omit liff.state outside LIFF. Ignore silently.
-      }
+      } catch (_error) {}
     }
     return params;
   }
@@ -100,9 +99,7 @@
         localStorage.removeItem(key);
         sessionStorage.removeItem(key);
       }
-    } catch (_error) {
-      // Storage can be blocked in embedded browsers. App still works this turn via session headers.
-    }
+    } catch (_error) {}
   }
 
   function cachedSession() {
@@ -332,7 +329,3 @@
 
   boot().catch((error) => renderLogin(error.message || "入口載入失敗"));
 })();
-
-
-
-
