@@ -128,7 +128,8 @@
       const d = Object.fromEntries(new FormData(form));
       const templateMode = clean(d.templateMode) || "custom";
       const registrationMode = clean(d.registrationMode) || (templateMode === "mode1_vendor_visit" ? "member_login" : "form");
-      const id = `id-${crypto.randomUUID()}`;
+      const id = clean(form.dataset.canonicalActivityId) || `id-${crypto.randomUUID()}`;
+      form.dataset.canonicalActivityId = id;
       const activity = {
         id,
         name:clean(d.name), templateMode, type:clean(d.type), typeLabel:clean(d.type),
@@ -172,6 +173,7 @@
       if (!response.ok || !result.success) throw new Error(result.message || "活動建立失敗");
       if (!result.form || !Array.isArray(result.form.fields)) throw new Error("活動建立後報名表驗證失敗");
       notify(`活動已建立，報名表 ${result.form.fields.length} 個欄位已同步`);
+      delete form.dataset.canonicalActivityId;
       form.reset();
       setTimeout(() => location.reload(), 500);
     } catch (error) {
