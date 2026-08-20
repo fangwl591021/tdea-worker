@@ -1467,7 +1467,7 @@ function registrationExcelCell(value: unknown) {
 }
 
 function registrationExcelHeader(value: unknown) {
-  return `<th style="background:#eef2f7;mso-number-format:'\\@'">${esc(value)}</th>`;
+  return `<th style="background:#eef2f7;mso-number-format:'\\@';text-align:center;vertical-align:middle">${esc(value)}</th>`;
 }
 
 async function exportRegistrationsExcel(request: Request, env: Env) {
