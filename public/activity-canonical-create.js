@@ -24,12 +24,10 @@
   function defaultFields(activity) {
     const mode1 = activity.templateMode === "mode1_vendor_visit" || activity.type === "企業參訪" || activity.typeLabel === "企業參訪";
     if (mode1) {
-      if (activity.registrationMode === "member_login") {
-        return [
-          {key:"participantUnit",label:"參加單位名稱",type:"radio",required:true,options:["社團法人台灣設計菁英協會會員","其他"]},
-          {key:"note",label:"備註",type:"paragraph",required:false}
-        ];
-      }
+      if (activity.registrationMode === "member_login") return [
+        {key:"participantUnit",label:"參加單位名稱",type:"radio",required:true,options:["社團法人台灣設計菁英協會會員","其他"]},
+        {key:"note",label:"備註",type:"paragraph",required:false}
+      ];
       return [
         {key:"name",label:"姓名",type:"text",required:true},
         {key:"phone",label:"電話",type:"text",required:true},
@@ -46,6 +44,61 @@
       {key:"memberNo",label:"會員編號",type:"text",required:false},
       {key:"note",label:"備註",type:"paragraph",required:false}
     ];
+  }
+  function collectCustomFields(form) {
+    return [...form.querySelectorAll("[data-custom-field]")].map((row, index) => ({
+      key:`custom_${index + 1}`,
+      label:clean(row.querySelector("[name='customLabel']")?.value),
+      type:clean(row.querySelector("[name='customType']")?.value) || "text",
+      options:[...row.querySelectorAll("[name='customOption']")].map(input => clean(input.value)).filter(Boolean),
+      required:Boolean(row.querySelector("[name='customRequired']")?.checked)
+    })).filter(field => field.label);
+  }
+  function collectSessions(form) {
+    return [...form.querySelectorAll("[data-session-row]")].map((row, index) => ({
+      id:`session_${index + 1}`,
+      name:clean(row.querySelector("[name='sessionName']")?.value),
+      startTime:clean(row.querySelector("[name='sessionTime']")?.value),
+      capacity:Number(row.querySelector("[name='sessionCapacity']")?.value || 0) || 0,
+      status:"open"
+    })).filter(session => session.name);
+  }
+  function liveSettings(form, activity) {
+    const customFields = collectCustomFields(form);
+    const sessions = collectSessions(form);
+    const settings = {
+      posterUrl:clean(form.posterUrl?.value),
+      galleryUrls:cleanUrlList(form.galleryUrls?.value || ""),
+      youtubeUrl:clean(form.youtubeUrl?.value),
+      registrationMode:clean(form.registrationMode?.value) || activity.registrationMode || "form",
+      requireImageUpload:clean(form.requireImageUpload?.value) || "N",
+      genderField:clean(form.genderField?.value) || "none",
+      memberField:clean(form.memberField?.value) || "none",
+      mealField:clean(form.mealField?.value) || "none",
+      sessions,
+      customFields
+    };
+    const base = defaultFields(activity);
+    const note = base.find(field => field.key === "note");
+    const fields = base.filter(field => field.key !== "note");
+    if (settings.genderField !== "none") fields.push({key:"gender",label:"性別",type:"radio",options:["男","女","不便透露"],required:settings.genderField === "required"});
+    if (settings.memberField !== "login" && settings.memberField !== "none") fields.push({key:"isMember",label:"是否為會員",type:"radio",options:["是","否","不確定"],required:settings.memberField === "required"});
+    if (settings.mealField !== "none") fields.push({key:"meal",label:"用餐選項",type:"radio",options:["葷","素"],required:settings.mealField === "required"});
+    if (settings.requireImageUpload === "Y") fields.push({key:"imageUpload",label:"附件上傳",type:"file",required:false});
+    if (note) fields.push(note);
+    fields.push(...customFields);
+    return {...settings, fields};
+  }
+  async function uploadPoster(file, activityId) {
+    if (!(file instanceof File) || !file.size) return null;
+    const body = new FormData();
+    body.append("file", file);
+    body.append("purpose", "posters");
+    body.append("activityId", activityId);
+    const response = await fetch(`${api}/api/uploads`, {method:"POST", headers:headers(), body});
+    const result = await response.json().catch(() => ({}));
+    if (!response.ok || !result.success) throw new Error(result.message || "活動主圖上傳失敗");
+    return result;
   }
   function setButton(form, text, disabled) {
     const button = form.querySelector("button[type='submit']");
@@ -78,21 +131,42 @@
       const id = `id-${crypto.randomUUID()}`;
       const activity = {
         id,
-        name: clean(d.name), templateMode, type:clean(d.type), typeLabel:clean(d.type),
+        name:clean(d.name), templateMode, type:clean(d.type), typeLabel:clean(d.type),
         courseTime:clean(d.courseTime), deadline:clean(d.deadline), capacity:Number(d.capacity || 0),
         checkinPoints:Number(d.checkinPoints || 0), feePoints:Number(d.feePoints || 0), paymentAmount:Number(d.paymentAmount || 0),
         remittanceInfo:clean(d.remittanceInfo), registrationMode, detailText:clean(d.detailText), galleryUrls:cleanUrlList(d.galleryUrls),
         reg:0, check:0, status:clean(d.status) || "下架"
       };
       if (!activity.name) throw new Error("請輸入活動名稱");
-      const liveSettings = form.__tdeaRegistrationSettings && typeof form.__tdeaRegistrationSettings === "object" ? form.__tdeaRegistrationSettings : {};
-      const fields = Array.isArray(liveSettings.fields) && liveSettings.fields.length ? liveSettings.fields : defaultFields(activity);
+
+      const settings = liveSettings(form, activity);
+      const posterFile = form.posterFile?.files?.[0] || null;
+      if (posterFile) {
+        setButton(form, "上傳主圖...", true);
+        const uploaded = await uploadPoster(posterFile, id);
+        if (uploaded?.url) {
+          settings.posterUrl = uploaded.url;
+          activity.posterUrl = uploaded.url;
+          activity.imageUrl = uploaded.url;
+        }
+      } else if (settings.posterUrl) {
+        activity.posterUrl = settings.posterUrl;
+        activity.imageUrl = settings.posterUrl;
+      }
+      activity.galleryUrls = settings.galleryUrls;
+      activity.youtubeUrl = settings.youtubeUrl;
+
+      const fields = settings.fields;
       const customFields = fields.filter(field => !systemKeys.has(clean(field?.key)));
-      const sessions = Array.isArray(liveSettings.sessions) ? liveSettings.sessions : [];
-      const settings = { ...liveSettings, registrationMode, templateMode, fields, customFields, sessions };
+      settings.customFields = customFields;
+      settings.templateMode = templateMode;
+      const sessions = settings.sessions;
+      form.__tdeaRegistrationSettings = settings;
+
+      setButton(form, "建立活動...", true);
       const response = await fetch(`${api}/api/admin-activities/canonical`, {
         method:"POST", headers:headers({"content-type":"application/json"}),
-        body:JSON.stringify({ activity, settings, fields, sessions, formId:id })
+        body:JSON.stringify({activity, settings, fields, sessions, formId:id})
       });
       const result = await response.json().catch(() => ({}));
       if (!response.ok || !result.success) throw new Error(result.message || "活動建立失敗");
