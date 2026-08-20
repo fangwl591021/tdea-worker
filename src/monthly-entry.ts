@@ -3701,7 +3701,10 @@ function pageFromActivity(activity: Record<string, unknown>, order: number): Mon
 async function readEffectiveMonthly(env: Env): Promise<MonthlyConfig> {
   const monthly = await readMonthly(env);
   const managerData = await readManagerData(env);
-  const activities = Array.isArray(managerData?.activities) ? managerData.activities : [];
+  const activitySnapshot = await readActivitySnapshot(env);
+  const activities = Array.isArray(activitySnapshot)
+    ? activitySnapshot
+    : Array.isArray(managerData?.activities) ? managerData.activities : [];
   const manualPages = (monthly.pages || []).filter(isManualMonthlyPage);
   const activityPages = activities
     .filter((item): item is Record<string, unknown> => Boolean(item) && typeof item === "object" && activityStatusIsOnline(item as Record<string, unknown>))
