@@ -5,6 +5,7 @@ type Row = Record<string, any>;
 
 const clean = (value: unknown, max = 1000) => String(value ?? "").trim().slice(0, max);
 const systemKeys = new Set(["name","phone","email","company","memberNo","note","gender","isMember","meal","imageUpload","participantUnit"]);
+const nativeLiffBase = "https://liff.line.me/2005868456-cfANNVou";
 const cors = {
   "access-control-allow-origin": "*",
   "access-control-allow-methods": "GET,POST,PUT,OPTIONS",
@@ -71,7 +72,7 @@ async function createCanonical(request: Request, env: Env, ctx: ExecutionContext
   const sessions = Array.isArray(input.sessions) ? input.sessions : Array.isArray(incomingSettings.sessions) ? incomingSettings.sessions : [];
   const now = new Date().toISOString();
   const formId = clean(input.formId || incomingActivity.nativeFormId || incomingActivity.formId, 160) || id;
-  const formUrl = clean(incomingActivity.nativeFormUrl || incomingActivity.formUrl, 1000) || `${new URL(request.url).origin}/?register=${encodeURIComponent(formId)}`;
+  const formUrl = clean(incomingActivity.nativeFormUrl || incomingActivity.formUrl, 1000) || `${nativeLiffBase}?register=${encodeURIComponent(formId)}`;
   const activity: Row = { ...incomingActivity, id, nativeFormId:formId, nativeFormUrl:formUrl, formUrl, formMode:"native_form", createdAt:clean(incomingActivity.createdAt) || now, updatedAt:now };
   const settings = { ...incomingSettings, fields, customFields, sessions, nativeFormId:formId, nativeFormUrl:formUrl };
   const form: Row = { id:formId, formId, formUrl, activity:{ ...activity }, settings, fields, sessions, createdAt:now, updatedAt:now };
