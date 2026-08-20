@@ -1499,56 +1499,125 @@ async function exportRegistrationsExcel(request: Request, env: Env) {
   const formId = firstClean(activityFormId, rows[0]?.formId, chosenKey);
   const form = formId ? await readNativeForm(env, formId).catch(() => null) : null;
   const fieldLabels = new Map<string, string>();
-  for (const field of form?.fields || []) fieldLabels.set(field.key, firstClean(field.label, field.key));
+  for (const field of form?.fields || []) {
+    fieldLabels.set(clean(field.key), firstClean(field.label, field.key));
+  }
+
   const baseHeaders = [
-    "報名狀態",
     "報名時間",
-    "更新時間",
-    "取消時間",
-    "查詢碼",
-    "LINE UID",
-    "報名來源",
+    "姓名",
     "會員編號",
-    "會員姓名",
-    "場次",
+    "手機",
+    "Email",
+    "性別",
+    "公司／單位",
     "付款狀態",
     "付款金額",
     "匯款末五碼",
-    "付款回報時間",
-    "付款確認時間",
     "核銷狀態",
     "核銷時間"
   ];
-  const answerKeys = [...new Set(rows.flatMap((row) => Object.keys(row.answers || {})))]
-    .filter((key) => !["registrationSource", "memberNo", "memberName", "LINE_user_id", "lineUserId", "line_user_id", "uid", "UID"].includes(key));
-  const headersForAnswers = answerKeys.map((key) => fieldLabels.get(key) || key);
-  const title = firstClean(sourceActivity.name, sourceActivity.activityName, sourceActivity.title, form?.activity?.name, activityId, chosenKey, "TDEA 活動");
+
+  const standardAnswerKeys = new Set([
+    "name", "姓名", "memberName",
+    "memberNo", "會員編號",
+    "phone", "mobile", "tel", "手機", "電話",
+    "email", "Email", "電子郵件",
+    "gender", "sex", "性別",
+    "company", "companyName", "organization", "unit", "participantUnit",
+    "LINE_user_id", "lineUserId", "line_user_id", "uid", "UID",
+    "registrationSource",
+    "registrationIdentityKind",
+    "registrationIdentityKey",
+    "registrationIdentitySource",
+    "motherRegistered",
+    "isMember",
+    "memberType"
+  ]);
+
+  const technicalKeyPattern = /^(tdea_|formId$|form_id$|activityId$|activity_id$|activityNo$|activity_no$|sessionId$|session_id$|queryCode$|query_code$|checkinToken$|checkin_token$|sourceId$|source_id$|registrationId$|registration_id$|created_at$|updated_at$|status$|id$)/i;
+
+  const formCustomKeys = (form?.fields || [])
+    .map((field) => clean(field.key))
+    .filter((key) =>
+      key &&
+      !standardAnswerKeys.has(key) &&
+      !technicalKeyPattern.test(key)
+    );
+
+  const fallbackCustomKeys = [...new Set(
+    rows.flatMap((row) => Object.keys(row.answers || {}))
+  )].filter((key) =>
+    !standardAnswerKeys.has(key) &&
+    !technicalKeyPattern.test(key)
+  );
+
+  const answerKeys = [...new Set([
+    ...formCustomKeys,
+    ...fallbackCustomKeys
+  ])];
+
+  const commonChineseLabels = new Map([
+    ["note", "備註"],
+    ["meal", "用餐"],
+    ["imageUpload", "附件"],
+    ["participantUnit", "參加單位"],
+    ["jobTitle", "職稱"],
+    ["title", "職稱"],
+    ["address", "地址"],
+    ["birthday", "生日"]
+  ]);
+
+  const headersForAnswers = answerKeys.map((key) =>
+    fieldLabels.get(key) || commonChineseLabels.get(key) || key
+  );
+
+  const title = firstClean(
+    sourceActivity.name,
+    sourceActivity.activityName,
+    sourceActivity.title,
+    form?.activity?.name,
+    activityId,
+    chosenKey,
+    "TDEA 活動"
+  );
+
   const created = new Date().toISOString().slice(0, 10);
   const fileName = registrationExportFileName(`${title}-報名名單-${created}.xls`);
+
+  const pickAnswer = (answers: Record<string, unknown>, keys: string[]) => {
+    for (const key of keys) {
+      const value = registrationExportValue(answers[key]);
+      if (clean(value)) return value;
+    }
+    return "";
+  };
+
   const bodyRows = rows.map((entry) => {
     const answers = normalizeAnswersRecord(entry.answers || {});
     const payment = normalizeRegistrationPayment(entry);
+
     const baseValues = [
-      registrationExportStatus(entry),
       entry.submittedAt || "",
-      entry.updatedAt || "",
-      entry.cancelledAt || "",
-      entry.queryCode || "",
-      firstClean(entry.lineUserId, answers.LINE_user_id, answers.lineUserId, answers.line_user_id, answers.uid, answers.UID),
-      registrationExportSource(answers.registrationSource),
-      firstClean(answers.memberNo, answers["會員編號"]),
-      firstClean(answers.memberName, answers.name, answers["姓名"]),
-      entry.sessionId || "",
+      pickAnswer(answers, ["name", "姓名", "memberName"]),
+      pickAnswer(answers, ["memberNo", "會員編號"]),
+      pickAnswer(answers, ["phone", "mobile", "tel", "手機", "電話"]),
+      pickAnswer(answers, ["email", "Email", "電子郵件"]),
+      pickAnswer(answers, ["gender", "sex", "性別"]),
+      pickAnswer(answers, ["company", "companyName", "organization", "unit", "participantUnit"]),
       registrationExportPaymentStatus(entry),
       payment.amount ? String(payment.amount) : "",
       payment.remittanceLast5 || "",
-      payment.reportedAt || "",
-      payment.verifiedAt || payment.paidAt || "",
       entry.checkedInAt ? "已核銷" : "未核銷",
       entry.checkedInAt || ""
     ];
-    return `<tr>${[...baseValues, ...answerKeys.map((key) => registrationExportValue(answers[key]))].map(registrationExcelCell).join("")}</tr>`;
+
+    return `<tr>${[
+      ...baseValues,
+      ...answerKeys.map((key) => registrationExportValue(answers[key]))
+    ].map(registrationExcelCell).join("")}</tr>`;
   }).join("");
+
   const html = `<!doctype html><html><head><meta charset="utf-8"><title>${esc(title)} 報名名單</title></head><body><table border="1"><caption>${esc(title)} 報名名單</caption><thead><tr>${[...baseHeaders, ...headersForAnswers].map(registrationExcelHeader).join("")}</tr></thead><tbody>${bodyRows || `<tr><td colspan="${baseHeaders.length + headersForAnswers.length}">目前沒有報名資料</td></tr>`}</tbody></table></body></html>`;
   return new Response(html, {
     headers: {
