@@ -73,11 +73,48 @@ async function createCanonical(request: Request, env: Env, ctx: ExecutionContext
   const now = new Date().toISOString();
   const formId = clean(input.formId || incomingActivity.nativeFormId || incomingActivity.formId, 160) || id;
   const formUrl = clean(incomingActivity.nativeFormUrl || incomingActivity.formUrl, 1000) || `${nativeLiffBase}?register=${encodeURIComponent(formId)}`;
-  const activity: Row = { ...incomingActivity, id, nativeFormId:formId, nativeFormUrl:formUrl, formUrl, formMode:"native_form", createdAt:clean(incomingActivity.createdAt) || now, updatedAt:now };
-  const settings = { ...incomingSettings, fields, customFields, sessions, nativeFormId:formId, nativeFormUrl:formUrl };
-  const form: Row = { id:formId, formId, formUrl, activity:{ ...activity }, settings, fields, sessions, createdAt:now, updatedAt:now };
+  const activity: Row = {
+    ...incomingActivity,
+    id,
+    formId,
+    nativeFormId:formId,
+    formUrl,
+    nativeFormUrl:formUrl,
+    formMode:"native_form",
+    createdAt:clean(incomingActivity.createdAt) || now,
+    updatedAt:now
+  };
+  const settings = {
+    ...incomingSettings,
+    fields,
+    customFields,
+    sessions,
+    formId,
+    nativeFormId:formId,
+    formUrl,
+    nativeFormUrl:formUrl,
+    formMode:"native_form"
+  };
+  const form: Row = {
+    id:formId,
+    formId,
+    nativeFormId:formId,
+    formUrl,
+    nativeFormUrl:formUrl,
+    formMode:"native_form",
+    activity:{ ...activity },
+    settings,
+    fields,
+    sessions,
+    createdAt:now,
+    updatedAt:now
+  };
 
-  const activityResponse = await app.fetch(new Request(new URL("/api/activities", request.url), { method:"POST", headers:new Headers(request.headers), body:JSON.stringify(activity) }), env as never, ctx);
+  const activityResponse = await app.fetch(new Request(new URL("/api/activities", request.url), {
+    method:"POST",
+    headers:new Headers(request.headers),
+    body:JSON.stringify(activity)
+  }), env as never, ctx);
   const activityResult = await activityResponse.json().catch(() => ({})) as Row;
   if (!activityResponse.ok || activityResult.success === false) return json({ success:false, message:activityResult.message || "活動基本資料建立失敗" }, activityResponse.status || 500);
   const savedActivity = (activityResult.data && typeof activityResult.data === "object" ? activityResult.data : activityResult.activity) || activity;
@@ -92,8 +129,11 @@ async function createCanonical(request: Request, env: Env, ctx: ExecutionContext
   manager.formSettings = settingsMap;
   manager.updatedAt = now;
   await putJson(env, "manager/state.json", manager);
+
   const verify = await readJson(env, `forms/native/${encodeURIComponent(formId)}.json`);
-  if (!verify || !Array.isArray(verify.fields)) return json({ success:false, message:"活動已建立，但正式報名表驗證失敗", activity:savedActivity }, 500);
+  if (!verify || !Array.isArray(verify.fields) || clean(verify.formId, 160) !== formId || clean(verify.activity?.id, 160) !== savedId) {
+    return json({ success:false, message:"活動已建立，但正式報名表驗證失敗", activity:savedActivity }, 500);
+  }
   return json({ success:true, activity:{ ...savedActivity, ...activity, id:savedId }, form:verify, formId, fields:verify.fields, sessions:verify.sessions || [], canonicalCreate:true });
 }
 
