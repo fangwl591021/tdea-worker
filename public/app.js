@@ -2109,11 +2109,21 @@
           const builderSettings = form.__tdeaRegistrationSettings && typeof form.__tdeaRegistrationSettings === "object" ? form.__tdeaRegistrationSettings : {};
 const structuredEditorPresent = Boolean(form.querySelector("[data-custom-fields]"));
 const textareaCustomFields = parseCustomRegistrationFields(d.customRegistrationFields || "");
+const existingStructuredFields = Array.isArray(builderSettings.fields) ? builderSettings.fields : [];
+const existingStructuredByLabel = new Map(
+  existingStructuredFields.map((field) => [String(field?.label || "").trim(), field])
+);
 const structuredCustomFields = structuredEditorPresent ? [...form.querySelectorAll("[data-custom-field]")].map((row, index) => {
   const type = String(row.querySelector("[name='customType']")?.value || "text").trim();
-  const options = [...row.querySelectorAll("[name='customOption']")].map((input) => String(input.value || "").trim()).filter(Boolean);
+  const options = [...row.querySelectorAll("[name='customOption'], .custom-option-input")]
+  .map((input) => String(input.value || "").trim())
+  .filter(Boolean);
   return {
-    key: `custom_${index + 1}`,
+    key: String(
+      existingStructuredByLabel.get(
+        String(row.querySelector("[name='customLabel']")?.value || "").trim()
+      )?.key || `custom_${index + 1}`
+    ).trim(),
     label: String(row.querySelector("[name='customLabel']")?.value || "").trim(),
     type,
     ...(options.length ? { options } : {}),
@@ -2122,7 +2132,11 @@ const structuredCustomFields = structuredEditorPresent ? [...form.querySelectorA
 }).filter((field) => field.label) : [];
 const customFields = structuredEditorPresent ? structuredCustomFields : textareaCustomFields;
 const structuredBaseFields = Array.isArray(builderSettings.fields)
-  ? builderSettings.fields.filter((field) => !String(field?.key || "").startsWith("custom_"))
+  ? existingStructuredFields.filter((field) =>
+      !customFields.some((customField) =>
+        String(customField?.label || "").trim() === String(field?.label || "").trim()
+      )
+    )
   : (Array.isArray(defaults.fields) ? defaults.fields : []);
 registrationSettings = structuredEditorPresent
   ? { ...builderSettings, customFields, fields: [...structuredBaseFields, ...customFields] }
@@ -2137,8 +2151,12 @@ registrationSettings = structuredEditorPresent
             if (!verifyResponse.ok || !verifyResult.success) throw new Error(verifyResult.message || "無法驗證自訂問題是否已儲存");
             const verifyData = verifyResult.data?.form || verifyResult.data || {};
             const verifyFields = Array.isArray(verifyData.fields) ? verifyData.fields : [];
-            const verifyKeys = new Set(verifyFields.map((field) => String(field?.key || "").trim()));
-            const missing = customFields.filter((field) => !verifyKeys.has(String(field.key || "").trim()));
+            const verifyLabels = new Set(
+              verifyFields.map((field) => String(field?.label || "").trim())
+            );
+            const missing = customFields.filter(
+              (field) => !verifyLabels.has(String(field.label || "").trim())
+            );
             if (missing.length) throw new Error("自訂問題未寫入報名表：" + missing.map((field) => field.label).join("、"));
           }
         } catch (error) {
