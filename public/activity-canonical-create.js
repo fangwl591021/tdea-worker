@@ -22,6 +22,21 @@
     return flatten(value).map(clean).filter(x => /^https?:\/\//i.test(x)).filter(x => !seen.has(x) && seen.add(x));
   }
   function defaultFields(activity) {
+    const mode1 = activity.templateMode === "mode1_vendor_visit" || activity.type === "企業參訪" || activity.typeLabel === "企業參訪";
+    if (mode1) {
+      if (activity.registrationMode === "member_login") {
+        return [
+          {key:"participantUnit",label:"參加單位名稱",type:"radio",required:true,options:["社團法人台灣設計菁英協會會員","其他"]},
+          {key:"note",label:"備註",type:"paragraph",required:false}
+        ];
+      }
+      return [
+        {key:"name",label:"姓名",type:"text",required:true},
+        {key:"phone",label:"電話",type:"text",required:true},
+        {key:"participantUnit",label:"參加單位名稱",type:"radio",required:true,options:["社團法人台灣設計菁英協會會員","其他"]},
+        {key:"note",label:"備註",type:"paragraph",required:false}
+      ];
+    }
     if (activity.registrationMode === "member_login") return [{key:"note",label:"備註",type:"paragraph",required:false}];
     return [
       {key:"name",label:"姓名",type:"text",required:true},
