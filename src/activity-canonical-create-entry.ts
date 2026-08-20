@@ -5,7 +5,6 @@ type Row = Record<string, any>;
 
 const clean = (value: unknown, max = 1000) => String(value ?? "").trim().slice(0, max);
 const systemKeys = new Set(["name","phone","email","company","memberNo","note","gender","isMember","meal","imageUpload","participantUnit"]);
-const nativeLiffBase = "https://liff.line.me/2005868456-cfANNVou";
 const cors = {
   "access-control-allow-origin": "*",
   "access-control-allow-methods": "GET,POST,PUT,OPTIONS",
@@ -61,54 +60,25 @@ function dedupeFields(fields: unknown): Row[] {
 async function createCanonical(request: Request, env: Env, ctx: ExecutionContext) {
   if (!env.ASSETS_BUCKET) return json({ success:false, message:"R2 bucket is not configured" }, 503);
   if (!await authorize(request, env, ctx)) return json({ success:false, message:"Unauthorized" }, 401);
+
   const input = await request.json().catch(() => ({})) as Row;
   const incomingActivity = input.activity && typeof input.activity === "object" ? input.activity as Row : input;
   const incomingSettings = input.settings && typeof input.settings === "object" ? input.settings as Row : {};
   const id = clean(incomingActivity.id, 160) || `id-${crypto.randomUUID()}`;
   const name = clean(incomingActivity.name, 300);
   if (!name) return json({ success:false, message:"活動名稱為必填" }, 400);
+
   const fields = dedupeFields(input.fields ?? incomingSettings.fields ?? []);
   const customFields = fields.filter((field) => !systemKeys.has(clean(field.key, 160)));
   const sessions = Array.isArray(input.sessions) ? input.sessions : Array.isArray(incomingSettings.sessions) ? incomingSettings.sessions : [];
   const now = new Date().toISOString();
-  const formId = clean(input.formId || incomingActivity.nativeFormId || incomingActivity.formId, 160) || id;
-  const formUrl = clean(incomingActivity.nativeFormUrl || incomingActivity.formUrl, 1000) || `${nativeLiffBase}?register=${encodeURIComponent(formId)}`;
   const activity: Row = {
     ...incomingActivity,
     id,
-    formId,
-    nativeFormId:formId,
-    formUrl,
-    nativeFormUrl:formUrl,
-    formMode:"native_form",
     createdAt:clean(incomingActivity.createdAt) || now,
     updatedAt:now
   };
-  const settings = {
-    ...incomingSettings,
-    fields,
-    customFields,
-    sessions,
-    formId,
-    nativeFormId:formId,
-    formUrl,
-    nativeFormUrl:formUrl,
-    formMode:"native_form"
-  };
-  const form: Row = {
-    id:formId,
-    formId,
-    nativeFormId:formId,
-    formUrl,
-    nativeFormUrl:formUrl,
-    formMode:"native_form",
-    activity:{ ...activity },
-    settings,
-    fields,
-    sessions,
-    createdAt:now,
-    updatedAt:now
-  };
+  const settings: Row = { ...incomingSettings, fields, customFields, sessions };
 
   const activityResponse = await app.fetch(new Request(new URL("/api/activities", request.url), {
     method:"POST",
@@ -116,25 +86,76 @@ async function createCanonical(request: Request, env: Env, ctx: ExecutionContext
     body:JSON.stringify(activity)
   }), env as never, ctx);
   const activityResult = await activityResponse.json().catch(() => ({})) as Row;
-  if (!activityResponse.ok || activityResult.success === false) return json({ success:false, message:activityResult.message || "活動基本資料建立失敗" }, activityResponse.status || 500);
+  if (!activityResponse.ok || activityResult.success === false) {
+    return json({ success:false, message:activityResult.message || "活動基本資料建立失敗" }, activityResponse.status || 500);
+  }
   const savedActivity = (activityResult.data && typeof activityResult.data === "object" ? activityResult.data : activityResult.activity) || activity;
   const savedId = clean(savedActivity.id || id, 160) || id;
-  activity.id = savedId;
-  form.activity = { ...activity };
+  const nativeActivity = { ...activity, ...savedActivity, id:savedId };
 
-  await putJson(env, `forms/native/${encodeURIComponent(formId)}.json`, form);
+  // Reuse the established native-form engine so create/update/read all share one schema builder.
+  const nativeResponse = await app.fetch(new Request(new URL("/api/native-forms/create", request.url), {
+    method:"POST",
+    headers:new Headers(request.headers),
+    body:JSON.stringify({ activity:nativeActivity, settings })
+  }), env as never, ctx);
+  const nativeResult = await nativeResponse.json().catch(() => ({})) as Row;
+  if (!nativeResponse.ok || nativeResult.success === false) {
+    return json({ success:false, message:nativeResult.message || "正式報名表建立失敗", activity:nativeActivity, activitySaved:true }, nativeResponse.status || 500);
+  }
+
+  const formId = clean(nativeResult.formId || nativeResult.nativeFormId || savedId, 160);
+  const formUrl = clean(nativeResult.formUrl || nativeResult.nativeFormUrl, 1000);
+  const finalActivity: Row = {
+    ...nativeActivity,
+    formId,
+    nativeFormId:formId,
+    formUrl,
+    nativeFormUrl:formUrl,
+    formMode:"native_form",
+    updatedAt:new Date().toISOString()
+  };
+  const finalSettings: Row = {
+    ...settings,
+    formId,
+    nativeFormId:formId,
+    formUrl,
+    nativeFormUrl:formUrl,
+    formMode:"native_form"
+  };
+
+  const syncActivityResponse = await app.fetch(new Request(new URL(`/api/activities/${encodeURIComponent(savedId)}`, request.url), {
+    method:"PUT",
+    headers:new Headers(request.headers),
+    body:JSON.stringify(finalActivity)
+  }), env as never, ctx);
+  const syncActivityResult = await syncActivityResponse.json().catch(() => ({})) as Row;
+  if (!syncActivityResponse.ok || syncActivityResult.success === false) {
+    return json({ success:false, message:syncActivityResult.message || "活動報名入口同步失敗", activity:finalActivity, formId, formSaved:true }, syncActivityResponse.status || 500);
+  }
+
   const manager = (await readJson(env, "manager/state.json")) || {};
   const settingsMap = manager.formSettings && typeof manager.formSettings === "object" && !Array.isArray(manager.formSettings) ? manager.formSettings as Row : {};
-  for (const key of [...new Set([savedId, clean(activity.activityNo, 160), formId].filter(Boolean))]) settingsMap[key] = settings;
+  for (const key of [...new Set([savedId, clean(finalActivity.activityNo, 160), formId].filter(Boolean))]) settingsMap[key] = finalSettings;
   manager.formSettings = settingsMap;
-  manager.updatedAt = now;
+  manager.updatedAt = new Date().toISOString();
   await putJson(env, "manager/state.json", manager);
 
   const verify = await readJson(env, `forms/native/${encodeURIComponent(formId)}.json`);
-  if (!verify || !Array.isArray(verify.fields) || clean(verify.formId, 160) !== formId || clean(verify.activity?.id, 160) !== savedId) {
-    return json({ success:false, message:"活動已建立，但正式報名表驗證失敗", activity:savedActivity }, 500);
+  if (!verify || clean(verify.id, 160) !== formId || !Array.isArray(verify.fields) || !verify.activity || !verify.settings) {
+    return json({ success:false, message:"活動已建立，但正式報名表驗證失敗", activity:finalActivity, formId }, 500);
   }
-  return json({ success:true, activity:{ ...savedActivity, ...activity, id:savedId }, form:verify, formId, fields:verify.fields, sessions:verify.sessions || [], canonicalCreate:true });
+
+  return json({
+    success:true,
+    activity:{ ...(syncActivityResult.data || {}), ...finalActivity },
+    form:verify,
+    formId,
+    fields:verify.fields,
+    sessions:verify.sessions || [],
+    canonicalCreate:true,
+    nativeEngine:true
+  });
 }
 
 export default {
