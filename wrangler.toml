@@ -1,5 +1,5 @@
 name = "tdeawork"
-main = "src/marquee-route-entry.ts"
+main = "src/admin-login-memberno-entry.ts"
 compatibility_date = "2026-05-08"
 
 assets = { directory = "./public", binding = "ASSETS", not_found_handling = "single-page-application" }
