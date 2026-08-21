@@ -83,8 +83,17 @@
     const items = itemsOf(config);
     if (!items.length) return renderError('尚未設定廣告圖片。');
 
+    const left = config.left || {};
+    const right = config.right || {};
+    const showCheckin = !adOnly && left.enabled !== false;
+    const showPoints = right.enabled !== false;
+    const actionButtons = [
+      showCheckin ? `<button class="mq-btn" data-checkin>${esc(left.label || '系統簽到')}</button>` : '',
+      showPoints ? `<button class="mq-btn primary" data-points>${esc(right.label || '查詢點數')}</button>` : '',
+    ].filter(Boolean).join('');
+
     ensureStyle();
-    app.innerHTML = `<main class="mq-shell"><section class="mq-stage"><div class="mq-track">${items.map((item)=>`<button type="button" class="mq-slide" data-id="${esc(item.id)}" data-link="${esc(item.linkUrl)}"><img src="${esc(item.imageUrl)}" alt=""></button>`).join('')}</div>${items.length>1?`<div class="mq-dots">${items.map((_,i)=>`<button type="button" class="mq-dot ${i===0?'active':''}" data-dot="${i}"></button>`).join('')}</div>`:''}</section><div class="mq-actions">${adOnly?'':`<button class="mq-btn" data-checkin>系統簽到</button>`}<button class="mq-btn primary" data-points>查詢點數</button></div><div class="mq-result" data-result hidden></div></main>`;
+    app.innerHTML = `<main class="mq-shell"><section class="mq-stage"><div class="mq-track">${items.map((item)=>`<button type="button" class="mq-slide" data-id="${esc(item.id)}" data-link="${esc(item.linkUrl)}"><img src="${esc(item.imageUrl)}" alt=""></button>`).join('')}</div>${items.length>1?`<div class="mq-dots">${items.map((_,i)=>`<button type="button" class="mq-dot ${i===0?'active':''}" data-dot="${i}"></button>`).join('')}</div>`:''}</section>${actionButtons?`<div class="mq-actions">${actionButtons}</div>`:''}<div class="mq-result" data-result hidden></div></main>`;
 
     const track = app.querySelector('.mq-track');
     const dots = [...app.querySelectorAll('[data-dot]')];
@@ -108,7 +117,7 @@
     const pointsBtn=app.querySelector('[data-points]');
     pointsBtn?.addEventListener('click', async()=>{
       const box=app.querySelector('[data-result]');
-      if (box && !box.hidden) { box.hidden=true; box.innerHTML=''; pointsBtn.textContent='查詢點數'; return; }
+      if (box && !box.hidden) { box.hidden=true; box.innerHTML=''; pointsBtn.textContent=right.label || '查詢點數'; return; }
       try {
         pointsBtn.disabled=true; pointsBtn.textContent='查詢中...';
         const uid=await requireUid();
@@ -116,7 +125,7 @@
         const data=await r.json().catch(()=>({}));
         if(!r.ok||!data.success) throw new Error(data.message||'點數查詢失敗');
         if(box){box.hidden=false;box.innerHTML=pointHtml(data);} pointsBtn.textContent='關閉點數';
-      } catch(error){ if(box){box.hidden=false;box.textContent=error?.message||'點數查詢失敗';} pointsBtn.textContent='查詢點數'; }
+      } catch(error){ if(box){box.hidden=false;box.textContent=error?.message||'點數查詢失敗';} pointsBtn.textContent=right.label || '查詢點數'; }
       finally { pointsBtn.disabled=false; }
     });
   }
