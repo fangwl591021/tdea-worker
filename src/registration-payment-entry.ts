@@ -204,19 +204,24 @@ async function patchStoredRegistration(
 }
 
 async function handleNativeRegistrationAmount(request: Request, env: Env, ctx: ExecutionContext, formId: string) {
+  const __paymentPerfStart = Date.now();
   const bucket = env.ASSETS_BUCKET;
   if (!bucket) return app.fetch(request, env, ctx);
 
   const input = await request.clone().json().catch(() => ({})) as Record<string, unknown>;
   const answers = input.answers && typeof input.answers === "object" ? input.answers as Record<string, unknown> : {};
+  const __formReadStart = Date.now();
   const formObject = await bucket.get(`forms/native/${encodeURIComponent(formId)}.json`);
+  console.log("PAYMENT_PERF", "form_read", Date.now() - __formReadStart, "total", Date.now() - __paymentPerfStart);
   if (!formObject) return app.fetch(request, env, ctx);
   const form = await formObject.json().catch(() => ({})) as NativeForm;
   const activity = form.activity && typeof form.activity === "object" ? form.activity : {};
   const unitAmount = registrationUnitAmount(form, answers);
   const quantity = registrationHeadcount(form, answers);
 
+  const __downstreamStart = Date.now();
   const response = await app.fetch(request, env, ctx);
+  console.log("PAYMENT_PERF", "downstream", Date.now() - __downstreamStart, "total", Date.now() - __paymentPerfStart);
   if (!response.ok || unitAmount <= 0 || quantity <= 0) return response;
 
   const payload = await response.clone().json().catch(() => null) as Record<string, any> | null;
@@ -230,7 +235,9 @@ async function handleNativeRegistrationAmount(request: Request, env: Env, ctx: E
   const currentQuantity = Math.floor(numberValue(payload?.data?.payment?.quantity));
   if (currentAmount === expectedAmount && currentUnitAmount === unitAmount && currentQuantity === quantity) return response;
 
+  const __patchStart = Date.now();
   await patchStoredRegistration(env, registrationId, formId, activity, unitAmount, quantity);
+  console.log("PAYMENT_PERF", "patch_registration", Date.now() - __patchStart, "total", Date.now() - __paymentPerfStart);
 
   payload.data.payment = updatePayment(
     (payload.data.payment && typeof payload.data.payment === "object" ? payload.data.payment : {}) as Record<string, unknown>,
