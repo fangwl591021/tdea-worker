@@ -1,179 +1,368 @@
-(() => {
+﻿(() => {
   const params = new URLSearchParams(location.search);
+
+  const state = params.get("liff.state");
+  if (state) {
+    try {
+      const nested = new URLSearchParams(
+        decodeURIComponent(state).replace(/^\?/, "")
+      );
+      nested.forEach((value, key) => {
+        if (!params.has(key)) params.set(key, value);
+      });
+    } catch (_) {}
+  }
+
   const formId = params.get("register");
   if (!formId) return;
 
-  const api = location.hostname.endsWith("github.io") ? "https://tdeawork.fangwl591021.workers.dev" : "";
-  const clean = (value) => String(value ?? "").trim();
-  const normalize = (value) => clean(value).toLowerCase().replace(/[\s_\-()（）【】\[\]：:]/g, "");
-  const numberValue = (value) => {
-    const match = clean(value).replace(/,/g, "").match(/-?\d+(?:\.\d+)?/);
-    return match ? Number(match[0]) : 0;
-  };
-  const activityUnitAmount = (activity = {}) => Math.max(0, numberValue(activity.paymentAmount || activity.feeAmount || activity.registrationFee || activity.amount));
-  const pricedChoiceAmount = (value) => {
-    const text = clean(value).replace(/，/g, ",");
-    if (!text) return 0;
-    const normalized = text.replace(/,/g, "");
-    const patterns = [
-      /(?:NT\s*\$|NTD\s*\$?|TWD\s*\$?|\$)\s*([0-9]+(?:\.[0-9]+)?)/i,
-      /([0-9]+(?:\.[0-9]+)?)\s*(?:元|塊)(?:\s*[/／]?\s*(?:人|位))?/i,
-      /(?:每人|每位|單價|費用|價格|價錢)\s*(?:NT\s*\$|NTD\s*\$?|TWD\s*\$?|\$)?\s*([0-9]+(?:\.[0-9]+)?)/i
-    ];
-    for (const pattern of patterns) {
-      const match = normalized.match(pattern);
-      if (match) {
-        const amount = Number(match[1]);
-        if (Number.isFinite(amount) && amount > 0) return amount;
-      }
-    }
-    return 0;
-  };
-  const headcountNames = [
-    "報名人數含本人",
-    "報名人數",
-    "參加人數",
-    "參與人數",
-    "同行人數",
-    "人數",
-    "registrationcount",
-    "attendeecount",
-    "participantcount",
-    "peoplecount",
-    "quantity",
-    "qty"
-  ];
-  const pricedFieldKeywords = ["房型", "住宿", "方案", "票種", "票價", "費用", "價格", "價錢", "餐別", "套餐"];
+  const api = location.hostname.endsWith("github.io")
+    ? "https://tdeawork.fangwl591021.workers.dev"
+    : "";
 
-  function fieldMatchesHeadcount(field = {}) {
-    const names = [normalize(field.key), normalize(field.label)].filter(Boolean);
-    return names.some((name) => headcountNames.some((candidate) => name === candidate || name.includes(candidate)));
-  }
+  const clean = (v) => String(v ?? "").trim();
 
-  function fieldMatchesPricedChoice(field = {}) {
-    const type = normalize(field.type);
-    if (type && !["radio", "dropdown", "select"].includes(type)) return false;
-    const name = normalize(field.label || field.key);
-    return pricedFieldKeywords.some((keyword) => name.includes(keyword));
-  }
+  const numberValue = (v) => {
+    const m = clean(v).replace(/,/g, "").match(/\d+(?:\.\d+)?/);
+    return m ? Number(m[0]) : 0;
+  };
+
+  const isZeroChoice = (v) => {
+    const text = clean(v).toLowerCase();
+    if (!text) return true;
+
+    return (
+      text.startsWith("\u4e0d") ||
+      text.startsWith("\u7121") ||
+      text === "none" ||
+      text === "no" ||
+      text === "0"
+    );
+  };
+
+  const quantityValue = (v) => {
+    if (isZeroChoice(v)) return 0;
+
+    const qty = Math.floor(numberValue(v));
+    return Number.isFinite(qty) && qty > 0 ? qty : 0;
+  };
+
+  const escapeHtml = (v) =>
+    String(v ?? "")
+      .replaceAll("&", "&amp;")
+      .replaceAll("<", "&lt;")
+      .replaceAll(">", "&gt;")
+      .replaceAll('"', "&quot;")
+      .replaceAll("'", "&#039;");
 
   function injectStyle() {
     if (document.getElementById("registration-total-preview-style")) return;
+
     const style = document.createElement("style");
     style.id = "registration-total-preview-style";
+
     style.textContent = `
-      .nf-total-preview{border:2px solid #06c755;background:#f0fdf4;border-radius:12px;padding:16px 18px;display:grid;gap:6px}
-      .nf-total-preview-label{font-size:14px;font-weight:800;color:#067647}
-      .nf-total-preview-main{font-size:24px;font-weight:900;color:#064e3b}
-      .nf-total-preview-detail{font-size:14px;color:#475467}
+      .nf-total-preview {
+        margin: 18px 0;
+        border: 2px solid #06c755;
+        background: #f0fdf4;
+        border-radius: 14px;
+        padding: 16px 18px;
+        box-sizing: border-box;
+      }
+
+      .nf-total-preview-title {
+        font-size: 15px;
+        font-weight: 900;
+        color: #067647;
+        margin-bottom: 10px;
+      }
+
+      .nf-total-preview-line {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) auto;
+        gap: 12px;
+        padding: 5px 0;
+        font-size: 15px;
+      }
+
+      .nf-total-preview-line strong {
+        white-space: nowrap;
+      }
+
+      .nf-total-preview-divider {
+        border-top: 1px solid #a6f4c5;
+        margin: 10px 0;
+      }
+
+      .nf-total-preview-total {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        gap: 16px;
+        font-weight: 900;
+      }
+
+      .nf-total-preview-total-label {
+        color: #067647;
+        font-size: 17px;
+      }
+
+      .nf-total-preview-total-value {
+        color: #064e3b;
+        font-size: 28px;
+        white-space: nowrap;
+      }
+
+      .nf-total-preview-empty {
+        color: #667085;
+        font-size: 14px;
+      }
     `;
+
     document.head.appendChild(style);
   }
 
-  function findControls(form, field) {
-    const keys = [clean(field?.key), clean(field?.label)].filter(Boolean);
-    const controls = [];
-    for (const key of keys) {
-      const byName = form.elements?.[key];
-      if (!byName) continue;
-      if (typeof byName.length === "number" && !byName.tagName) controls.push(...Array.from(byName));
-      else controls.push(byName);
+  function controlsForKey(form, key) {
+    const target = clean(key);
+    if (!target) return [];
+
+    const found = [];
+
+    const named = form.elements?.[target];
+
+    if (named) {
+      if (typeof named.length === "number" && !named.tagName) {
+        found.push(...Array.from(named));
+      } else {
+        found.push(named);
+      }
     }
-    for (const control of form.querySelectorAll("input,select,textarea")) {
-      if (keys.some((key) => normalize(control.name) === normalize(key))) controls.push(control);
-    }
-    return [...new Set(controls)];
+
+    form.querySelectorAll("input,select,textarea").forEach((control) => {
+      if (clean(control.name) === target) {
+        found.push(control);
+      }
+    });
+
+    return [...new Set(found)];
   }
 
-  function readControlValue(controls) {
-    if (!controls?.length) return "";
-    const checked = controls.find((control) => (control.type === "radio" || control.type === "checkbox") && control.checked);
+  function selectedValue(controls) {
+    if (!controls.length) return "";
+
+    const checked = controls.find(
+      (control) =>
+        (control.type === "radio" || control.type === "checkbox") &&
+        control.checked
+    );
+
     if (checked) return checked.value;
-    const select = controls.find((control) => control.tagName === "SELECT");
+
+    const select = controls.find(
+      (control) => control.tagName === "SELECT"
+    );
+
     if (select) return select.value;
+
     return controls[0]?.value || "";
   }
 
-  function readQuantity(control) {
-    if (!control) return 1;
-    const value = numberValue(control.value);
-    return Number.isFinite(value) && value > 0 ? Math.floor(value) : 1;
+  function findRemittanceContainer(form) {
+    const fields = form.querySelectorAll(
+      ".field,.nf-field,.form-field,.nf-form-field"
+    );
+
+    for (const field of fields) {
+      const text = clean(field.textContent);
+
+      if (
+        text.includes("\u532f\u6b3e\u672b5\u78bc") ||
+        text.includes("\u532f\u6b3e\u672b\u4e94\u78bc") ||
+        text.includes("\u532f\u6b3e\u5f8c5\u78bc") ||
+        text.includes("\u532f\u6b3e\u5f8c\u4e94\u78bc")
+      ) {
+        return field;
+      }
+    }
+
+    return null;
   }
 
   async function boot() {
-    let schema;
+    let schema = {};
+
     try {
-      const response = await fetch(`${api}/api/native-forms/${encodeURIComponent(formId)}`, { cache: "no-store" });
+      const response = await fetch(
+        `${api}/api/native-forms/${encodeURIComponent(formId)}`,
+        { cache: "no-store" }
+      );
+
       const result = await response.json().catch(() => ({}));
+
       if (!response.ok || !result.success) return;
+
       schema = result.data?.form || result.data || {};
     } catch (_) {
       return;
     }
 
-    const fallbackUnitAmount = activityUnitAmount(schema.activity || {});
-    const fields = Array.isArray(schema.fields) ? schema.fields : [];
-    const headcountField = fields.find(fieldMatchesHeadcount);
-    const pricedChoiceFields = fields.filter(fieldMatchesPricedChoice);
-    if (fallbackUnitAmount <= 0 && !pricedChoiceFields.length) return;
+    const activity =
+      schema.activity && typeof schema.activity === "object"
+        ? schema.activity
+        : {};
+
+    const settings =
+      schema.settings && typeof schema.settings === "object"
+        ? schema.settings
+        : {};
+
+    const sourcePricing =
+      Array.isArray(activity.pricing) && activity.pricing.length
+        ? activity.pricing
+        : Array.isArray(settings.pricing)
+          ? settings.pricing
+          : [];
+
+    const pricing = sourcePricing
+      .filter((item) => {
+        if (!item || typeof item !== "object") return false;
+
+        const timing = clean(item.paymentTiming || "registration");
+
+        return (
+          timing === "registration" &&
+          numberValue(item.amount) > 0 &&
+          clean(item.quantityKey)
+        );
+      })
+      .map((item) => ({
+        name: clean(item.name || item.label) || "\u8a08\u50f9\u9805\u76ee",
+        amount: Math.max(0, numberValue(item.amount)),
+        quantityKey: clean(item.quantityKey)
+      }));
+
+    if (!pricing.length) return;
 
     injectStyle();
-    const observer = new MutationObserver(() => attach());
-    observer.observe(document.body, { childList: true, subtree: true });
-    attach();
 
     function attach() {
-      const form = document.querySelector("form.nf-form, .nf-form form, form[data-native-form], form");
-      if (!form || form.dataset.totalPreviewReady === "1") return;
-      const headcountControl = headcountField ? findControls(form, headcountField)[0] : null;
-      const pricedControls = pricedChoiceFields.flatMap((field) => findControls(form, field));
-      if (!headcountControl && !pricedControls.length && fallbackUnitAmount <= 0) return;
-      form.dataset.totalPreviewReady = "1";
+      const form = document.querySelector(
+        "form.nf-form, .nf-form form, form[data-native-form], form"
+      );
 
-      const box = document.createElement("div");
-      box.className = "nf-total-preview";
-      box.setAttribute("data-registration-total-preview", "1");
-      const actions = form.querySelector(".nf-actions") || form.querySelector("button[type='submit']")?.parentElement;
-      if (actions) actions.insertAdjacentElement("beforebegin", box);
-      else form.appendChild(box);
+      if (!form) return;
 
-      const render = () => {
-        const quantity = readQuantity(headcountControl);
-        let unitAmount = 0;
-        let sourceLabel = "";
-        for (const field of pricedChoiceFields) {
-          const value = readControlValue(findControls(form, field));
-          const amount = pricedChoiceAmount(value);
-          if (amount > 0) {
-            unitAmount = amount;
-            sourceLabel = clean(field.label || field.key);
-            break;
+      // Wait until the actual pricing controls exist.
+      // Do not mark the form ready while Native Form is still rendering.
+      const hasPricingControls = pricing.some(
+        item => controlsForKey(form, item.quantityKey).length > 0
+      );
+
+      if (!hasPricingControls) return;
+
+      // Prevent MutationObserver -> render -> mutation infinite loop
+      if (form.dataset.totalPreviewBound === "1") return;
+
+      let box = form.querySelector(
+        "[data-registration-total-preview]"
+      );
+
+      if (!box) {
+        box = document.createElement("div");
+        box.className = "nf-total-preview";
+        box.setAttribute("data-registration-total-preview", "1");
+
+        const remittance = findRemittanceContainer(form);
+
+        if (remittance) {
+          remittance.insertAdjacentElement("beforebegin", box);
+        } else {
+          const actions =
+            form.querySelector(".nf-actions") ||
+            form.querySelector("button[type='submit']")?.parentElement;
+
+          if (actions) {
+            actions.insertAdjacentElement("beforebegin", box);
+          } else {
+            form.appendChild(box);
           }
         }
-        if (unitAmount <= 0) unitAmount = fallbackUnitAmount;
+      }
 
-        if (unitAmount <= 0) {
-          box.innerHTML = `
-            <div class="nf-total-preview-label">應付總金額</div>
-            <div class="nf-total-preview-main">請先選擇計價方案</div>
-            <div class="nf-total-preview-detail">選擇房型／票種後，系統會自動計算金額。</div>`;
-          return;
-        }
+      function render() {
+        let total = 0;
+        const lines = [];
 
-        const total = unitAmount * quantity;
+        pricing.forEach((item) => {
+          const controls = controlsForKey(form, item.quantityKey);
+          const raw = selectedValue(controls);
+          const qty = quantityValue(raw);
+          const subtotal = item.amount * qty;
+
+          total += subtotal;
+
+          if (qty > 0) {
+            lines.push(`
+              <div class="nf-total-preview-line">
+                <span>
+                  ${escapeHtml(item.name)}
+                  &nbsp;${qty} x NT$
+                  ${item.amount.toLocaleString("zh-TW")}
+                </span>
+                <strong>
+                  NT$ ${subtotal.toLocaleString("zh-TW")}
+                </strong>
+              </div>
+            `);
+          }
+        });
+
         box.innerHTML = `
-          <div class="nf-total-preview-label">應付總金額</div>
-          <div class="nf-total-preview-main">NT$ ${total.toLocaleString("zh-TW")}</div>
-          <div class="nf-total-preview-detail">${sourceLabel ? `${sourceLabel}：` : ""}單價 NT$ ${unitAmount.toLocaleString("zh-TW")} × ${quantity} 人（含本人）</div>`;
-      };
+          <div class="nf-total-preview-title">
+            \u4ed8\u6b3e\u660e\u7d30
+          </div>
 
-      [headcountControl, ...pricedControls].filter(Boolean).forEach((control) => {
-        control.addEventListener("change", render);
-        control.addEventListener("input", render);
-      });
-      form.addEventListener("submit", render, true);
+          ${
+            lines.length
+              ? lines.join("")
+              : `<div class="nf-total-preview-empty">
+                   \u8acb\u5148\u9078\u64c7\u4e0a\u65b9\u8a08\u50f9\u9805\u76ee
+                 </div>`
+          }
+
+          <div class="nf-total-preview-divider"></div>
+
+          <div class="nf-total-preview-total">
+            <span class="nf-total-preview-total-label">
+              \u672c\u6b21\u61c9\u4ed8
+            </span>
+
+            <span class="nf-total-preview-total-value">
+              NT$ ${total.toLocaleString("zh-TW")}
+            </span>
+          </div>
+        `;
+
+        box.dataset.totalAmount = String(total);
+      }
+
+      if (form.dataset.totalPreviewBound !== "1") {
+        form.dataset.totalPreviewBound = "1";
+
+        form.addEventListener("change", render, true);
+        form.addEventListener("input", render, true);
+      }
+
       render();
     }
+
+    attach();
+
+    new MutationObserver(attach).observe(document.body, {
+      childList: true,
+      subtree: true
+    });
   }
 
   boot();

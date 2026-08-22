@@ -136,7 +136,29 @@ function updatePayment(payment: Record<string, unknown>, unitAmount: number, qua
         return row;
       })
     : [];
-  return { ...payment, amount, unitAmount, quantity, updatedAt: now, transactions };
+  const oldStatus = clean(payment.status);
+  const oldMethod = clean(payment.method);
+
+  const status =
+    amount > 0 && (!oldStatus || oldStatus === "free")
+      ? "unpaid"
+      : oldStatus || (amount > 0 ? "unpaid" : "free");
+
+  const method =
+    amount > 0 && (!oldMethod || oldMethod === "free")
+      ? "bank_transfer"
+      : oldMethod || (amount > 0 ? "bank_transfer" : "free");
+
+  return {
+    ...payment,
+    status,
+    method,
+    amount,
+    unitAmount,
+    quantity,
+    updatedAt: now,
+    transactions
+  };
 }
 
 async function patchStoredRegistration(

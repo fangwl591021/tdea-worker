@@ -50,6 +50,77 @@
       }, 160);
     })();
   </script>
+  <script>
+    (() => {
+      if (window.__tdeaNativeFormFetchDeduper) return;
+      window.__tdeaNativeFormFetchDeduper = true;
+
+      const nativeFetch = window.fetch.bind(window);
+      const pending = new Map();
+      const cache = new Map();
+      const TTL = 3000;
+
+      window.fetch = function(input, init = {}) {
+        let url;
+        try {
+          url = new URL(
+            typeof input === "string" ? input : input.url,
+            location.href
+          );
+        } catch (_) {
+          return nativeFetch(input, init);
+        }
+
+        const method = String(
+          init?.method ||
+          (typeof input !== "string" ? input?.method : "") ||
+          "GET"
+        ).toUpperCase();
+
+        const match = url.pathname.match(/^\/api\/native-forms\/([^/]+)$/);
+        if (!match) return nativeFetch(input, init);
+
+        const key = url.pathname;
+
+        if (method !== "GET") {
+          pending.delete(key);
+          cache.delete(key);
+          return nativeFetch(input, init);
+        }
+
+        const cached = cache.get(key);
+        if (cached && Date.now() - cached.time < TTL) {
+          return Promise.resolve(cached.response.clone());
+        }
+
+        if (pending.has(key)) {
+          return pending.get(key).then(response => response.clone());
+        }
+
+        const requestPromise = nativeFetch(input, init)
+          .then(response => {
+            pending.delete(key);
+
+            if (response.ok) {
+              cache.set(key, {
+                time: Date.now(),
+                response: response.clone()
+              });
+            }
+
+            return response;
+          })
+          .catch(error => {
+            pending.delete(key);
+            throw error;
+          });
+
+        pending.set(key, requestPromise);
+
+        return requestPromise.then(response => response.clone());
+      };
+    })();
+  </script>
   <script src="/registration-total-preview.js?v=total-preview1"></script>
   <script src="/registration-attachment-fix.js?v=attachment-fix3"></script>
   <script src="/custom-line-id-field-fix.js?v=line-id-fix1"></script>
@@ -58,6 +129,7 @@
   <script src="/card-ocr-progress.js?v=ocr-progress1"></script>
   <script src="/form-builder-edit-guard.js?v=edit-guard1"></script>
   <script src="/activity-edit-canonical-hotfix.js?v=canonical-hotfix2"></script>
+  <script src="/liff-entry-access-log.js?v=entry-log1"></script>
   <script src="/admin-login.js?v=admin-entry27"></script>
   <script src="/activity-edit-fast-save.js?v=fast-save1"></script>
   <script src="/member-name-search.js?v=name-roster1"></script>

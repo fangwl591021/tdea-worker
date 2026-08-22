@@ -102,8 +102,16 @@ async function repairStored(env: Env, registrationId: string) {
   const previous = row.payment && typeof row.payment === "object" ? row.payment as Row : {};
   const payment = {
     ...previous,
-    status: clean(previous.status) === "free" || !clean(previous.status) ? "unpaid" : previous.status,
-    method: clean(previous.method) === "free" || !clean(previous.method) ? "bank_transfer" : previous.method,
+    // finalAmountStatusRule:
+    // final calculated amount is the single source of truth.
+    status:
+      amount > 0 && (!clean(previous.status) || clean(previous.status) === "free")
+        ? "unpaid"
+        : clean(previous.status) || (amount > 0 ? "unpaid" : "free"),
+    method:
+      amount > 0 && (!clean(previous.method) || clean(previous.method) === "free")
+        ? "bank_transfer"
+        : clean(previous.method) || (amount > 0 ? "bank_transfer" : "free"),
     amount,
     unitAmount,
     quantity,
@@ -125,12 +133,40 @@ async function repairPayload(env: Env, payload: Row) {
       if (!item || typeof item !== "object") return item;
       const current = item as Row;
       const fixed = await repairStored(env, clean(current.id || current.registrationId));
-      return fixed ? { ...current, payment: fixed.payment, registrationCount: fixed.registrationCount, unitAmount: fixed.unitAmount } : current;
+      if (!fixed) return current;
+
+      const currentAmount = numberValue(current?.payment?.amount);
+      const fixedAmount = numberValue(fixed?.payment?.amount);
+
+      // Do not let the legacy payment repair overwrite a newer
+      // advanced-pricing calculation with zero.
+      if (currentAmount > 0) {
+        return current;
+      }
+
+      return {
+        ...current,
+        payment: fixed.payment,
+        registrationCount: fixed.registrationCount,
+        unitAmount: fixed.unitAmount
+      };
     }));
   } else if (payload.data && typeof payload.data === "object") {
     const current = payload.data as Row;
     const fixed = await repairStored(env, clean(current.id || current.registrationId));
-    if (fixed) payload.data = { ...current, payment: fixed.payment, registrationCount: fixed.registrationCount, unitAmount: fixed.unitAmount };
+    if (fixed) {
+      const currentAmount = numberValue(current?.payment?.amount);
+      const fixedAmount = numberValue(fixed?.payment?.amount);
+
+      if (!(currentAmount > 0)) {
+        payload.data = {
+          ...current,
+          payment: fixed.payment,
+          registrationCount: fixed.registrationCount,
+          unitAmount: fixed.unitAmount
+        };
+      }
+    }
   }
   return payload;
 }

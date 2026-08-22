@@ -32,7 +32,17 @@
   function currentPayload(mode){
     const textarea=document.querySelector("[data-smart-text]");
     const poster=document.querySelector(".smart-preview-poster img");
-    return {mode,analysis:latestAnalysis,text:String(textarea?.value||"").trim(),posterDataUrl:poster?.src?.startsWith("data:image/")?poster.src:"",activityId:lastResult?.activityId||undefined,formId:lastResult?.formId||undefined,activityNo:lastResult?.activityNo||undefined};
+    const edited=window.tdeaSmartActivityEditedAnalysis;
+    const analysis=edited&&typeof edited==="object"?edited:latestAnalysis;
+    return {
+      mode,
+      analysis,
+      text:String(textarea?.value||"").trim(),
+      posterDataUrl:poster?.src?.startsWith("data:image/")?poster.src:"",
+      activityId:lastResult?.activityId||undefined,
+      formId:lastResult?.formId||undefined,
+      activityNo:lastResult?.activityNo||undefined
+    };
   }
 
   function statusBox(){

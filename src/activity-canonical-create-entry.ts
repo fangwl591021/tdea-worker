@@ -158,9 +158,169 @@ async function createCanonical(request: Request, env: Env, ctx: ExecutionContext
   });
 }
 
+
+const liffEntryLogKey = "line/liff-entry-visitors.json";
+const memberEntryLiffId = "2005868456-3Ip8H1Bx";
+const memberEntryChannelId = "2005868456";
+
+async function verifyLineIdToken(idToken: string) {
+  const body = new URLSearchParams();
+  body.set("id_token", idToken);
+  body.set("client_id", memberEntryChannelId);
+
+  const response = await fetch("https://api.line.me/oauth2/v2.1/verify", {
+    method: "POST",
+    headers: { "content-type": "application/x-www-form-urlencoded" },
+    body
+  });
+
+  const result = await response.json().catch(() => ({})) as Row;
+
+  if (!response.ok || !clean(result.sub, 200)) {
+    throw new Error(clean(result.error_description || result.error || "LINE ID Token ????", 500));
+  }
+
+  return result;
+}
+
+async function recordLiffEntry(request: Request, env: Env) {
+  if (!env.ASSETS_BUCKET) {
+    return json({ success:false, message:"R2 bucket is not configured" }, 503);
+  }
+
+  const input = await request.json().catch(() => ({})) as Row;
+  const idToken = clean(input.idToken, 5000);
+  const liffId = clean(input.liffId, 100);
+
+  if (liffId !== memberEntryLiffId) {
+    return json({ success:false, message:"Unknown LIFF entry" }, 400);
+  }
+
+  if (!idToken) {
+    return json({ success:false, message:"LINE ID Token is required" }, 400);
+  }
+
+  let verified: Row;
+
+  try {
+    verified = await verifyLineIdToken(idToken);
+  } catch (error) {
+    return json({
+      success:false,
+      message:error instanceof Error ? error.message : String(error)
+    }, 401);
+  }
+
+  const lineUserId = clean(verified.sub, 200);
+
+  if (!lineUserId) {
+    return json({ success:false, message:"LINE UID not found in verified token" }, 401);
+  }
+
+  const now = new Date().toISOString();
+
+  const existing = (await readJson(env, liffEntryLogKey)) || {};
+  const visitors =
+    existing.visitors &&
+    typeof existing.visitors === "object" &&
+    !Array.isArray(existing.visitors)
+      ? existing.visitors as Row
+      : {};
+
+  const previous =
+    visitors[lineUserId] &&
+    typeof visitors[lineUserId] === "object"
+      ? visitors[lineUserId] as Row
+      : {};
+
+  const visitCount = Math.max(0, Number(previous.visitCount) || 0) + 1;
+
+  const record: Row = {
+    lineUserId,
+    displayName: clean(verified.name || previous.displayName, 300),
+    pictureUrl: clean(verified.picture || previous.pictureUrl, 1500),
+    liffId: memberEntryLiffId,
+    firstSeenAt: clean(previous.firstSeenAt, 100) || now,
+    lastSeenAt: now,
+    visitCount,
+    lastUrl: clean(input.href, 2000),
+    lastUserAgent: clean(input.userAgent, 1000),
+    source: clean(input.source, 200) || "member-entry",
+    memberMatched: previous.memberMatched === true,
+    memberNo: clean(previous.memberNo, 100),
+    memberName: clean(previous.memberName, 300),
+    status: clean(previous.status, 100) || "seen"
+  };
+
+  visitors[lineUserId] = record;
+
+  const previousRecent = Array.isArray(existing.recent) ? existing.recent : [];
+
+  const recent = [
+    {
+      at: now,
+      lineUserId,
+      displayName: record.displayName,
+      liffId: memberEntryLiffId,
+      href: record.lastUrl,
+      source: record.source
+    },
+    ...previousRecent
+  ].slice(0, 500);
+
+  await putJson(env, liffEntryLogKey, {
+    updatedAt: now,
+    count: Object.keys(visitors).length,
+    visitors,
+    recent
+  });
+
+  return json({
+    success:true,
+    data:{
+      lineUserId,
+      displayName:record.displayName,
+      firstSeenAt:record.firstSeenAt,
+      lastSeenAt:record.lastSeenAt,
+      visitCount
+    }
+  });
+}
+
+async function readLiffEntryLog(
+  request: Request,
+  env: Env,
+  ctx: ExecutionContext
+) {
+  if (!await authorize(request, env, ctx)) {
+    return json({ success:false, message:"Unauthorized" }, 401);
+  }
+
+  const data = (await readJson(env, liffEntryLogKey)) || {
+    updatedAt:"",
+    count:0,
+    visitors:{},
+    recent:[]
+  };
+
+  return json({ success:true, data });
+}
+
 export default {
   async fetch(request: Request, env: Env, ctx: ExecutionContext) {
     const url = new URL(request.url);
+
+    if (url.pathname === "/api/liff-entry-log" && request.method === "OPTIONS") {
+      return new Response(null, { status:204, headers:cors });
+    }
+
+    if (url.pathname === "/api/liff-entry-log" && request.method === "POST") {
+      return recordLiffEntry(request, env);
+    }
+
+    if (url.pathname === "/api/liff-entry-log" && request.method === "GET") {
+      return readLiffEntryLog(request, env, ctx);
+    }
     if (url.pathname === "/api/admin-activities/canonical" && request.method === "OPTIONS") return new Response(null, { status:204, headers:cors });
     if (url.pathname === "/api/admin-activities/canonical" && request.method === "POST") return createCanonical(request, env, ctx);
     return app.fetch(request, env as never, ctx);

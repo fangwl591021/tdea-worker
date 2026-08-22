@@ -295,6 +295,7 @@
     const row = document.createElement("div");
     row.className = "custom-question-card";
     row.dataset.customField = "1";
+    row.dataset.fieldKey = String(value.key || "").trim();
     row.innerHTML = `
       <div class="custom-question-top">
         <input class="custom-question-title" name="customLabel" value="${escapeHtml(value.label || "")}" placeholder="問題">
@@ -428,7 +429,7 @@
         .map(input => input.value.trim())
         .filter(Boolean);
       return {
-        key: "custom_" + (index + 1),
+        key: String(row.dataset.fieldKey || "").trim() || "custom_" + (index + 1),
         label: row.querySelector("[name='customLabel']")?.value?.trim() || "",
         type,
         options: optionInputs.length ? optionInputs : parseOptions(row.querySelector("[name='customOptions']")?.value),

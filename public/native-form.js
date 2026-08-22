@@ -73,6 +73,7 @@
       .nf-form{display:grid;gap:18px}
       .nf-field{display:grid;gap:8px}
       .nf-field label{font-weight:800;color:#111827}
+      .nf-help{font-size:14px;line-height:1.55;color:#667085;margin-top:-2px}
       .nf-required{color:#d92d20}
       .nf-field input,.nf-field textarea,.nf-field select{width:100%;box-sizing:border-box;border:1px solid #d0d5dd;border-radius:8px;padding:12px 14px;font-size:16px;background:#fff}
       .nf-field textarea{min-height:110px;resize:vertical}
@@ -279,22 +280,24 @@
     if (isAutoMemberField(field)) return "";
     const type = fieldTypes.has(field.type) ? field.type : "text";
     const label = `${esc(field.label || field.key)}${field.required ? ' <span class="nf-required">*</span>' : ""}`;
+    const help = field.description ? `<div class="nf-help">${esc(field.description)}</div>` : "";
+    const placeholder = field.placeholder ? ` placeholder="${esc(field.placeholder)}"` : "";
     const name = esc(field.key);
     const value = answers[field.key] ?? answers[field.label] ?? "";
-    if (type === "paragraph") return `<div class="nf-field"><label>${label}</label><textarea name="${name}" ${field.required ? "required" : ""}>${esc(value)}</textarea></div>`;
+    if (type === "paragraph") return `<div class="nf-field"><label>${label}</label>${help}<textarea name="${name}" ${placeholder} ${field.required ? "required" : ""}>${esc(value)}</textarea></div>`;
     if (type === "dropdown") {
       const options = (Array.isArray(field.options) ? field.options : []).map(optionText).filter(Boolean);
-      return `<div class="nf-field"><label>${label}</label><select name="${name}" ${field.required ? "required" : ""}><option value="">請選擇</option>${options.map((opt) => `<option value="${esc(opt)}" ${selectedValue(value, opt) ? "selected" : ""}>${esc(opt)}</option>`).join("")}</select></div>`;
+      return `<div class="nf-field"><label>${label}</label>${help}<select name="${name}" ${field.required ? "required" : ""}><option value="">請選擇</option>${options.map((opt) => `<option value="${esc(opt)}" ${selectedValue(value, opt) ? "selected" : ""}>${esc(opt)}</option>`).join("")}</select></div>`;
     }
     if (type === "radio") {
       const options = (Array.isArray(field.options) ? field.options : []).map(optionText).filter(Boolean);
-      return `<div class="nf-field"><label>${label}</label><div class="nf-choice">${options.map((opt) => `<label><input type="radio" name="${name}" value="${esc(opt)}" ${field.required ? "required" : ""} ${selectedValue(value, opt) ? "checked" : ""}>${esc(opt)}</label>`).join("")}</div></div>`;
+      return `<div class="nf-field"><label>${label}</label>${help}<div class="nf-choice">${options.map((opt) => `<label><input type="radio" name="${name}" value="${esc(opt)}" ${field.required ? "required" : ""} ${selectedValue(value, opt) ? "checked" : ""}>${esc(opt)}</label>`).join("")}</div></div>`;
     }
     if (type === "checkbox") {
       const options = (Array.isArray(field.options) ? field.options : []).map(optionText).filter(Boolean);
       return `<div class="nf-field" data-checkbox-field="${name}" data-required="${field.required ? "1" : "0"}"><label>${label}</label><div class="nf-choice">${options.map((opt) => `<label><input type="checkbox" name="${name}" value="${esc(opt)}" ${selectedValue(value, opt) ? "checked" : ""}>${esc(opt)}</label>`).join("")}</div></div>`;
     }
-    return `<div class="nf-field"><label>${label}</label><input name="${name}" type="${type === "email" ? "email" : "text"}" value="${esc(value)}" ${field.required ? "required" : ""}></div>`;
+    return `<div class="nf-field"><label>${label}</label>${help}<input name="${name}" type="${type === "email" ? "email" : "text"}" value="${esc(value)}" ${placeholder} ${field.required ? "required" : ""}></div>`;
   }
 
   function collectAnswers(form, fields) {
@@ -303,6 +306,10 @@
       if (isAutoMemberField(field)) continue;
       if (field.type === "checkbox") {
         answers[field.key] = [...form.querySelectorAll(`[name="${CSS.escape(field.key)}"]:checked`)].map((node) => node.value);
+      } else if (field.type === "radio") {
+        answers[field.key] = trim(
+          form.querySelector(`[name="${CSS.escape(field.key)}"]:checked`)?.value
+        );
       } else {
         answers[field.key] = trim(form.elements[field.key]?.value);
       }
@@ -644,7 +651,7 @@
     ].filter(Boolean).join("");
     return `<article class="nf-query-card">
       <div class="nf-query-head">
-        <div class="nf-meta"><span class="nf-pill">${esc(registrationStatus(row))}</span></div>
+        <div class="nf-meta"><span class="nf-pill" style="${row.status === "cancelled" ? "background:#fee2e2;color:#b91c1c;border:2px solid #ef4444;font-size:18px;font-weight:800;padding:8px 16px;border-radius:999px;line-height:1.2" : ""}">${row.status === "cancelled" ? "? " : ""}${esc(registrationStatus(row))}</span></div>
         <h2 class="nf-title" style="font-size:22px">${esc(title)}</h2>
       </div>
       <div class="nf-query-body">

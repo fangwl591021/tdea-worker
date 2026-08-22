@@ -194,10 +194,40 @@ async function handleMemberLookup(request: Request, env: Env) {
   if (!memberNumber) return json({ success: false, message: "請提供會員編號" }, 400);
 
   const data = await readState(env);
-  const row = dedupeRosterRows(rosterRows(data, type)).find((item) => memberNoOf(item) === memberNumber);
-  if (!row) return json({ success: false, message: `查無會員編號 ${memberNumber}` }, 404);
 
-  const rosterName = rosterNameOf(row, type);
+  let resolvedType: "association" | "vendor" = type;
+
+  let row = dedupeRosterRows(
+    rosterRows(data, type)
+  ).find(
+    (item) => memberNoOf(item) === memberNumber
+  );
+
+  if (!row) {
+    const candidates = (["association", "vendor"] as const)
+      .flatMap((candidateType) =>
+        dedupeRosterRows(rosterRows(data, candidateType))
+          .filter((item) => memberNoOf(item) === memberNumber)
+          .map((item) => ({
+            type: candidateType,
+            row: item
+          }))
+      );
+
+    if (candidates.length === 1) {
+      resolvedType = candidates[0].type;
+      row = candidates[0].row;
+    }
+  }
+
+  if (!row) {
+    return json({
+      success: false,
+      message: "member number not found: " + memberNumber
+    }, 404);
+  }
+
+  const rosterName = rosterNameOf(row, resolvedType);
   if (fullName && normalizedSearch(rosterName) !== normalizedSearch(fullName)) {
     return json({ success: false, message: "會員姓名／公司名稱與名冊不符" }, 409);
   }
@@ -214,7 +244,12 @@ async function handleMemberLookup(request: Request, env: Env) {
     return json({ success: false, message: "會員生日與名冊不符" }, 409);
   }
 
-  return json({ success: true, match: lookupMatch(row, type) });
+  return json({
+    success: true,
+    match: lookupMatch(row, resolvedType),
+    memberType: resolvedType,
+    recoveredMemberType: resolvedType !== type
+  });
 }
 
 function normalizeMember(input: Row, type: "association" | "vendor") {

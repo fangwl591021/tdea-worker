@@ -41,7 +41,7 @@ type PaymentStatus = "free" | "unpaid" | "reported" | "paid" | "cancelled" | "re
 type RegistrationPayment = { status: PaymentStatus; method?: "free" | "bank_transfer" | "cash" | "manual"; amount: number; currency?: string; remittanceLast5?: string; reportedAt?: string; paidAt?: string; verifiedBy?: string; verifiedAt?: string; note?: string; updatedAt?: string; transactions?: Array<Record<string, unknown>> };
 type RegistrationEntry = { id: string; sourceId?: string; formId?: string; submittedAt?: string; updatedAt?: string; activity?: Record<string, unknown>; answers?: Record<string, unknown>; status?: string; checkedInAt?: string; sessionId?: string; queryCode?: string; checkinToken?: string; cancelledAt?: string; lineUserId?: string; identityKey?: string; identityKind?: string; pointsSyncedAt?: string; pointResults?: unknown[]; payment?: RegistrationPayment };
 type ManagedSubmission = { formId?: string; sourceId?: string; submittedAt?: string; activity: Record<string, unknown>; answers: Record<string, unknown>; raw?: unknown };
-type NativeField = { key: string; label: string; type: string; required?: boolean; options?: string[] };
+type NativeField = { key: string; label: string; type: string; required?: boolean; options?: string[]; description?: string; placeholder?: string };
 type NativeSession = { id: string; name: string; startTime?: string; endTime?: string; capacity?: number; status?: string };
 type NativeForm = { id: string; provider: "native_form"; activity: Record<string, unknown>; settings: Record<string, unknown>; fields: NativeField[]; sessions: NativeSession[]; formUrl: string; createdAt: string; updatedAt: string };
 type LineLoginMember = { rosterType: "association" | "vendor"; memberNo: string; name: string; role: string; lineUserId: string; company?: string; phone?: string; email?: string; gender?: string; raw: Record<string, unknown> };
@@ -1258,13 +1258,19 @@ async function deployRichMenuApi(request: Request, env: Env) {
 async function readRegistrationSummary(env: Env): Promise<RegistrationSummary> {
   const object = env.ASSETS_BUCKET ? await env.ASSETS_BUCKET.get(registrationSummaryKey) : null;
   if (!object) return { activities: {} };
+
   const data = await object.json().catch(() => ({}));
-  const activities = data && typeof data === "object" && typeof (data as RegistrationSummary).activities === "object" ? (data as RegistrationSummary).activities : {};
-  for (const [key, record] of Object.entries(activities || {})) {
-    const list = await readRegistrationList(env, key);
-    if (list.length) record.count = activeRegistrations(list).length;
-  }
-  return { updatedAt: (data as RegistrationSummary).updatedAt, activities: activities || {} };
+  const activities =
+    data &&
+    typeof data === "object" &&
+    typeof (data as RegistrationSummary).activities === "object"
+      ? (data as RegistrationSummary).activities
+      : {};
+
+  return {
+    updatedAt: (data as RegistrationSummary).updatedAt,
+    activities: activities || {}
+  };
 }
 
 async function writeRegistrationSummary(env: Env, summary: RegistrationSummary) {
@@ -1354,19 +1360,94 @@ function publicRegistrationEntry(entry: RegistrationEntry): RegistrationEntry & 
 }
 
 function activityPaymentAmount(activity: Record<string, unknown>) {
-  return Math.max(0, numberValue(activity.paymentAmount || activity.feeAmount || activity.registrationFee || activity.amount));
+  return Math.max(
+    0,
+    numberValue(
+      activity.paymentAmount ||
+      activity.feeAmount ||
+      activity.registrationFee ||
+      activity.amount
+    )
+  );
 }
 
-function initialRegistrationPayment(activity: Record<string, unknown>): RegistrationPayment {
-  const amount = activityPaymentAmount(activity);
+function registrationPricingAmount(
+  activity: Record<string, unknown>,
+  answers: Record<string, unknown>
+) {
+  const pricing = Array.isArray(activity.pricing)
+    ? activity.pricing.filter(
+        (item): item is Record<string, unknown> =>
+          Boolean(item) && typeof item === "object"
+      )
+    : [];
+
+  const items = pricing.filter((item) => {
+    const amount = Math.max(0, numberValue(item.amount));
+    const quantityKey = clean(item.quantityKey);
+    const timing = clean(item.paymentTiming || "registration");
+
+    return (
+      amount > 0 &&
+      quantityKey &&
+      timing === "registration"
+    );
+  });
+
+  if (!items.length) {
+    return activityPaymentAmount(activity);
+  }
+
+  let total = 0;
+
+  for (const item of items) {
+    const quantityKey = clean(item.quantityKey);
+    const unitAmount = Math.max(0, numberValue(item.amount));
+
+    const raw = answers[quantityKey];
+    const text = clean(raw);
+
+    let quantity = 0;
+
+    if (
+      text &&
+      !/^(?:none|no)/i.test(text) &&
+      !text.startsWith("?") &&
+      !text.startsWith("?")
+    ) {
+      quantity = Math.max(
+        0,
+        Math.floor(numberValue(text))
+      );
+    }
+
+    total += unitAmount * quantity;
+  }
+
+  return Math.max(0, total);
+}
+
+function initialRegistrationPayment(
+  activity: Record<string, unknown>,
+  answers: Record<string, unknown> = {}
+): RegistrationPayment {
+  const amount = registrationPricingAmount(activity, answers);
   const now = new Date().toISOString();
+
   return {
     status: amount > 0 ? "unpaid" : "free",
     method: amount > 0 ? "bank_transfer" : "free",
     amount,
     currency: "TWD",
     updatedAt: now,
-    transactions: [{ type: "created", status: amount > 0 ? "unpaid" : "free", amount, at: now }]
+    transactions: [
+      {
+        type: "created",
+        status: amount > 0 ? "unpaid" : "free",
+        amount,
+        at: now
+      }
+    ]
   };
 }
 
@@ -1391,23 +1472,44 @@ function normalizeRegistrationPayment(entry: RegistrationEntry): RegistrationPay
   };
 }
 
-async function refreshRegistrationActivitySnapshot(env: Env, entry: RegistrationEntry): Promise<RegistrationEntry> {
+async function refreshRegistrationActivitySnapshot(
+  env: Env,
+  entry: RegistrationEntry
+): Promise<RegistrationEntry> {
   const formId = clean(entry.formId);
   if (!formId) return entry;
+
   const form = await readNativeForm(env, formId).catch(() => null);
   const activity = asRecord(form?.activity);
+
   if (!Object.keys(activity).length) return entry;
+
   const payment = normalizeRegistrationPayment(entry);
-  const amount = activityPaymentAmount(activity);
+  const answers = normalizeAnswersRecord(entry.answers || {});
+  const amount = registrationPricingAmount(activity, answers);
+
   return {
     ...entry,
-    activity: { ...asRecord(entry.activity), ...activity },
+    activity: {
+      ...asRecord(entry.activity),
+      ...activity
+    },
     payment: {
       ...payment,
       amount,
-      status: amount <= 0 ? "free" : (payment.status === "free" ? "unpaid" : payment.status),
-      method: amount <= 0 ? "free" : (payment.method || "bank_transfer"),
-    },
+      status:
+        amount <= 0
+          ? "free"
+          : payment.status === "free"
+            ? "unpaid"
+            : payment.status,
+      method:
+        amount <= 0
+          ? "free"
+          : !payment.method || payment.method === "free"
+            ? "bank_transfer"
+            : payment.method
+    }
   };
 }
 
@@ -1494,6 +1596,12 @@ async function exportRegistrationsExcel(request: Request, env: Env) {
       break;
     }
   }
+  rows = await Promise.all(
+    rows.map((entry) =>
+      refreshRegistrationActivitySnapshot(env, entry)
+    )
+  );
+
   const fallbackActivity = rows.find((row) => row.activity)?.activity || {};
   const sourceActivity = activity || fallbackActivity;
   const formId = firstClean(activityFormId, rows[0]?.formId, chosenKey);
@@ -1897,17 +2005,85 @@ function codeToken(length = 8) {
   return [...bytes].map((byte) => alphabet[byte % alphabet.length]).join("");
 }
 
+function smartFieldHints(labelValue: unknown, keyValue: unknown) {
+  const label = clean(labelValue);
+  const key = clean(keyValue).toLowerCase();
+  const text = (label + " " + key).toLowerCase();
+
+  if (text.includes("????") || text.includes("???")) {
+    return {
+      description: "?????????????????????????????????????",
+      placeholder: "???1"
+    };
+  }
+
+  if (text.includes("??????")) {
+    return {
+      description: "?????????????????????",
+      placeholder: "???2"
+    };
+  }
+
+  if (text.includes("?????")) {
+    return {
+      description: "???????????????????????",
+      placeholder: "???1"
+    };
+  }
+
+  if (text.includes("??") && (text.includes("???") || text.includes("?5?"))) {
+    return {
+      description: "?????????????? 5 ?????????????",
+      placeholder: "???12345"
+    };
+  }
+
+  if (text.includes("?????") || text.includes("???")) {
+    return {
+      description: "?????????????????????????????",
+      placeholder: ""
+    };
+  }
+
+  if (text.includes("??")) {
+    return {
+      description: "???????????????????????",
+      placeholder: "???????????"
+    };
+  }
+
+  if (text.includes("???") || text.includes("???")) {
+    return {
+      description: "???????????????????????",
+      placeholder: "???A123456789"
+    };
+  }
+
+  if (text.includes("??")) {
+    return {
+      description: "?????????????????????????????",
+      placeholder: "???????"
+    };
+  }
+
+  return { description: "", placeholder: "" };
+}
+
 function normalizeNativeFields(settings: Record<string, unknown>): NativeField[] {
   const rows = Array.isArray(settings.fields) ? settings.fields as Array<Record<string, unknown>> : [];
   return rows.map((field, index) => {
     const type = clean(field.type || "text").toLowerCase();
     const choice = ["select", "dropdown"].includes(type) ? "dropdown" : ["radio", "choice"].includes(type) ? "radio" : ["checkbox", "checkboxes", "multi_select"].includes(type) ? "checkbox" : type === "paragraph" ? "paragraph" : type === "email" ? "email" : "text";
+    const hints = smartFieldHints(field.label, field.key);
     return {
       key: clean(field.key) || `field_${index + 1}`,
       label: clean(field.label) || `甈? ${index + 1}`,
       type: choice,
       required: Boolean(field.required),
       options: normalizeOptions(field.options).map((option) => clean(option.name)).filter(Boolean)
+    ,
+      description: clean(field.description || field.helpText || field.helperText || hints.description),
+      placeholder: clean(field.placeholder || hints.placeholder)
     };
   }).filter((field) => field.label);
 }
@@ -2959,6 +3135,38 @@ function buildNativeFormRecord(formId: string, activityInput: Record<string, unk
   const now = new Date().toISOString();
   const activity = { ...asRecord(existing?.activity), ...activityInput };
   const settings = { ...asRecord(existing?.settings), ...settingsInput };
+
+  const controlledFields = (
+    Array.isArray(settings.fields)
+      ? settings.fields as Array<Record<string, unknown>>
+      : []
+  ).filter((field) => {
+    const key = clean(field.key).toLowerCase();
+
+    if (
+      key === "meal" &&
+      clean(settings.mealField).toLowerCase() === "none"
+    ) return false;
+
+    if (
+      key === "gender" &&
+      clean(settings.genderField).toLowerCase() === "none"
+    ) return false;
+
+    if (
+      key === "ismember" &&
+      ["none", "login"].includes(
+        clean(settings.memberField).toLowerCase()
+      )
+    ) return false;
+
+    if (
+      key === "imageupload" &&
+      clean(settings.requireImageUpload).toUpperCase() !== "Y"
+    ) return false;
+
+    return true;
+  });
   return {
     id: formId,
     provider: "native_form",
@@ -2980,7 +3188,7 @@ function buildNativeFormRecord(formId: string, activityInput: Record<string, unk
       youtubeUrl: clean(activity.youtubeUrl)
     },
     settings,
-    fields: normalizeNativeFields(settings),
+    fields: normalizeNativeFields({ ...settings, fields: controlledFields }),
     sessions: normalizeNativeSessions(settings, activity),
     formUrl: existing?.formUrl || nativeFormUrl(formId),
     createdAt: existing?.createdAt || now,
@@ -3086,15 +3294,20 @@ function validateNativeLoginAnswers(form: NativeForm, answers: Record<string, un
 }
 
 async function submitNativeForm(request: Request, env: Env, formId: string) {
+  const __perfStart = Date.now();
   if (!env.ASSETS_BUCKET) return json({ success: false, message: "R2 bucket is not configured" }, 503);
+  const __formStart = Date.now();
   const form = await readNativeForm(env, formId);
+  console.log("REG_PERF", "read_form", Date.now() - __formStart, "total", Date.now() - __perfStart);
   if (!form) return json({ success: false, message: "找不到報名表" }, 404);
   const input = await request.json().catch(() => ({})) as Record<string, unknown>;
   const rawAnswers = asRecord(input.answers);
   const answers = normalizeAnswersRecord(rawAnswers);
   const lineUserId = firstClean(input.lineUserId, rawAnswers.LINE_user_id, rawAnswers.lineUserId, rawAnswers.line_user_id, rawAnswers.uid, rawAnswers.UID);
   if (!lineUserId) return json({ success: false, code: "line_login_required", message: "請先使用 LINE 登入後再報名活動。" }, 401);
+  const __memberStart = Date.now();
   const resolved = await resolveTdeaRegisteredIdentity(env, lineUserId);
+  console.log("REG_PERF", "member_identity", Date.now() - __memberStart, "total", Date.now() - __perfStart);
   if (resolved.success !== true) return json({ success: false, code: "member_service_unavailable", message: clean(resolved.message) || "會員服務暫時無法使用" }, 502);
   if (resolved.registered !== true || !resolved.identity) {
     return json({ success: false, code: "registration_required", message: "尚未完成 TDEA 會員註冊，請先註冊後再報名活動。", registerUrl: "https://liff.line.me/2005868456-3Ip8H1Bx" }, 403);
@@ -3104,7 +3317,10 @@ async function submitNativeForm(request: Request, env: Env, formId: string) {
   const finalAnswers = normalizeAnswersRecord({ ...answers, ...registrationIdentityAnswers(identity) });
   const errors = validateNativeLoginAnswers(form, finalAnswers, sessionId);
   if (errors.length) return json({ success: false, message: errors[0], errors }, 400);
-  return createNativeRegistration(env, form, finalAnswers, lineUserId, sessionId, "tdea_registered", identity);
+  const __createStart = Date.now();
+  const __result = await createNativeRegistration(env, form, finalAnswers, lineUserId, sessionId, "tdea_registered", identity);
+  console.log("REG_PERF", "create_registration", Date.now() - __createStart, "total", Date.now() - __perfStart);
+  return __result;
 }
 async function createNativeRegistration(env: Env, form: NativeForm, answers: Record<string, unknown>, lineUserId: string, sessionId: string, source: string, identity?: RegistrationIdentity) {
   const active = activeRegistrations(await readRegistrationList(env, form.id));
@@ -3146,13 +3362,27 @@ async function createNativeRegistration(env: Env, form: NativeForm, answers: Rec
   const checkinToken = crypto.randomUUID().replace(/-/g, "");
   const submittedAt = new Date().toISOString();
   const identityAnswers = identity ? registrationIdentityAnswers(identity) : {};
+
+  const storedAnswers: Record<string, unknown> = {
+    ...answers,
+    ...identityAnswers,
+    registrationSource: source,
+    ...(identity ? {
+      memberType: identity.role,
+      memberNo: identity.memberNo,
+      memberName: identity.name,
+      registrationIdentityKind: identity.kind,
+      registrationIdentityKey: identity.identityKey,
+      registrationIdentitySource: identity.source
+    } : {})
+  };
   const entry: RegistrationEntry = {
     id: registrationId,
     sourceId: registrationId,
     formId: form.id,
     submittedAt,
     activity: form.activity,
-    answers: { ...answers, ...identityAnswers, registrationSource: source, ...(identity ? { memberType: identity.role, memberNo: identity.memberNo, memberName: identity.name, registrationIdentityKind: identity.kind, registrationIdentityKey: identity.identityKey, registrationIdentitySource: identity.source } : {}) },
+    answers: storedAnswers,
     status: "active",
     sessionId,
     queryCode,
@@ -3160,7 +3390,7 @@ async function createNativeRegistration(env: Env, form: NativeForm, answers: Rec
     lineUserId,
     identityKey: identity?.identityKey,
     identityKind: identity?.kind,
-    payment: initialRegistrationPayment(form.activity)
+    payment: initialRegistrationPayment(form.activity, storedAnswers)
   };
   const keys = registrationKeys(form.activity, form.id);
   const nativeWrite = writeNativeRegistration(env, entry);
@@ -3220,11 +3450,14 @@ async function queryNativeRegistrationsByLine(request: Request, env: Env) {
   if (!lineUserId || !env.ASSETS_BUCKET) return json({ success: false, message: "Missing LINE user id" }, 400);
   const object = await env.ASSETS_BUCKET.get(nativeLineUserKey(lineUserId));
   const ids = object ? await object.json().catch(() => []) as unknown : [];
-  const entries: RegistrationEntry[] = [];
-  for (const id of Array.isArray(ids) ? ids.map(clean).filter(Boolean) : []) {
-    const entry = await readNativeRegistration(env, id);
-    if (entry && clean(entry.lineUserId) === lineUserId) entries.push(entry);
-  }
+  const registrationIds = Array.isArray(ids) ? ids.map(clean).filter(Boolean) : [];
+  const loadedEntries = await Promise.all(
+    registrationIds.map((id) => readNativeRegistration(env, id))
+  );
+  const entries: RegistrationEntry[] = loadedEntries.filter(
+    (entry): entry is RegistrationEntry =>
+      Boolean(entry && clean(entry.lineUserId) === lineUserId)
+  );
   const currentEntries = await Promise.all(entries.map((entry) => refreshRegistrationActivitySnapshot(env, entry)));
   return json({ success: true, data: currentEntries.map((entry) => ({ ...publicRegistrationEntry(entry), checkinUrl: entry.checkinToken ? nativeCheckinUrl(entry.checkinToken) : "" })) });
 }
@@ -3291,13 +3524,105 @@ async function cancelNativeRegistration(request: Request, env: Env) {
   const input = await request.json().catch(() => ({})) as Record<string, unknown>;
   const registrationId = clean(input.registrationId);
   const queryCode = clean(input.queryCode);
+  const reason = clean(input.reason || input.note);
+
   const entry = await readNativeRegistration(env, registrationId);
-  if (!entry || entry.queryCode !== queryCode) return json({ success: false, message: "查無可取消的報名資料" }, 404);
-  if (clean(entry.status || "active") === "cancelled") return json({ success: true, data: entry });
+  if (!entry) {
+    return json({ success: false, message: "??????????" }, 404);
+  }
+
+  /*
+   * ???????
+   * registrationId + queryCode
+   *
+   * ????????
+   * registrationId + admin identity
+   */
+  const selfCancel = Boolean(queryCode && entry.queryCode === queryCode);
+
+  let operator = "self";
+
+  if (!selfCancel) {
+    const guard = await requireAdmin(request, env);
+    if (guard) return guard;
+
+    operator =
+      adminEmailFromRequest(request) ||
+      adminMemberNoFromRequest(request) ||
+      adminLineUserIdFromRequest(request) ||
+      "admin";
+  }
+
+  if (clean(entry.status || "active") === "cancelled") {
+    return json({
+      success: true,
+      data: publicRegistrationEntry(entry),
+      refundRequired:
+        Boolean(
+          entry.payment &&
+          entry.payment.amount > 0 &&
+          entry.payment.status === "cancelled"
+        )
+    });
+  }
+
+  const now = new Date().toISOString();
+
   entry.status = "cancelled";
-  entry.cancelledAt = new Date().toISOString();
+  entry.cancelledAt = now;
+
+  const registrationAudit =
+    entry as RegistrationEntry & Record<string, unknown>;
+
+  registrationAudit.cancelledBy = operator;
+  registrationAudit.cancelReason = reason;
+  registrationAudit.cancelSource = selfCancel ? "member" : "admin";
+
+  const payment = normalizeRegistrationPayment(entry);
+
+  /*
+   * ?????????????
+   * payment.status = cancelled ????????
+   *
+   * ???? refunded??????????????
+   */
+  if (!selfCancel && payment.amount > 0 && payment.status === "paid") {
+    entry.payment = {
+      ...payment,
+      status: "cancelled",
+      updatedAt: now,
+      transactions: [
+        {
+          type: "refund_requested",
+          status: "cancelled",
+          amount: payment.amount,
+          at: now,
+          by: operator,
+          note: reason || "???????????"
+        },
+        ...(payment.transactions || [])
+      ].slice(0, 50)
+    };
+
+    const refundAudit =
+      entry.payment as RegistrationPayment & Record<string, unknown>;
+
+    refundAudit.refundRequestedAt = now;
+    refundAudit.refundAmount = payment.amount;
+  }
+
   await updateRegistrationEverywhere(env, entry);
-  return json({ success: true, data: entry });
+
+  return json({
+    success: true,
+    data: publicRegistrationEntry(entry),
+    refundRequired:
+      Boolean(
+        entry.payment &&
+        entry.payment.amount > 0 &&
+        entry.payment.status === "cancelled"
+      )
+  });
 }
 
 async function reportNativeRegistrationPayment(request: Request, env: Env) {
@@ -3330,31 +3655,121 @@ async function reportNativeRegistrationPayment(request: Request, env: Env) {
 async function updateNativeRegistrationPayment(request: Request, env: Env) {
   const guard = await requireAdmin(request, env);
   if (guard) return guard;
+
   const input = await request.json().catch(() => ({})) as Record<string, unknown>;
   const registrationId = clean(input.registrationId);
+
   const entry = await readNativeRegistration(env, registrationId);
-  if (!entry) return json({ success: false, message: "查無報名資料" }, 404);
+  if (!entry) {
+    return json({ success: false, message: "??????" }, 404);
+  }
+
   const payment = normalizeRegistrationPayment(entry);
-  const status = clean(input.status) as PaymentStatus;
-  const safeStatus: PaymentStatus = ["unpaid", "reported", "paid", "cancelled", "refunded"].includes(status) ? status : payment.status;
+  const requestedStatus = clean(input.status) as PaymentStatus;
+
+  const safeStatus: PaymentStatus =
+    ["unpaid", "reported", "paid", "cancelled", "refunded"].includes(requestedStatus)
+      ? requestedStatus
+      : payment.status;
+
   const now = new Date().toISOString();
-  const admin = adminEmailFromRequest(request) || adminMemberNoFromRequest(request) || adminLineUserIdFromRequest(request) || "admin";
-  const amount = input.amount === undefined ? payment.amount : Math.max(0, numberValue(input.amount));
+
+  const admin =
+    adminEmailFromRequest(request) ||
+    adminMemberNoFromRequest(request) ||
+    adminLineUserIdFromRequest(request) ||
+    "admin";
+
+  const amount =
+    input.amount === undefined
+      ? payment.amount
+      : Math.max(0, numberValue(input.amount));
+
   entry.payment = {
     ...payment,
-    status: amount <= 0 ? "free" : safeStatus,
-    method: clean(input.method) as RegistrationPayment["method"] || payment.method || "bank_transfer",
+
+    status:
+      amount <= 0
+        ? "free"
+        : safeStatus,
+
+    method:
+      clean(input.method) as RegistrationPayment["method"] ||
+      payment.method ||
+      "bank_transfer",
+
     amount,
-    remittanceLast5: clean(input.remittanceLast5 || payment.remittanceLast5).replace(/\D/g, "").slice(-5),
+
+    remittanceLast5:
+      clean(input.remittanceLast5 || payment.remittanceLast5)
+        .replace(/\D/g, "")
+        .slice(-5),
+
     note: clean(input.note || payment.note),
-    paidAt: safeStatus === "paid" ? clean(input.paidAt) || payment.paidAt || now : "",
-    verifiedAt: safeStatus === "paid" ? now : "",
-    verifiedBy: safeStatus === "paid" ? admin : "",
+
+    /*
+     * ?????????????????
+     * paidAt / verifiedAt / verifiedBy ??????
+     */
+    paidAt:
+      safeStatus === "paid"
+        ? clean(input.paidAt) || payment.paidAt || now
+        : payment.paidAt || "",
+
+    verifiedAt:
+      safeStatus === "paid"
+        ? now
+        : payment.verifiedAt || "",
+
+    verifiedBy:
+      safeStatus === "paid"
+        ? admin
+        : payment.verifiedBy || "",
+
     updatedAt: now,
-    transactions: [{ type: "admin_update", status: safeStatus, amount, at: now, by: admin, note: clean(input.note) }, ...(payment.transactions || [])].slice(0, 50)
+
+    transactions: [
+      {
+        type:
+          safeStatus === "refunded"
+            ? "refunded"
+            : safeStatus === "cancelled"
+              ? "refund_requested"
+              : "admin_update",
+        status: safeStatus,
+        amount,
+        at: now,
+        by: admin,
+        note: clean(input.note)
+      },
+      ...(payment.transactions || [])
+    ].slice(0, 50)
   };
+
+  const audit =
+    entry.payment as RegistrationPayment & Record<string, unknown>;
+
+  if (safeStatus === "cancelled") {
+    audit.refundRequestedAt =
+      clean(audit.refundRequestedAt) || now;
+
+    audit.refundAmount = amount;
+  }
+
+  if (safeStatus === "refunded") {
+    audit.refundedAt = now;
+    audit.refundedBy = admin;
+    audit.refundAmount = amount;
+    audit.refundNote =
+      clean(input.note) || "?????????";
+  }
+
   await updateRegistrationEverywhere(env, entry);
-  return json({ success: true, data: publicRegistrationEntry(entry) });
+
+  return json({
+    success: true,
+    data: publicRegistrationEntry(entry)
+  });
 }
 
 async function verifyNativeCheckin(request: Request, env: Env) {
@@ -6879,7 +7294,7 @@ async function handleMonthlyWebhook(request: Request, env: Env, rawBody: string,
   let payload: unknown;
   try { payload = JSON.parse(rawBody); } catch (_) { return null; }
   const allEvents = extractLineEvents(payload);
-  const childMemberCheckinEnabled = false;
+  const childMemberCheckinEnabled = true;
   const hasMemberCheckinTextInPayload = allEvents.some((event) => isMemberCheckinText(extractTriggerText(event)));
   const earlyMemberCheckinEvents = childMemberCheckinEnabled ? allEvents.filter((event) => isMemberCheckinText(extractTriggerText(event))) : [];
   if (earlyMemberCheckinEvents.length) {

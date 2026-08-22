@@ -1240,7 +1240,7 @@
     const allRows = Array.isArray(state.generalMembers) ? state.generalMembers : [];
     const rows = query ? allRows.filter(row => generalMemberSearchValue(row).includes(query)) : allRows;
     const search = `<div class="field" style="min-width:280px;max-width:460px;margin-left:auto"><input data-general-search value="${esc(state.generalSearch || "")}" placeholder="搜尋一般會員：編號、姓名、UID、電話、Email"></div>`;
-    const table = rows.length ? `<div class="table-wrap"><table><thead><tr><th>會員編號</th><th>姓名</th><th>LINE UID</th><th>點數</th><th>手機</th><th>Email</th><th>註冊完成</th><th>操作</th></tr></thead><tbody>${rows.map(row => `<tr><td>${esc(row.memberNumber || "-")}</td><td><strong>${esc(row.fullName || row.displayName || "-")}</strong></td><td>${esc(shortUid(row.lineUserId || ""))}</td><td>${n(row.pointBalance || 0)}</td><td>${esc(row.phone || "-")}</td><td>${esc(row.email || "-")}</td><td>${esc(formatTime(row.profileCompletedAt || ""))}</td><td><button class="link" data-drawer="general:${esc(row.userId)}">CRM 檔案</button></td></tr>`).join("")}</tbody></table></div>` : empty(query ? "沒有符合搜尋條件的一般會員" : "目前沒有已完成註冊的一般會員");
+    const table = rows.length ? `<div class="table-wrap"><table><thead><tr><th>會員編號</th><th>姓名</th><th>LINE UID</th><th>點數</th><th>手機</th><th>\u96fb\u5b50\u90f5\u4ef6</th><th>註冊完成</th><th>操作</th></tr></thead><tbody>${rows.map(row => `<tr><td>${esc(row.memberNumber || "-")}</td><td><strong>${esc(row.fullName || row.displayName || "-")}</strong></td><td>${esc(shortUid(row.lineUserId || ""))}</td><td>${n(row.pointBalance || 0)}</td><td>${esc(row.phone || "-")}</td><td>${esc(row.email || "-")}</td><td>${esc(formatTime(row.profileCompletedAt || ""))}</td><td><button class="link" data-drawer="general:${esc(row.userId)}">CRM 檔案</button></td></tr>`).join("")}</tbody></table></div>` : empty(query ? "沒有符合搜尋條件的一般會員" : "目前沒有已完成註冊的一般會員");
     return `<section class="panel"><div class="panel-head"><div><h2 class="panel-title">一般會員</h2><div class="muted">直接讀取 TDEA-DESIGN D1，不建立第二份會員資料。</div></div><div class="actions">${search}<span class="badge live">${rows.length} / ${allRows.length} 筆</span></div></div>${table}</section>`;
   }
 
@@ -1567,45 +1567,232 @@
   function registrationList(rowId) {
     const activity = state.data.activities.find(r => r.id === rowId) || {};
     const rows = state.registrationLists[rowId];
-    if (!rows) return `<section class="panel"><div class="panel-head"><div><h2 class="panel-title">${esc(activity.name || "活動")} 報名名單</h2>${Number(activity.paymentAmount || 0) > 0 ? `<div class="muted" style="margin-top:8px;white-space:pre-wrap"><strong>報名費：</strong>NT$ ${esc(Number(activity.paymentAmount || 0).toLocaleString())}<br><strong>匯款資訊：</strong>${esc(activity.remittanceInfo || "尚未設定")}</div>` : ""}</div><div class="actions"><button class="btn" data-drawer="activity:${esc(rowId)}">修改活動付款資訊</button><button class="btn" data-export-registrations="${esc(rowId)}">Excel</button><button class="btn" data-refresh-registration-list="${esc(rowId)}">重新載入</button></div></div>${empty("正在載入報名名單...")}</section>`;
-    if (!rows.length) return `<section class="panel"><div class="panel-head"><h2 class="panel-title">${esc(activity.name || "活動")} 報名名單</h2><div class="actions"><button class="btn" data-export-registrations="${esc(rowId)}">Excel</button><button class="btn" data-refresh-registration-list="${esc(rowId)}">重新載入</button></div></div>${empty("目前 Worker 沒有收到這個活動的報名資料")}</section>`;
-    const systemFields = new Set(["LINE_user_id", "lineUserId", "line_user_id", "uid", "UID", "memberName", "registrationSource"]);
-    const baseFields = [
-      ["送出時間", row => formatTime(row.submittedAt)],
-      ["姓名", row => answerPick(row.answers, ["name", "姓名", "memberName", "memberName"])],
-      ["會員編號", row => answerPick(row.answers, ["memberNo", "會員編號"])],
-      ["電話", row => answerPick(row.answers, ["phone", "mobile", "手機", "電話"])],
-      ["Email", row => cleanFakeEmail(answerPick(row.answers, ["email", "Email", "電子郵件"]))],
-      ["會員類型", row => answerPick(row.answers, ["memberType", "isMember", "是否為會員"])],
-      ["來源", row => sourceLabel(answerPick(row.answers, ["registrationSource"]))],
-      ["簽到狀態", row => row.checkinStatusText || (row.checkedInAt ? "已完成簽到" : "尚未簽到")],
-      ["簽到時間", row => row.checkedInAt ? formatTime(row.checkedInAt) : ""]
-    ];
-    const paymentLabel = (payment = {}) => {
+
+    if (!rows) {
+      return `<section class="panel">
+        <div class="panel-head">
+          <div>
+            <h2 class="panel-title">${esc(activity.name || "\u6d3b\u52d5")} \u5831\u540d\u540d\u55ae</h2>
+          </div>
+          <div class="actions">
+            <button class="btn" data-drawer="activity:${esc(rowId)}">\u4fee\u6539\u6d3b\u52d5\u4ed8\u6b3e\u8cc7\u8a0a</button>
+            <button class="btn" data-export-registrations="${esc(rowId)}">Excel</button>
+            <button class="btn" data-refresh-registration-list="${esc(rowId)}">\u91cd\u65b0\u8f09\u5165</button>
+          </div>
+        </div>
+        ${empty("\u6b63\u5728\u8f09\u5165\u5831\u540d\u540d\u55ae...")}
+      </section>`;
+    }
+
+    if (!rows.length) {
+      return `<section class="panel">
+        <div class="panel-head">
+          <h2 class="panel-title">${esc(activity.name || "\u6d3b\u52d5")} \u5831\u540d\u540d\u55ae</h2>
+          <div class="actions">
+            <button class="btn" data-export-registrations="${esc(rowId)}">Excel</button>
+            <button class="btn" data-refresh-registration-list="${esc(rowId)}">\u91cd\u65b0\u8f09\u5165</button>
+          </div>
+        </div>
+        ${empty("\u76ee\u524d\u6c92\u6709\u5831\u540d\u8cc7\u6599")}
+      </section>`;
+    }
+
+    const paymentLabel = (row) => {
+      const payment = row?.payment || {};
       const amount = Number(payment.amount || 0);
-      if (amount <= 0 || payment.status === "free") return "免付款";
-      if (payment.status === "paid") return "已收款";
-      if (payment.status === "reported") return "已回報待核對";
-      if (payment.status === "cancelled") return "付款取消";
-      if (payment.status === "refunded") return "已退款";
-      return "待付款";
+      const status = String(payment.status || "").trim();
+      const cancelled = String(row?.status || "active").trim() === "cancelled";
+
+      if (cancelled && status === "cancelled" && amount > 0) return "\u5f85\u9000\u6b3e";
+      if (status === "refunded") return "\u5df2\u9000\u6b3e";
+      if (amount <= 0 || status === "free") return "\u514d\u4ed8\u6b3e";
+      if (status === "paid") return "\u5df2\u4ed8\u6b3e";
+      if (status === "reported") return "\u5f85\u6838\u5c0d";
+      return "\u5f85\u4ed8\u6b3e";
     };
+
+    const registrationStatusLabel = (row) => {
+      return String(row?.status || "active").trim() === "cancelled"
+        ? "\u5df2\u53d6\u6d88"
+        : "\u6b63\u5e38";
+    };
+
     const paymentActionCell = (row) => {
+      const payment = row?.payment || {};
+      const paymentStatus = String(payment.status || "").trim();
+      const registrationStatus = String(row?.status || "active").trim();
+      const amount = Number(payment.amount || 0);
+
+      if (registrationStatus === "cancelled") {
+        if (paymentStatus === "refunded") {
+          return `<span class="muted">\u9000\u6b3e\u5b8c\u6210</span>`;
+        }
+
+        if (paymentStatus === "cancelled" && amount > 0) {
+          return `<button class="link" data-refund-registration="${esc(row.id)}">\u78ba\u8a8d\u5df2\u9000\u6b3e</button>`;
+        }
+
+        return `<span class="muted">\u5df2\u53d6\u6d88</span>`;
+      }
+
+      if (paymentStatus === "paid") {
+        return `<button class="link" data-cancel-registration="${esc(row.id)}">\u53d6\u6d88\u4e26\u9000\u6b3e</button>`;
+      }
+
+      if (amount > 0) {
+        return `
+          <button class="link" data-payment-registration="${esc(row.id)}" data-payment-status="paid">\u78ba\u8a8d\u6536\u6b3e</button>
+          <button class="link" data-cancel-registration="${esc(row.id)}">\u5f37\u5236\u53d6\u6d88</button>
+        `;
+      }
+
+      return `<button class="link" data-cancel-registration="${esc(row.id)}">\u5f37\u5236\u53d6\u6d88</button>`;
+    };
+
+    const detailAliases = {
+      meal: "\u9910\u98df",
+      company: "\u516c\u53f8\uff0f\u55ae\u4f4d",
+      gender: "\u6027\u5225",
+      note: "\u5099\u8a3b",
+
+      "fld_fbd70e7ace7f4d27a35bfbd83e8ffde1": "\u6027\u5225",
+      "fld_7b858dcc85b041c081b38f8284f77f76": "\u91e3\u8766\u7aff\u6578",
+      "fld_9017b5e2eb1f401f9556f71718408d47": "\u7528\u9910\u4eba\u6578",
+      "fld_54532d2bbe1e4668b98541e656e98a99": "\u662f\u5426\u9700\u8981\u79df\u501f\u91e3\u7aff",
+      "fld_04a7723ebaa341b1b9368f0734f10f1e": "\u532f\u6b3e\u672b\u4e94\u78bc",
+      "fld_8eef0cb11e8341a594e2ed859c4b6eaf": "\u806f\u7d61\u8cc7\u8a0a"
+    };
+
+    const hiddenAnswerKeys = new Set([
+      "name",
+      "\u59d3\u540d",
+      "memberName",
+      "memberNo",
+      "\u6703\u54e1\u7de8\u865f",
+      "phone",
+      "mobile",
+      "\u624b\u6a5f",
+      "\u96fb\u8a71",
+      "email",
+      "Email",
+      "\u96fb\u5b50\u90f5\u4ef6",
+      "memberType",
+      "isMember",
+      "\u662f\u5426\u70ba\u6703\u54e1",
+      "imageUpload",
+      "image_upload",
+      "LINE_user_id",
+      "lineUserId",
+      "line_user_id",
+      "uid",
+      "UID",
+      "registrationSource",
+      "registrationIdentityKind",
+      "registrationIdentityKey",
+      "registrationIdentitySource",
+      "motherRegistered"
+    ]);
+
+    const detailHtml = (row) => {
+      const answers = row?.answers || {};
+
+      const items = Object.entries(answers)
+        .filter(([key, value]) => {
+          if (hiddenAnswerKeys.has(key)) return false;
+
+          const text = valueText(value).trim();
+          if (!text) return false;
+
+          if (key.startsWith("fld_") && !detailAliases[key]) return false;
+
+          return true;
+        })
+        .map(([key, value]) => {
+          const label = detailAliases[key] || key;
+          return `<div style="display:grid;grid-template-columns:110px 1fr;gap:8px;padding:6px 0;border-bottom:1px solid #eee">
+            <strong>${esc(label)}</strong>
+            <span>${esc(valueText(value))}</span>
+          </div>`;
+        })
+        .join("");
+
+      if (!items) return `<span class="muted">-</span>`;
+
+      return `<details>
+        <summary style="cursor:pointer;white-space:nowrap">\u67e5\u770b</summary>
+        <div style="min-width:280px;max-width:420px;padding:10px 4px">
+          ${items}
+        </div>
+      </details>`;
+    };
+
+    const rowHtml = (row) => {
+      const answers = row.answers || {};
       const payment = row.payment || {};
       const amount = Number(payment.amount || 0);
-      if (!amount) return "-";
-      const paid = payment.status === "paid";
-      return `<button class="link" data-payment-registration="${esc(row.id)}" data-payment-status="${paid ? "reported" : "paid"}">${paid ? "改回待核對" : "確認收款"}</button>`;
+
+      const name = answerPick(answers, ["name", "\u59d3\u540d", "memberName"]);
+      const memberNo = answerPick(answers, ["memberNo", "\u6703\u54e1\u7de8\u865f"]);
+      const phone = answerPick(answers, ["phone", "mobile", "\u624b\u6a5f", "\u96fb\u8a71"]);
+      const email = cleanFakeEmail(answerPick(answers, ["email", "Email", "\u96fb\u5b50\u90f5\u4ef6"]));
+      const checkin = row.checkinStatusText || (row.checkedInAt ? "\u5df2\u5b8c\u6210\u7c3d\u5230" : "\u5c1a\u672a\u7c3d\u5230");
+
+      return `<tr>
+        <td><strong>${esc(name || "-")}</strong></td>
+        <td><strong>${esc(memberNo || "-")}</strong></td>
+
+        <td>${esc(paymentLabel(row))}</td>
+        <td style="text-align:right;font-weight:700">${esc(amount ? amount.toLocaleString() : "-")}</td>
+        <td>${esc(payment.remittanceLast5 || "")}</td>
+
+        <td>${esc(registrationStatusLabel(row))}</td>
+        <td style="white-space:nowrap">${paymentActionCell(row)}</td>
+
+        <td>${esc(checkin)}</td>
+        <td>${detailHtml(row)}</td>
+        <td style="white-space:nowrap">${esc(phone)}</td>
+        <td>${esc(email)}</td>
+        <td style="white-space:nowrap">${esc(formatTime(row.submittedAt))}</td>
+      </tr>`;
     };
-    const paymentCells = row => {
-      const payment = row.payment || {};
-      const amount = Number(payment.amount || 0);
-      return `<td>${esc(paymentLabel(payment))}</td><td>${esc(amount ? amount.toLocaleString() : "")}</td><td>${esc(payment.remittanceLast5 || "")}</td><td>${paymentActionCell(row)}</td>`;
-    };
-    const customHeaders = [...new Set(rows.flatMap(row => Object.keys(row.answers || {})))]
-      .filter(key => !systemFields.has(key) && !baseFields.some(([label]) => label === key) && !["name", "姓名", "memberNo", "會員編號", "phone", "mobile", "手機", "電話", "email", "Email", "電子郵件", "memberType", "isMember", "是否為會員"].includes(key));
-    return `<section class="panel"><div class="panel-head"><h2 class="panel-title">${esc(activity.name || "活動")} 報名名單</h2><div class="actions"><button class="btn" data-export-registrations="${esc(rowId)}">Excel</button><button class="btn" data-refresh-registration-list="${esc(rowId)}">重新載入</button></div></div><div class="table-wrap"><table><thead><tr>${baseFields.map(([label]) => `<th>${esc(label)}</th>`).join("")}<th>付款狀態</th><th>金額</th><th>末五碼</th><th>帳務操作</th>${customHeaders.map(h => `<th>${esc(h)}</th>`).join("")}</tr></thead><tbody>${rows.map(row => `<tr>${baseFields.map(([, getter]) => `<td>${esc(getter(row))}</td>`).join("")}${paymentCells(row)}${customHeaders.map(h => `<td>${esc(valueText(row.answers?.[h]))}</td>`).join("")}</tr>`).join("")}</tbody></table></div></section>`;
+
+    return `<section class="panel">
+      <div class="panel-head">
+        <h2 class="panel-title">${esc(activity.name || "\u6d3b\u52d5")} \u5831\u540d\u540d\u55ae</h2>
+
+        <div class="actions">
+          <button class="btn" data-export-registrations="${esc(rowId)}">Excel</button>
+          <button class="btn" data-refresh-registration-list="${esc(rowId)}">\u91cd\u65b0\u8f09\u5165</button>
+        </div>
+      </div>
+
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>\u59d3\u540d</th>
+              <th>\u6703\u54e1\u7de8\u865f</th>
+              <th>\u4ed8\u6b3e\u72c0\u614b</th>
+              <th>\u61c9\u4ed8\u91d1\u984d</th>
+              <th>\u532f\u6b3e\u672b\u4e94\u78bc</th>
+              <th>\u5831\u540d\u72c0\u614b</th>
+              <th>\u5e33\u52d9\u64cd\u4f5c</th>
+              <th>\u7c3d\u5230\u72c0\u614b</th>
+              <th>\u5831\u540d\u5167\u5bb9</th>
+              <th>\u96fb\u8a71</th>
+              <th>Email</th>
+              <th>\u5831\u540d\u6642\u9593</th>
+            </tr>
+          </thead>
+
+          <tbody>
+            ${rows.map(rowHtml).join("")}
+          </tbody>
+        </table>
+      </div>
+    </section>`;
   }
+
   function answerPick(answers, keys) {
     const source = answers || {};
     for (const key of keys) {
@@ -2120,9 +2307,11 @@ const structuredCustomFields = structuredEditorPresent ? [...form.querySelectorA
   .filter(Boolean);
   return {
     key: String(
+      row.dataset.fieldKey ||
       existingStructuredByLabel.get(
         String(row.querySelector("[name='customLabel']")?.value || "").trim()
-      )?.key || `custom_${index + 1}`
+      )?.key ||
+      `custom_${index + 1}`
     ).trim(),
     label: String(row.querySelector("[name='customLabel']")?.value || "").trim(),
     type,
@@ -2329,6 +2518,8 @@ registrationSettings = structuredEditorPresent
     document.querySelectorAll("[data-export-registrations]").forEach(b => b.onclick = () => downloadRegistrationExcel(b.dataset.exportRegistrations, b));
     document.querySelectorAll("[data-refresh-registration-list]").forEach(b => b.onclick = () => loadRegistrationList(b.dataset.refreshRegistrationList, true));
     document.querySelectorAll("[data-payment-registration]").forEach(b => b.onclick = () => updateRegistrationPayment(b.dataset.paymentRegistration, b.dataset.paymentStatus, b));
+    document.querySelectorAll("[data-cancel-registration]").forEach(b => b.onclick = () => adminCancelRegistration(b.dataset.cancelRegistration, b));
+    document.querySelectorAll("[data-refund-registration]").forEach(b => b.onclick = () => adminConfirmRefund(b.dataset.refundRegistration, b));
     document.querySelectorAll("[data-load-member-applications]").forEach(b => b.onclick = () => loadMemberApplications(true));
     const autoSync = document.querySelector("[data-auto-sync]"); if (autoSync) autoSync.onchange = () => { setAutoSyncEnabled(autoSync.checked); toast(autoSync.checked ? "已開啟自動同步" : "已關閉自動同步"); };
     const refreshKeywords = document.querySelector("[data-refresh-keywords]"); if (refreshKeywords) refreshKeywords.onclick = () => { render(); toast("關鍵字列表已刷新"); };
@@ -2885,7 +3076,101 @@ registrationSettings = structuredEditorPresent
       }
     }
   }
-  async function updateRegistrationPayment(registrationId, status, button = null) {
+  
+  async function adminCancelRegistration(registrationId, button = null) {
+    if (!registrationId) return;
+
+    const originalText = button?.textContent || "";
+
+    if (button) {
+      button.disabled = true;
+      button.textContent = "\u8655\u7406\u4e2d...";
+    }
+
+    try {
+      const response = await fetch(api + "/api/native-registrations/cancel", {
+        method: "POST",
+        headers: adminHeaders({ "content-type": "application/json" }),
+        body: JSON.stringify({
+          registrationId,
+          reason: "\u7ba1\u7406\u54e1\u5f37\u5236\u53d6\u6d88"
+        })
+      });
+
+      const result = await response.json().catch(() => ({}));
+
+      if (!response.ok || !result.success) {
+        throw new Error(result.message || "\u53d6\u6d88\u5831\u540d\u5931\u6557");
+      }
+
+      const activityId = state.drawer?.startsWith("registrations:")
+        ? state.drawer.split(":")[1]
+        : "";
+
+      if (activityId) await loadRegistrationList(activityId, true);
+      else render();
+
+      toast(
+        result.refundRequired
+          ? "\u5df2\u53d6\u6d88\uff0c\u8acb\u8655\u7406\u9000\u6b3e"
+          : "\u5df2\u53d6\u6d88\u5831\u540d"
+      );
+    } catch (err) {
+      if (button) {
+        button.disabled = false;
+        button.textContent = originalText;
+      }
+
+      toast(err?.message || "\u53d6\u6d88\u5831\u540d\u5931\u6557");
+    }
+  }
+
+  async function adminConfirmRefund(registrationId, button = null) {
+    if (!registrationId) return;
+
+    const originalText = button?.textContent || "";
+
+    if (button) {
+      button.disabled = true;
+      button.textContent = "\u9000\u6b3e\u8655\u7406\u4e2d...";
+    }
+
+    try {
+      const response = await fetch(api + "/api/native-registrations/payment", {
+        method: "POST",
+        headers: adminHeaders({ "content-type": "application/json" }),
+        body: JSON.stringify({
+          registrationId,
+          status: "refunded",
+          note: "\u7ba1\u7406\u54e1\u78ba\u8a8d\u5df2\u9000\u6b3e"
+        })
+      });
+
+      const result = await response.json().catch(() => ({}));
+
+      if (!response.ok || !result.success) {
+        throw new Error(result.message || "\u9000\u6b3e\u8655\u7406\u5931\u6557");
+      }
+
+      const activityId = state.drawer?.startsWith("registrations:")
+        ? state.drawer.split(":")[1]
+        : "";
+
+      if (activityId) await loadRegistrationList(activityId, true);
+      else render();
+
+      toast("\u9000\u6b3e\u5b8c\u6210");
+    } catch (err) {
+      if (button) {
+        button.disabled = false;
+        button.textContent = originalText;
+      }
+
+      toast(err?.message || "\u9000\u6b3e\u8655\u7406\u5931\u6557");
+    }
+  }
+
+async function updateRegistrationPayment(registrationId, status, button = null) {
     const originalText = button?.textContent || (status === "paid" ? "確認收款" : "改回待核對");
     if (button) { button.disabled = true; button.textContent = "處理中…"; }
     try {

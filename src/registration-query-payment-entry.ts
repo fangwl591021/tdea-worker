@@ -80,27 +80,105 @@ async function readNativeForm(env: Env, formId: string) {
   return data && typeof data === "object" && !Array.isArray(data) ? data as NativeForm : null;
 }
 
-async function correctItem(env: Env, item: Record<string, any>, ctx: ExecutionContext) {
+async function correctItem(env: Env, item: Record<string, any>, ctx: ExecutionContext, cache?: { raw: Map<string, Promise<any>>, forms: Map<string, Promise<any>> }) {
   const registrationId = clean(item.id || item.registrationId);
-  const raw = await readRawRegistration(env, registrationId);
+  let rawPromise = cache?.raw.get(registrationId);
+  if (!rawPromise) {
+    rawPromise = readRawRegistration(env, registrationId);
+    cache?.raw.set(registrationId, rawPromise);
+  }
+  const raw = await rawPromise;
   const source = raw || item;
   const formId = clean(source.formId || item.formId);
-  const form = await readNativeForm(env, formId) || {};
+  let formPromise = cache?.forms.get(formId);
+  if (!formPromise) {
+    formPromise = readNativeForm(env, formId);
+    cache?.forms.set(formId, formPromise);
+  }
+  const form = await formPromise || {};
   const rawPayment = source.payment && typeof source.payment === "object" ? source.payment as Record<string, unknown> : {};
   const responsePayment = item.payment && typeof item.payment === "object" ? item.payment as Record<string, unknown> : {};
   const answers = source.answers && typeof source.answers === "object" ? source.answers as Record<string, unknown> : (item.answers || {});
   const activity = form.activity && typeof form.activity === "object" ? form.activity : (source.activity || item.activity || {});
 
-  const savedUnitAmount = numberValue(rawPayment.unitAmount || responsePayment.unitAmount);
-  const unitAmount = savedUnitAmount > 0 ? savedUnitAmount : activityUnitAmount(activity);
-  const savedQuantity = Math.floor(numberValue(rawPayment.quantity || responsePayment.quantity));
-  const quantity = savedQuantity > 0 ? savedQuantity : headcountFromAnswers(form, answers);
-  if (unitAmount <= 0 || quantity <= 0) return item;
+  const pricing = Array.isArray(activity.pricing)
+    ? activity.pricing
+    : [];
 
-  const amount = unitAmount * quantity;
+  let amount = 0;
+  let unitAmount = 0;
+  let quantity = 0;
+
+  for (const item of pricing) {
+    if (!item || typeof item !== "object") continue;
+
+    const p = item as Record<string, unknown>;
+    const timing = clean(p.paymentTiming || "registration");
+    if (timing !== "registration") continue;
+
+    const price = Math.max(0, numberValue(p.amount));
+    const key = clean(p.quantityKey);
+    if (!price || !key) continue;
+
+    const raw = answers[key];
+    const text = clean(raw);
+
+    let qty = 0;
+
+    if (
+      text &&
+      !text.startsWith("?") &&
+      !text.startsWith("?")
+    ) {
+      qty = Math.max(0, Math.floor(numberValue(text)));
+    }
+
+    amount += price * qty;
+  }
+
+  if (amount <= 0) {
+    const savedUnitAmount = numberValue(
+      rawPayment.unitAmount || responsePayment.unitAmount
+    );
+
+    unitAmount =
+      savedUnitAmount > 0
+        ? savedUnitAmount
+        : activityUnitAmount(activity);
+
+    const savedQuantity = Math.floor(
+      numberValue(rawPayment.quantity || responsePayment.quantity)
+    );
+
+    quantity =
+      savedQuantity > 0
+        ? savedQuantity
+        : headcountFromAnswers(form, answers);
+
+    if (unitAmount <= 0 || quantity <= 0) return item;
+
+    amount = unitAmount * quantity;
+  }
+
+  const previousStatus = clean(
+    responsePayment.status || rawPayment.status
+  );
+
+  const previousMethod = clean(
+    responsePayment.method || rawPayment.method
+  );
+
   const payment = {
     ...rawPayment,
     ...responsePayment,
+    status:
+      amount > 0 && (!previousStatus || previousStatus === "free")
+        ? "unpaid"
+        : previousStatus || (amount > 0 ? "unpaid" : "free"),
+    method:
+      amount > 0 && (!previousMethod || previousMethod === "free")
+        ? "bank_transfer"
+        : previousMethod || (amount > 0 ? "bank_transfer" : "free"),
     amount,
     unitAmount,
     quantity,
@@ -173,10 +251,11 @@ async function handleQuery(request: Request, env: Env, ctx: ExecutionContext) {
   if (!payload?.success) return response;
 
   const url = new URL(request.url);
+  const queryCache = { raw: new Map<string, Promise<any>>(), forms: new Map<string, Promise<any>>() };
   if (url.pathname === "/api/native-registrations/query" && payload.data && typeof payload.data === "object" && !Array.isArray(payload.data)) {
-    payload.data = await correctItem(env, payload.data, ctx);
+    payload.data = await correctItem(env, payload.data, ctx, queryCache);
   } else if ((url.pathname === "/api/native-registrations/me" || url.pathname === "/api/registrations/list") && Array.isArray(payload.data)) {
-    payload.data = await Promise.all(payload.data.map((item: unknown) => item && typeof item === "object" ? correctItem(env, item as Record<string, any>, ctx) : item));
+    payload.data = await Promise.all(payload.data.map((item: unknown) => item && typeof item === "object" ? correctItem(env, item as Record<string, any>, ctx, queryCache) : item));
     if (url.pathname === "/api/registrations/list") {
       const corrected = payload.data.filter((item: unknown) => item && typeof item === "object") as Array<Record<string, any>>;
       ctx.waitUntil(repairAdminListIndexes(env, url, corrected).catch((error) => console.error("registration index repair failed", error)));
