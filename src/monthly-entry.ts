@@ -1301,8 +1301,12 @@ async function writeRegistrationList(env: Env, key: string, list: RegistrationEn
   await env.ASSETS_BUCKET.put(registrationListKey(key), JSON.stringify(list.slice(0, 1000), null, 2), { httpMetadata: { contentType: "application/json; charset=utf-8", cacheControl: "no-store" } });
 }
 
+function filterActiveStatus(list: RegistrationEntry[]) {
+  return list.filter((item) => clean(item.status || "active") !== "cancelled");
+}
+
 function activeRegistrations(list: RegistrationEntry[]) {
-  return dedupeRegistrations(list).filter((item) => clean(item.status || "active") !== "cancelled");
+  return filterActiveStatus(dedupeRegistrations(list));
 }
 
 function registrationFingerprint(entry: RegistrationEntry) {
@@ -1328,18 +1332,42 @@ function dedupeRegistrations(list: RegistrationEntry[]) {
   return output;
 }
 
-async function appendRegistrationList(env: Env, keys: string[], entry: RegistrationEntry) {
+async function appendRegistrationList(
+  env: Env,
+  keys: string[],
+  entry: RegistrationEntry,
+  listCache?: Map<string, RegistrationEntry[]>
+) {
   if (!env.ASSETS_BUCKET) return;
+
   const sourceId = entry.sourceId || entry.id;
   const fingerprint = registrationFingerprint(entry);
+
   const counts = await Promise.all(keys.map(async (key) => {
-    const list = dedupeRegistrations(await readRegistrationList(env, key));
-    const exists = list.some((item) => (item.sourceId || item.id) === sourceId || registrationFingerprint(item) === fingerprint);
+    let list = listCache?.get(key);
+
+    if (!list) {
+      list = dedupeRegistrations(await readRegistrationList(env, key));
+      listCache?.set(key, list);
+    }
+
+    const exists = list.some(
+      (item) =>
+        (item.sourceId || item.id) === sourceId ||
+        registrationFingerprint(item) === fingerprint
+    );
+
     const nextList = exists ? list : [entry, ...list];
+
     await writeRegistrationList(env, key, nextList);
-    return activeRegistrations(nextList).length;
+
+    return filterActiveStatus(nextList).length;
   }));
-  return counts.reduce((max, count) => Math.max(max, Number(count || 0)), 0);
+
+  return counts.reduce(
+    (max, count) => Math.max(max, Number(count || 0)),
+    0
+  );
 }
 
 function publicRegistrationEntry(entry: RegistrationEntry): RegistrationEntry & { checkinStatus: string; checkinStatusText: string } {
@@ -3323,7 +3351,21 @@ async function submitNativeForm(request: Request, env: Env, formId: string) {
   return __result;
 }
 async function createNativeRegistration(env: Env, form: NativeForm, answers: Record<string, unknown>, lineUserId: string, sessionId: string, source: string, identity?: RegistrationIdentity) {
-  const active = activeRegistrations(await readRegistrationList(env, form.id));
+  const keys = registrationKeys(form.activity, form.id);
+  const allKeys = Array.from(new Set([form.id, ...keys].filter(Boolean)));
+
+  const listCache = new Map<string, RegistrationEntry[]>();
+
+  await Promise.all(
+    allKeys.map(async (key) => {
+      listCache.set(
+        key,
+        dedupeRegistrations(await readRegistrationList(env, key))
+      );
+    })
+  );
+
+  const active = filterActiveStatus(listCache.get(form.id) || []);
   const identityKey = firstClean(identity?.identityKey, answers.registrationIdentityKey);
   const lowerIdentityKey = clean(identityKey).toLowerCase();
   const lowerLineUserId = clean(lineUserId).toLowerCase();
@@ -3392,10 +3434,9 @@ async function createNativeRegistration(env: Env, form: NativeForm, answers: Rec
     identityKind: identity?.kind,
     payment: initialRegistrationPayment(form.activity, storedAnswers)
   };
-  const keys = registrationKeys(form.activity, form.id);
   const nativeWrite = writeNativeRegistration(env, entry);
   const [count, summary] = await Promise.all([
-    appendRegistrationList(env, keys, entry),
+    appendRegistrationList(env, keys, entry, listCache),
     readRegistrationSummary(env)
   ]);
   const record: RegistrationRecord = {
