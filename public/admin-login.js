@@ -8,7 +8,7 @@
   ];
   const scriptVersions = [
     "activity-canonical-editor.js?v=canonical4",
-    "app.js?v=activity-editor7",
+    "app.js?v=activity-editor8",
     "catalog-pricing.js?v=catalog1",
     "catalog-pricing-editor.js?v=catalog1",
     "line-zone.js?v=access-label1",

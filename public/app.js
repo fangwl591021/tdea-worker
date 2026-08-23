@@ -2611,10 +2611,17 @@ registrationSettings = { ...builderSettings, customFields, fields: [...structure
       const registrationMode = d.registrationMode || (templateMode === "mode1_vendor_visit" ? "member_login" : "form");
       const item = { id: uid(), name: d.name.trim(), templateMode, type: d.type, typeLabel: formTypeLabel(d), courseTime: d.courseTime, deadline: d.deadline, capacity: Number(d.capacity || 0), checkinPoints: Number(d.checkinPoints || 0), feePoints: Number(d.feePoints || 0), paymentAmount: Number(d.paymentAmount || 0), remittanceInfo: d.remittanceInfo || "", registrationMode, detailText: d.detailText || "", galleryUrls: cleanUrlList(d.galleryUrls || ""), reg: 0, check: 0, status: d.status, formUrl: "" };
       try {
+        const catalogPricing = d.catalogBillingMode === "catalog_paid" ? window.TDEACatalogPricing?.normalize(af.__tdeaCatalogPricing) : null;
+        if (d.catalogBillingMode === "catalog_paid") {
+          if (!catalogPricing?.items?.length) throw new Error("請至少建立一個規格型品項與規格");
+          item.billingMode = "catalog_paid";
+          item.catalogPricing = catalogPricing;
+        }
+
         const saved = await saveActivityRemote(item);
         const activity = saved || item;
         state.data.activities.unshift(activity);
-        const registrationSettings = af.__tdeaRegistrationSettings || null;
+        const registrationSettings = catalogPricing ? { ...(af.__tdeaRegistrationSettings || {}), billingMode:"catalog_paid", catalogPricing } : (af.__tdeaRegistrationSettings || null);
         await ensureNativeFormForActivity(activity, "", registrationSettings, { force: true });
         await saveActivityRemote(activity).catch(() => null);
         save();
