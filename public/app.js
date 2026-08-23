@@ -2293,7 +2293,15 @@
         let registrationSettings = null;
         try {
           const defaults = nativeFormSettingsFor(activity);
-          const builderSettings = form.__tdeaRegistrationSettings && typeof form.__tdeaRegistrationSettings === "object" ? form.__tdeaRegistrationSettings : {};
+          const previousBuilderSettings = form.__tdeaRegistrationSettings && typeof form.__tdeaRegistrationSettings === "object" ? form.__tdeaRegistrationSettings : {};
+          const builderSettings = {
+            ...previousBuilderSettings,
+            registrationMode: d.registrationMode || previousBuilderSettings.registrationMode || activity.registrationMode || "form",
+            requireImageUpload: d.requireImageUpload || "N",
+            genderField: d.genderField || "none",
+            memberField: d.memberField || "none",
+            mealField: d.mealField || "none"
+          };
 const structuredEditorPresent = Boolean(form.querySelector("[data-custom-fields]"));
 const textareaCustomFields = parseCustomRegistrationFields(d.customRegistrationFields || "");
 const existingStructuredFields = Array.isArray(builderSettings.fields) ? builderSettings.fields : [];
@@ -2320,16 +2328,27 @@ const structuredCustomFields = structuredEditorPresent ? [...form.querySelectorA
   };
 }).filter((field) => field.label) : [];
 const customFields = structuredEditorPresent ? structuredCustomFields : textareaCustomFields;
-const structuredBaseFields = Array.isArray(builderSettings.fields)
-  ? existingStructuredFields.filter((field) =>
-      !customFields.some((customField) =>
-        String(customField?.label || "").trim() === String(field?.label || "").trim()
-      )
+const managedFieldKeys = new Set(["gender", "isMember", "meal", "imageUpload"]);
+const structuredBaseFields = (Array.isArray(builderSettings.fields) ? existingStructuredFields : (Array.isArray(defaults.fields) ? defaults.fields : []))
+  .filter((field) =>
+    !managedFieldKeys.has(String(field?.key || "")) &&
+    !customFields.some((customField) =>
+      String(customField?.label || "").trim() === String(field?.label || "").trim()
     )
-  : (Array.isArray(defaults.fields) ? defaults.fields : []);
-registrationSettings = structuredEditorPresent
-  ? { ...builderSettings, customFields, fields: [...structuredBaseFields, ...customFields] }
-  : { ...builderSettings, customFields, fields: [...(Array.isArray(defaults.fields) ? defaults.fields : []), ...customFields] };
+  );
+if (builderSettings.genderField !== "none") {
+  structuredBaseFields.push({ key: "gender", label: "\u6027\u5225", type: "choice", options: ["\u7537", "\u5973", "\u4e0d\u4fbf\u900f\u9732"], required: builderSettings.genderField === "required" });
+}
+if (builderSettings.memberField !== "login" && builderSettings.memberField !== "none") {
+  structuredBaseFields.push({ key: "isMember", label: "\u662f\u5426\u70ba\u6703\u54e1", type: "choice", options: ["\u662f", "\u5426", "\u4e0d\u78ba\u5b9a"], required: builderSettings.memberField === "required" });
+}
+if (builderSettings.mealField !== "none") {
+  structuredBaseFields.push({ key: "meal", label: "\u7528\u9910\u9078\u9805", type: "choice", options: ["\u8447", "\u7d20"], required: builderSettings.mealField === "required" });
+}
+if (builderSettings.requireImageUpload === "Y") {
+  structuredBaseFields.push({ key: "imageUpload", label: "\u9644\u4ef6\u4e0a\u50b3", type: "file", required: false });
+}
+registrationSettings = { ...builderSettings, customFields, fields: [...structuredBaseFields, ...customFields] };
           form.__tdeaRegistrationSettings = registrationSettings;
           const nativeSaved = await ensureNativeFormForActivity(activity, email, registrationSettings, { update: true });
           if (!nativeSaved) throw new Error("自訂問題未寫入報名表");
@@ -2355,7 +2374,7 @@ registrationSettings = structuredEditorPresent
         }
         state.data.formSettings ||= {};
         state.data.formSettings[activity.id] ||= {};
-        Object.assign(state.data.formSettings[activity.id], {
+        Object.assign(state.data.formSettings[activity.id], registrationSettings || {}, {
           fields: Array.isArray(registrationSettings?.fields) ? registrationSettings.fields : [],
           detailText: activity.detailText || "",
           posterUrl: activity.posterUrl || activity.imageUrl || "",

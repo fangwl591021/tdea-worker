@@ -7,7 +7,7 @@
     "cardCollection","register","query","memberQr","calendar","checkin","redeem","redeemSession","monthlyDetail","monthlyShare","personalMessages","close","marquee","motherRegister","memberHome","checkinModule"
   ];
   const scriptVersions = [
-    "app.js?v=activity-editor6",
+    "app.js?v=activity-editor7",
     "line-zone.js?v=access-label1",
     "lottery.js?v=lottery4",
     "activity-types.js?v=types4",
