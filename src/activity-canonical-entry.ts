@@ -83,7 +83,7 @@ async function saveCanonical(request: Request, env: Env, ctx: ExecutionContext, 
   const customFields = customOnly(fields);
   const sessions = Array.isArray(input.sessions) ? input.sessions : Array.isArray(incomingSettings.sessions) ? incomingSettings.sessions : (Array.isArray(currentForm.sessions) ? currentForm.sessions : []);
   const nextActivity = { ...currentActivity, ...incomingActivity, id: clean(currentActivity.id || activityId, 160) || activityId };
-  for (const key of ["billingMode","pricing","quantityFields","paymentRequired","paymentMethod"] as const) {
+  for (const key of ["billingMode","pricing","quantityFields","paymentRequired","paymentMethod","catalogPricing"] as const) {
     if (Object.prototype.hasOwnProperty.call(incomingSettings, key)) {
       nextActivity[key] = incomingSettings[key];
     }

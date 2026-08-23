@@ -25,6 +25,7 @@ import {
   uidBindKeyword,
   vendorCardKeyword
 } from "./line-keywords";
+import { calculateCatalogQuote, normalizeCatalogPricing, type CatalogQuote } from "./catalog-pricing";
 
 type Env = { TDEA_DESIGN?: Fetcher; TDEA_INTERNAL_SECRET?: string; ADMIN_EMAILS?: string; ADMIN_LOGIN_USER?: string; ADMIN_LOGIN_PASSWORD?: string; ASSETS_BUCKET?: R2Bucket; LINE_CHANNEL_SECRET?: string; LINE_CHANNEL_ACCESS_TOKEN?: string; FORWARD_WEBHOOK_URL?: string; GOOGLE_FORMS_SCRIPT_URL?: string; GOOGLE_FORMS_SHARED_SECRET?: string; OPNFORM_API_BASE?: string; OPNFORM_PUBLIC_BASE?: string; OPNFORM_API_TOKEN?: string; OPNFORM_WORKSPACE_ID?: string; OPNFORM_WEBHOOK_SECRET?: string; WETW_POINT_API_KEY?: string; WETW_MEMBER_API_KEY?: string; WETW_TDEA_SHOP_ID?: string; WETW_TDEA_CLIENT_ID?: string; WETW_SHOP_ID?: string; WETW_POINT_TYPE?: string; TDEA_POINT_EXTERNAL_SYNC?: string; TDEA_ADMIN_LINE_USER_IDS?: string; AIWE_WP_USER?: string; AIWE_WP_APP_PASSWORD?: string; OPENAI_API_KEY?: string; OPENAI_MODEL?: string };
 type LineEvent = { type?: string; replyToken?: string; message?: { type?: string; id?: string; text?: string }; postback?: { data?: string }; source?: { type?: string; userId?: string; groupId?: string; roomId?: string } };
@@ -39,7 +40,7 @@ type RegistrationRecord = { activityId?: string; activityNo?: string; activityNa
 type RegistrationSummary = { updatedAt?: string; activities: Record<string, RegistrationRecord> };
 type PaymentStatus = "free" | "unpaid" | "reported" | "paid" | "cancelled" | "refunded";
 type RegistrationPayment = { status: PaymentStatus; method?: "free" | "bank_transfer" | "cash" | "manual"; amount: number; currency?: string; remittanceLast5?: string; reportedAt?: string; paidAt?: string; verifiedBy?: string; verifiedAt?: string; note?: string; updatedAt?: string; transactions?: Array<Record<string, unknown>> };
-type RegistrationEntry = { id: string; sourceId?: string; formId?: string; submittedAt?: string; updatedAt?: string; activity?: Record<string, unknown>; answers?: Record<string, unknown>; status?: string; checkedInAt?: string; sessionId?: string; queryCode?: string; checkinToken?: string; cancelledAt?: string; lineUserId?: string; identityKey?: string; identityKind?: string; pointsSyncedAt?: string; pointResults?: unknown[]; payment?: RegistrationPayment };
+type RegistrationEntry = { id: string; sourceId?: string; formId?: string; submittedAt?: string; updatedAt?: string; activity?: Record<string, unknown>; answers?: Record<string, unknown>; status?: string; checkedInAt?: string; sessionId?: string; queryCode?: string; checkinToken?: string; cancelledAt?: string; lineUserId?: string; identityKey?: string; identityKind?: string; pointsSyncedAt?: string; pointResults?: unknown[]; payment?: RegistrationPayment; catalogQuote?: CatalogQuote };
 type ManagedSubmission = { formId?: string; sourceId?: string; submittedAt?: string; activity: Record<string, unknown>; answers: Record<string, unknown>; raw?: unknown };
 type NativeField = { key: string; label: string; type: string; required?: boolean; options?: string[]; description?: string; placeholder?: string };
 type NativeSession = { id: string; name: string; startTime?: string; endTime?: string; capacity?: number; status?: string };
@@ -3226,6 +3227,8 @@ function buildNativeFormRecord(formId: string, activityInput: Record<string, unk
 function publicNativeForm(form: NativeForm) {
   const registrationMode = nativeRegistrationMode(form.settings || {});
   const settings = form.settings || {};
+  const billingMode = clean(settings.billingMode);
+  const catalogPricing = billingMode === "catalog_paid" ? normalizeCatalogPricing(settings.catalogPricing) : undefined;
   const pricing = Array.isArray(settings.pricing) ? settings.pricing : [];
   const quantityFields = Array.isArray(settings.quantityFields) ? settings.quantityFields : [];
   return {
@@ -3238,7 +3241,8 @@ function publicNativeForm(form: NativeForm) {
       lineLoginEnabled: nativeLoginEnabled(form),
       pricing,
       quantityFields,
-      billingMode: clean(settings.billingMode),
+      billingMode,
+      ...(catalogPricing ? { catalogPricing } : {}),
       paymentRequired: settings.paymentRequired === true
     },
     fields: form.fields,
@@ -3355,13 +3359,28 @@ async function submitNativeForm(request: Request, env: Env, formId: string) {
   const sessionId = clean(input.sessionId || "default");
   const finalAnswers = normalizeAnswersRecord({ ...answers, ...registrationIdentityAnswers(identity) });
   const errors = validateNativeLoginAnswers(form, finalAnswers, sessionId);
+  let catalog: { selections: unknown[]; quote: CatalogQuote } | undefined;
+  if (clean(form.settings.billingMode || form.activity.billingMode) === "catalog_paid") {
+    const selections = Array.isArray(input.catalogSelections) ? input.catalogSelections : [];
+    try {
+      catalog = {
+        selections,
+        quote: calculateCatalogQuote(form.settings.catalogPricing || form.activity.catalogPricing, selections)
+      };
+    } catch (error) {
+      return json({ success:false, code:"catalog_validation_failed", message:error instanceof Error ? error.message : "付費規格驗證失敗" }, 400);
+    }
+  }
   if (errors.length) return json({ success: false, message: errors[0], errors }, 400);
   const __createStart = Date.now();
-  const __result = await createNativeRegistration(env, form, finalAnswers, lineUserId, sessionId, "tdea_registered", identity);
+  const __result = await createNativeRegistration(env, form, finalAnswers, lineUserId, sessionId, "tdea_registered", identity, catalog);
   console.log("REG_PERF", "create_registration", Date.now() - __createStart, "total", Date.now() - __perfStart);
   return __result;
 }
-async function createNativeRegistration(env: Env, form: NativeForm, answers: Record<string, unknown>, lineUserId: string, sessionId: string, source: string, identity?: RegistrationIdentity) {
+async function createNativeRegistration(env: Env, form: NativeForm, answers: Record<string, unknown>, lineUserId: string, sessionId: string, source: string, identity?: RegistrationIdentity, catalog?: { selections: unknown[]; quote: CatalogQuote }) {
+  if (clean(form.settings.billingMode || form.activity.billingMode) === "catalog_paid" && !catalog) {
+    return json({ success:false, code:"catalog_selection_required", message:"請先選擇付費規格" }, 400);
+  }
   const keys = registrationKeys(form.activity, form.id);
   const allKeys = Array.from(new Set([form.id, ...keys].filter(Boolean)));
 
@@ -3419,6 +3438,7 @@ async function createNativeRegistration(env: Env, form: NativeForm, answers: Rec
   const storedAnswers: Record<string, unknown> = {
     ...answers,
     ...identityAnswers,
+    ...(catalog ? { catalogSelections:catalog.selections } : {}),
     registrationSource: source,
     ...(identity ? {
       memberType: identity.role,
@@ -3443,7 +3463,17 @@ async function createNativeRegistration(env: Env, form: NativeForm, answers: Rec
     lineUserId,
     identityKey: identity?.identityKey,
     identityKind: identity?.kind,
-    payment: initialRegistrationPayment(form.activity, storedAnswers)
+    ...(catalog ? { catalogQuote:catalog.quote } : {}),
+    payment: catalog ? {
+      status: catalog.quote.total > 0 ? "unpaid" : "free",
+      method: catalog.quote.total > 0 ? "bank_transfer" : "free",
+      amount: catalog.quote.total,
+      currency: catalog.quote.currency,
+      updatedAt: catalog.quote.quotedAt,
+      transactions:[{
+        type:"created", status:catalog.quote.total > 0 ? "unpaid" : "free", amount:catalog.quote.total, at:catalog.quote.quotedAt
+      }]
+    } : initialRegistrationPayment(form.activity, storedAnswers)
   };
   const nativeWrite = writeNativeRegistration(env, entry);
   const [count, summary] = await Promise.all([
@@ -3463,7 +3493,7 @@ async function createNativeRegistration(env: Env, form: NativeForm, answers: Rec
     writeRegistrationSummary(env, summary),
     nativeWrite
   ]);
-  return json({ success: true, data: { registrationId, queryCode, checkinUrl: nativeCheckinUrl(checkinToken), submittedAt, activity: form.activity, session, payment: entry.payment } }, 201);
+  return json({ success: true, data: { registrationId, queryCode, checkinUrl: nativeCheckinUrl(checkinToken), submittedAt, activity: form.activity, session, payment: entry.payment, ...(entry.catalogQuote ? {catalogQuote:entry.catalogQuote} : {}) } }, 201);
 }
 async function submitNativeLoginRegistration(request: Request, env: Env, formId: string) {
   if (!env.ASSETS_BUCKET) return json({ success: false, message: "R2 bucket is not configured" }, 503);

@@ -207,6 +207,13 @@
 
     settings.fields = fields;
     settings.customFields = customFields;
+    const catalogMode = cleanText(form.querySelector("[name='catalogBillingMode']")?.value);
+    if (catalogMode === "catalog_paid") {
+      const catalogPricing = window.TDEACatalogPricing?.normalize(form.__tdeaCatalogPricing);
+      if (!catalogPricing?.items?.length) throw new Error("請至少建立一個規格型品項與規格");
+      settings.billingMode = "catalog_paid";
+      settings.catalogPricing = catalogPricing;
+    }
     settings.sessions = sessions;
     return { settings, fields, sessions };
   }
@@ -229,6 +236,11 @@
       setStatus(form, "讀取正式資料...");
       const canonical = await currentCanonical(id);
       const activity = activityFromForm(form, canonical.activity || {});
+
+      if (cleanText(form.querySelector("[name='catalogBillingMode']")?.value) === "catalog_paid") {
+        activity.billingMode = "catalog_paid";
+        activity.catalogPricing = window.TDEACatalogPricing?.normalize(form.__tdeaCatalogPricing);
+      }
 
       const posterFile = form.querySelector("[data-activity-poster-file]")?.files?.[0];
       if (posterFile) {

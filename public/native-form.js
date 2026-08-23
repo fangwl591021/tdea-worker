@@ -466,6 +466,14 @@
   }
 
   function renderReceipt(result) {
+  function catalogQuoteBlock(quote) {
+    const lines = Array.isArray(quote?.lines) ? quote.lines : [];
+    if (!lines.length) return "";
+    return `<div class="nf-detail" style="margin-top:10px"><strong>已選規格</strong>${lines.map((line) => {
+      const quantity = line.itemType === "accommodation" ? `${Number(line.rooms || 0)} 房／${Number(line.people || 0)} 人／${Number(line.nights || 1)} 晚` : `${Number(line.quantity || 0)} 件`;
+      return `<div>${esc(line.itemName)}－${esc(line.variantName)}（${esc(quantity)}）：NT$ ${esc(Number(line.amount || 0).toLocaleString("zh-TW"))}</div>`;
+    }).join("")}</div>`;
+  }
     const data = result.data || {};
     const checkinUrl = data.checkinUrl || "";
     const qrUrl = checkinUrl ? `https://api.qrserver.com/v1/create-qr-code/?size=220x220&data=${encodeURIComponent(checkinUrl)}` : "";
@@ -480,6 +488,7 @@
       <h1 class="nf-title">${esc(title)}</h1>
       <div class="nf-ok">${esc(notice)}查詢碼：${esc(queryCode)}</div>
       ${paymentDue ? `<div class="nf-alert">此活動需匯款 NT$ ${esc(Number(payment.amount || 0).toLocaleString())}，請完成匯款後到查詢頁回報末五碼。</div>` : ""}
+      ${catalogQuoteBlock(data.catalogQuote)}
       ${qrUrl ? `<img class="nf-qr" src="${qrUrl}" alt="核銷 QR Code">` : ""}
       <div class="nf-actions">
         <a class="nf-btn primary" href="${editUrl}">修改報名資料</a>
@@ -532,6 +541,10 @@
     const sessions = Array.isArray(form.sessions) ? form.sessions : [];
     const fields = Array.isArray(form.fields) ? form.fields : [];
     const activityFields = fields.filter((field) => !isRegistrationProfileField(field));
+    const catalogMode = trim(form.settings?.billingMode || activity.billingMode);
+    const catalogPricing = form.settings?.catalogPricing || activity.catalogPricing;
+    const catalogEnabled = catalogMode === "catalog_paid" && window.TDEACatalogPricing;
+    const catalogHtml = catalogEnabled ? window.TDEACatalogPricing.registrationHtml(catalogPricing) : "";
     const image = activity.posterUrl || activity.imageUrl || "";
 
     const memberResponse = await fetch(`${api}/api/native-forms/${encodeURIComponent(id)}/login-member?lineUserId=${encodeURIComponent(uid)}`, { cache: "no-store" });
@@ -566,12 +579,14 @@
         <form class="nf-form" data-native-register novalidate>
           ${sessionFieldHtml(sessions)}
           ${activityFields.map(fieldHtml).join("")}
+          ${catalogHtml}
           <div class="nf-actions"><button class="nf-btn primary" type="submit">確認報名</button><a class="nf-btn" href="?query=1">報名查詢/取消</a></div>
         </form>
       </div>
     </section>`);
 
     const registerForm = app.querySelector("[data-native-register]");
+    if (catalogEnabled && registerForm) window.TDEACatalogPricing.bind(registerForm, catalogPricing);
     registerForm?.addEventListener("submit", async (event) => {
       event.preventDefault();
       const requiredError = validateVisibleRequired(registerForm);
@@ -580,11 +595,18 @@
       submit.disabled = true;
       submit.textContent = "報名中...";
       const answers = collectAnswers(registerForm, activityFields);
+      let catalogSelections;
+      if (catalogEnabled) {
+        try { catalogSelections = window.TDEACatalogPricing.collect(registerForm, catalogPricing); }
+        catch (error) {
+          submit.disabled = false; submit.textContent = "確認報名"; return alert(error?.message || "請確認付費規格");
+        }
+      }
       const sessionId = registerForm.elements.sessionId?.value || sessions[0]?.id || "default";
       const submitResponse = await fetch(`${api}/api/native-forms/${encodeURIComponent(id)}`, {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ sessionId, lineUserId: uid, answers })
+        body: JSON.stringify({ sessionId, lineUserId: uid, answers, ...(catalogEnabled ? {catalogSelections} : {}) })
       });
       const submitResult = await submitResponse.json().catch(() => ({}));
       if (!submitResponse.ok || !submitResult.success) {
@@ -625,6 +647,7 @@
       ${payment.remittanceLast5 ? `<div><strong>已回報末五碼：</strong>${esc(payment.remittanceLast5)}</div>` : ""}
       ${payment.paidAt ? `<div><strong>確認時間：</strong>${esc(new Date(payment.paidAt).toLocaleString("zh-TW", { hour12: false }))}</div>` : ""}
       ${remittanceInfo ? `<div style="white-space:pre-wrap"><strong>匯款資訊：</strong>${esc(remittanceInfo)}</div>` : ""}
+      ${catalogQuoteBlock(row.catalogQuote)}
       ${canReport ? `<form class="nf-form" data-payment-report style="margin-top:10px">
         <input type="hidden" name="registrationId" value="${esc(row.id)}">
         <input type="hidden" name="queryCode" value="${esc(row.queryCode || "")}">
