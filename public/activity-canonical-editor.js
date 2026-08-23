@@ -2,6 +2,7 @@
   const api = "https://tdeawork.fangwl591021.workers.dev";
   const numericKeys = new Set(["capacity","checkinPoints","feePoints","paymentAmount","reg","check"]);
   const systemFieldKeys = new Set(["name","phone","email","company","memberNo","note","gender","isMember","meal","imageUpload","participantUnit"]);
+  const configurableSystemFieldKeys = new Set(["gender","isMember","meal","imageUpload"]);
   const activityKeys = [
     "id","templateMode","name","type","courseTime","deadline","capacity","checkinPoints","feePoints","paymentAmount",
     "remittanceInfo","registrationMode","reg","check","status","formUrl","detailText","posterUrl","galleryUrls","nativeFormUrl","youtubeUrl"
@@ -157,9 +158,42 @@
     const canonicalSessions = Array.isArray(canonical?.form?.sessions) ? canonical.form.sessions : [];
     const settings = { ...previous, ...live };
 
+    settings.registrationMode = cleanText(form.querySelector("[name='registrationMode']")?.value || settings.registrationMode || "form");
+    settings.requireImageUpload = cleanText(form.querySelector("[name='requireImageUpload']")?.value || "N");
+    settings.genderField = cleanText(form.querySelector("[name='genderField']")?.value || "none");
+    settings.memberField = cleanText(form.querySelector("[name='memberField']")?.value || "none");
+    settings.mealField = cleanText(form.querySelector("[name='mealField']")?.value || "none");
+
     const liveFields = Array.isArray(live.fields) ? live.fields : [];
-    const systemFields = (liveFields.length ? liveFields : canonicalFields)
-      .filter((field) => systemFieldKeys.has(cleanText(field?.key)));
+    const sourceFields = liveFields.length ? liveFields : canonicalFields;
+    const systemFields = sourceFields.filter((field) =>
+      systemFieldKeys.has(cleanText(field?.key)) && !configurableSystemFieldKeys.has(cleanText(field?.key))
+    );
+    const previousSystemField = (key, fallback) => sourceFields.find((field) => cleanText(field?.key) === key) || fallback;
+    if (settings.genderField !== "none") {
+      systemFields.push({
+        ...previousSystemField("gender", { key:"gender", label:"性別", type:"choice", options:["男","女","不便透露"] }),
+        required: settings.genderField === "required"
+      });
+    }
+    if (settings.memberField !== "none" && settings.memberField !== "login") {
+      systemFields.push({
+        ...previousSystemField("isMember", { key:"isMember", label:"是否為會員", type:"choice", options:["是","否","不確定"] }),
+        required: settings.memberField === "required"
+      });
+    }
+    if (settings.mealField !== "none") {
+      systemFields.push({
+        ...previousSystemField("meal", { key:"meal", label:"用餐選項", type:"choice", options:["葷","素"] }),
+        required: settings.mealField === "required"
+      });
+    }
+    if (settings.requireImageUpload === "Y") {
+      systemFields.push({
+        ...previousSystemField("imageUpload", { key:"imageUpload", label:"附件上傳", type:"file" }),
+        required: false
+      });
+    }
 
     const domCustomFields = collectStructuredCustomFields(form, canonicalFields);
     const fallbackCustomFields = Array.isArray(live.customFields)
