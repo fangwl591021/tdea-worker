@@ -5,6 +5,7 @@ type Row = Record<string, any>;
 
 const clean = (v: unknown, n = 500) => String(v ?? "").trim().slice(0, n);
 const systemKeys = new Set(["name","phone","email","company","memberNo","note","gender","isMember","meal","imageUpload","participantUnit"]);
+const configurableSystemKeys = new Set(["gender","isMember","meal","imageUpload"]);
 
 function normalizeField(field: Row, index: number) {
   const type = clean(field.type || "text", 40);
@@ -46,7 +47,10 @@ async function syncNativeFormSchema(env: Env, formId: string) {
   if (!settings) return false;
 
   const currentFields = Array.isArray(form.fields) ? form.fields.filter((x: unknown) => x && typeof x === "object") as Row[] : [];
-  const baseFields = currentFields.filter((f) => systemKeys.has(clean(f.key, 120)));
+  const baseFields = currentFields.filter((field) => {
+    const key = clean(field.key, 120);
+    return systemKeys.has(key) && !configurableSystemKeys.has(key);
+  });
   const nextFields: Row[] = [...baseFields];
 
   const ensure = (field: Row) => {
