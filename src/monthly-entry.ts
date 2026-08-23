@@ -3225,11 +3225,22 @@ function buildNativeFormRecord(formId: string, activityInput: Record<string, unk
 }
 function publicNativeForm(form: NativeForm) {
   const registrationMode = nativeRegistrationMode(form.settings || {});
+  const settings = form.settings || {};
+  const pricing = Array.isArray(settings.pricing) ? settings.pricing : [];
+  const quantityFields = Array.isArray(settings.quantityFields) ? settings.quantityFields : [];
   return {
     id: form.id,
     provider: form.provider,
     activity: form.activity,
-    settings: { sessionsEnabled: form.sessions.length > 1, registrationMode, lineLoginEnabled: nativeLoginEnabled(form) },
+    settings: {
+      sessionsEnabled: form.sessions.length > 1,
+      registrationMode,
+      lineLoginEnabled: nativeLoginEnabled(form),
+      pricing,
+      quantityFields,
+      billingMode: clean(settings.billingMode),
+      paymentRequired: settings.paymentRequired === true
+    },
     fields: form.fields,
     sessions: form.sessions.filter((session) => clean(session.status || "open") !== "closed"),
     formUrl: form.formUrl
