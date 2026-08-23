@@ -7,12 +7,12 @@
     "cardCollection","register","query","memberQr","calendar","checkin","redeem","redeemSession","monthlyDetail","monthlyShare","personalMessages","close","marquee","motherRegister","memberHome","checkinModule"
   ];
   const scriptVersions = [
+    "activity-canonical-editor.js?v=canonical4",
     "app.js?v=activity-editor7",
     "line-zone.js?v=access-label1",
     "lottery.js?v=lottery4",
     "activity-types.js?v=types4",
     "form-builder.js?v=form17",
-    "activity-canonical-editor.js?v=canonical3",
     "google-form-engine.js?v=gform17",
     "activity-detail.js?v=activity-detail7",
     "uid-column.js?v=uid21",
