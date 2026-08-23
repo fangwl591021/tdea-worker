@@ -9,8 +9,8 @@
   const scriptVersions = [
     "activity-canonical-editor.js?v=canonical4",
     "app.js?v=activity-editor8",
-    "catalog-pricing.js?v=catalog1",
-    "catalog-pricing-editor.js?v=catalog1",
+    "catalog-pricing.js?v=catalog2",
+    "catalog-pricing-editor.js?v=catalog2",
     "line-zone.js?v=access-label1",
     "lottery.js?v=lottery4",
     "activity-types.js?v=types4",
@@ -118,7 +118,7 @@
     if (params.has("personalMessages")) return ["personal-message.js?v=pm4"];
     if (params.has("memberHome")) return ["member-home.js?v=home5"];
     if (params.has("checkinModule")) return ["checkin-module.js?v=identity1"];
-    return ["catalog-pricing.js?v=catalog1", "native-form.js?v=catalog1"];
+    return ["catalog-pricing.js?v=catalog2", "native-form.js?v=catalog2"];
   }
   function loadScript(src) {
     return new Promise((resolve, reject) => {

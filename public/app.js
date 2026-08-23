@@ -2613,7 +2613,7 @@ registrationSettings = { ...builderSettings, customFields, fields: [...structure
       try {
         const catalogPricing = d.catalogBillingMode === "catalog_paid" ? window.TDEACatalogPricing?.normalize(af.__tdeaCatalogPricing) : null;
         if (d.catalogBillingMode === "catalog_paid") {
-          if (!catalogPricing?.items?.length) throw new Error("請至少建立一個規格型品項與規格");
+          if (!catalogPricing?.items?.length) throw new Error("請至少建立一個收費項目與報名方案");
           item.billingMode = "catalog_paid";
           item.catalogPricing = catalogPricing;
         }

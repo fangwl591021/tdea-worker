@@ -470,7 +470,7 @@
     const lines = Array.isArray(quote?.lines) ? quote.lines : [];
     if (!lines.length) return "";
     return `<div class="nf-detail" style="margin-top:10px"><strong>已選規格</strong>${lines.map((line) => {
-      const quantity = line.itemType === "accommodation" ? `${Number(line.rooms || 0)} 房／${Number(line.people || 0)} 人／${Number(line.nights || 1)} 晚` : `${Number(line.quantity || 0)} 件`;
+      const quantity = line.itemType === "accommodation" ? `${Number(line.rooms || 0)} 房／${Number(line.people || 0)} 人／${Number(line.nights || 1)} 晚` : line.quantityMode === "fixed" ? "固定金額" : `${Number(line.quantity || 0)} ${line.quantityMode === "person" ? "人" : "份"}`;
       return `<div>${esc(line.itemName)}－${esc(line.variantName)}（${esc(quantity)}）：NT$ ${esc(Number(line.amount || 0).toLocaleString("zh-TW"))}</div>`;
     }).join("")}</div>`;
   }

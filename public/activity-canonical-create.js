@@ -144,7 +144,7 @@
       const catalogMode = clean(form.querySelector("[name='catalogBillingMode']")?.value);
       if (catalogMode === "catalog_paid") {
         const catalogPricing = window.TDEACatalogPricing?.normalize(form.__tdeaCatalogPricing);
-        if (!catalogPricing?.items?.length) throw new Error("請至少建立一個規格型品項與規格");
+        if (!catalogPricing?.items?.length) throw new Error("請至少建立一個收費項目與報名方案");
         settings.billingMode = "catalog_paid";
         settings.catalogPricing = catalogPricing;
         activity.billingMode = "catalog_paid";

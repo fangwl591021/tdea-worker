@@ -10,6 +10,7 @@
     const items = (Array.isArray(source.items) ? source.items : []).slice(0, 50).flatMap((rawItem, itemIndex) => {
       const item = rawItem && typeof rawItem === "object" ? rawItem : {};
       const type = item.type === "accommodation" ? "accommodation" : "product";
+      const quantityMode = item.quantityMode === "person" ? "person" : item.quantityMode === "fixed" ? "fixed" : "unit";
       const id = trim(item.id) || `item_${itemIndex + 1}`;
       if (!trim(item.name) || seenItems.has(id)) return [];
       seenItems.add(id);
@@ -28,7 +29,7 @@
           enabled:variant.enabled !== false
         }];
       });
-      return variants.length ? [{id,name:trim(item.name),type,required:item.required === true,enabled:item.enabled !== false,variants}] : [];
+      return variants.length ? [{id,name:trim(item.name),type,...(type === "product" ? {quantityMode} : {}),required:item.required === true,enabled:item.enabled !== false,variants}] : [];
     });
     return {schemaVersion:1,currency:"TWD",items};
   }
@@ -43,9 +44,9 @@
       const variant = item.variants.find((candidate) => candidate.id === trim(selection.variantId) && candidate.enabled);
       if (!variant) throw new Error(`${item.name} 的規格無效`);
       if (item.type === "product") {
-        const quantity = integer(selection.quantity);
-        if (quantity < 1) { if (item.required) throw new Error(`${item.name} 數量至少為 1`); continue; }
-        lines.push({...selection,itemName:item.name,variantName:variant.name,unitPrice:variant.unitPrice,amount:variant.unitPrice * quantity});
+        const quantity = item.quantityMode === "fixed" ? 1 : integer(selection.quantity);
+        if (quantity < 1) { if (item.required) throw new Error(`${item.name} ${item.quantityMode === "person" ? "人數" : "數量"}至少為 1`); continue; }
+        lines.push({...selection,itemName:item.name,variantName:variant.name,quantity,quantityMode:item.quantityMode,unitPrice:variant.unitPrice,amount:variant.unitPrice * quantity});
       } else {
         const rooms = integer(selection.rooms), people = integer(selection.people), nights = Math.max(1, integer(selection.nights, 1));
         if (rooms < 1 || people < 1) { if (item.required) throw new Error(`${item.name} 的房數與人數至少為 1`); continue; }
@@ -54,9 +55,22 @@
         lines.push({...selection,itemName:item.name,variantName:variant.name,unitPrice:variant.unitPrice,amount:variant.unitPrice * multiplier});
       }
     }
-    if (!lines.length) throw new Error("請至少選擇一個付費品項");
+    if (!lines.length) throw new Error("請至少選擇一個收費項目");
     return {currency:"TWD",total:lines.reduce((sum, line) => sum + line.amount, 0),lines};
   }
+  function priceSuffix(item, variant) {
+    if (item.type === "accommodation") return variant.priceUnit === "per_person_per_night" ? "／人／晚" : "／房／晚";
+    if (item.quantityMode === "person") return "／人";
+    if (item.quantityMode === "fixed") return "（固定金額）";
+    return "／份";
+  }
+
+  function quantityHtml(item) {
+    if (item.type === "accommodation") return `<div class="nf-catalog-grid"><label>房數<input type="number" min="${item.required ? 1 : 0}" step="1" value="${item.required ? 1 : 0}" data-catalog-rooms></label><label>入住人數<input type="number" min="${item.required ? 1 : 0}" step="1" value="${item.required ? 1 : 0}" data-catalog-people></label><label>晚數<input type="number" min="1" step="1" value="1" data-catalog-nights></label></div>`;
+    if (item.quantityMode === "fixed") return "";
+    return `<div class="nf-catalog-grid"><label>${item.quantityMode === "person" ? "報名人數" : "數量"}<input type="number" min="${item.required ? 1 : 0}" step="1" value="${item.required ? 1 : 0}" data-catalog-quantity></label></div>`;
+  }
+
 
   function registrationHtml(pricingInput) {
     if (!document.getElementById("catalog-pricing-style")) {
@@ -68,10 +82,10 @@
 
     const pricing = normalize(pricingInput);
     if (!pricing.items.length) return "";
-    return `<section class="nf-catalog" data-catalog-pricing><h2>選擇付費規格</h2>${pricing.items.filter((item) => item.enabled).map((item) => {
+    return `<section class="nf-catalog" data-catalog-pricing><h2>選擇報名方案</h2>${pricing.items.filter((item) => item.enabled).map((item) => {
       const variants = item.variants.filter((variant) => variant.enabled);
-      return `<div class="nf-catalog-item" data-catalog-item="${esc(item.id)}" data-catalog-type="${item.type}" data-catalog-required="${item.required ? "1" : "0"}"><label>${esc(item.name)}${item.required ? ' <span class="nf-required">*</span>' : ""}</label><select data-catalog-variant ${item.required ? "required" : ""}><option value="">${item.required ? "請選擇規格" : "不選購"}</option>${variants.map((variant) => `<option value="${esc(variant.id)}">${esc(variant.name)}｜NT$ ${variant.unitPrice.toLocaleString("zh-TW")}${variant.priceUnit === "per_person_per_night" ? "／人／晚" : variant.priceUnit === "per_room_per_night" ? "／房／晚" : "／件"}</option>`).join("")}</select>${item.type === "product" ? `<div class="nf-catalog-grid"><label>數量<input type="number" min="${item.required ? 1 : 0}" step="1" value="${item.required ? 1 : 0}" data-catalog-quantity></label></div>` : `<div class="nf-catalog-grid"><label>房數<input type="number" min="${item.required ? 1 : 0}" step="1" value="${item.required ? 1 : 0}" data-catalog-rooms></label><label>入住人數<input type="number" min="${item.required ? 1 : 0}" step="1" value="${item.required ? 1 : 0}" data-catalog-people></label><label>晚數<input type="number" min="1" step="1" value="1" data-catalog-nights></label></div>`}</div>`;
-    }).join("")}<div class="nf-catalog-total">試算總額：<strong data-catalog-total>NT$ 0</strong></div><div class="nf-help" data-catalog-message>送出後由系統重新驗價，實際金額以報名紀錄為準。</div></section>`;
+      return `<div class="nf-catalog-item" data-catalog-item="${esc(item.id)}" data-catalog-type="${item.type}" data-catalog-required="${item.required ? "1" : "0"}"><label>${esc(item.name)}${item.required ? ' <span class="nf-required">*</span>' : ""}</label><select data-catalog-variant ${item.required ? "required" : ""}><option value="">${item.required ? "請選擇報名方案" : "不選擇"}</option>${variants.map((variant) => `<option value="${esc(variant.id)}">${esc(variant.name)}｜NT$ ${variant.unitPrice.toLocaleString("zh-TW")}${priceSuffix(item, variant)}</option>`).join("")}</select>${quantityHtml(item)}</div>`;
+    }).join("")}<div class="nf-catalog-total">應付金額試算：<strong data-catalog-total>NT$ 0</strong></div><div class="nf-help" data-catalog-message>送出後由系統重新驗價，實際金額以報名紀錄為準。</div></section>`;
   }
 
   function collect(form, pricingInput, allowEmpty = false) {

@@ -1,4 +1,5 @@
 export type CatalogPriceUnit = "per_item" | "per_room_per_night" | "per_person_per_night";
+export type CatalogQuantityMode = "person" | "unit" | "fixed";
 
 export type CatalogVariant = {
   id: string;
@@ -16,6 +17,7 @@ export type CatalogItem = {
   required: boolean;
   enabled: boolean;
   variants: CatalogVariant[];
+  quantityMode?: CatalogQuantityMode;
 };
 
 export type CatalogPricing = {
@@ -38,6 +40,7 @@ export type CatalogQuoteLine = CatalogSelection & {
   itemType: CatalogItem["type"];
   variantName: string;
   priceUnit: CatalogPriceUnit;
+  quantityMode?: CatalogQuantityMode;
   unitPrice: number;
   amount: number;
 };
@@ -70,6 +73,11 @@ export function normalizeCatalogPricing(value: unknown): CatalogPricing {
   rawItems.forEach((rawItem, itemIndex) => {
     const item = record(rawItem);
     const type = text(item.type, 40) === "accommodation" ? "accommodation" : "product";
+    const requestedQuantityMode = text(item.quantityMode, 40);
+    const quantityMode: CatalogQuantityMode = requestedQuantityMode === "person"
+      ? "person"
+      : requestedQuantityMode === "fixed" ? "fixed" : "unit";
+
     const id = text(item.id, 100) || `item_${itemIndex + 1}`;
     const name = text(item.name, 200);
     if (!name || seenItems.has(id)) return;
@@ -101,7 +109,7 @@ export function normalizeCatalogPricing(value: unknown): CatalogPricing {
     });
 
     if (!variants.length) return;
-    items.push({ id, name, type, required: item.required === true, enabled: item.enabled !== false, variants });
+    items.push({ id, name, type, ...(type === "product" ? {quantityMode} : {}), required: item.required === true, enabled: item.enabled !== false, variants });
   });
 
   return { schemaVersion: 1, currency: "TWD", items };
@@ -109,7 +117,7 @@ export function normalizeCatalogPricing(value: unknown): CatalogPricing {
 
 export function calculateCatalogQuote(pricingInput: unknown, selectionsInput: unknown): CatalogQuote {
   const pricing = normalizeCatalogPricing(pricingInput);
-  if (!pricing.items.length) throw new Error("規格型品項尚未設定");
+  if (!pricing.items.length) throw new Error("活動收費項目尚未設定");
   const rawSelections = Array.isArray(selectionsInput) ? selectionsInput : [];
   const selectionMap = new Map<string, Record<string, unknown>>();
   for (const rawSelection of rawSelections) {
@@ -135,12 +143,12 @@ export function calculateCatalogQuote(pricingInput: unknown, selectionsInput: un
     if (!variant) throw new Error(`${item.name} 的規格無效`);
 
     if (item.type === "product") {
-      const quantity = integer(selection.quantity);
+      const quantity = item.quantityMode === "fixed" ? 1 : integer(selection.quantity);
       if (quantity < 1) {
-        if (item.required) throw new Error(`${item.name} 數量至少為 1`);
+        if (item.required) throw new Error(`${item.name} ${item.quantityMode === "person" ? "人數" : "數量"}至少為 1`);
         continue;
       }
-      lines.push({ itemId:item.id, variantId, itemName:item.name, itemType:item.type, variantName:variant.name, priceUnit:variant.priceUnit, unitPrice:variant.unitPrice, quantity, amount:variant.unitPrice * quantity });
+      lines.push({ itemId:item.id, variantId, itemName:item.name, itemType:item.type, variantName:variant.name, priceUnit:variant.priceUnit, quantityMode:item.quantityMode, unitPrice:variant.unitPrice, quantity, amount:variant.unitPrice * quantity });
       continue;
     }
 
@@ -157,6 +165,6 @@ export function calculateCatalogQuote(pricingInput: unknown, selectionsInput: un
     lines.push({ itemId:item.id, variantId, itemName:item.name, itemType:item.type, variantName:variant.name, priceUnit:variant.priceUnit, unitPrice:variant.unitPrice, rooms, people, nights, amount:variant.unitPrice * multiplier });
   }
 
-  if (!lines.length) throw new Error("請至少選擇一個付費品項");
+  if (!lines.length) throw new Error("請至少選擇一個收費項目");
   return { schemaVersion:1, currency:"TWD", total:lines.reduce((sum, line) => sum + line.amount, 0), lines, quotedAt:new Date().toISOString() };
 }
