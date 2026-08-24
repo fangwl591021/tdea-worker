@@ -1,4 +1,5 @@
 (() => {
+  window.__tdeaDeferredAppLoader = true;
   const api = "https://tdeawork.fangwl591021.workers.dev";
   const adminLiffId = "2005868456-2jmxqyFU";
   const adminLiffUrl = `https://liff.line.me/${adminLiffId}?adminLogin=1`;
@@ -6,9 +7,36 @@
   const publicModes = [
     "cardCollection","register","query","memberQr","calendar","checkin","redeem","redeemSession","monthlyDetail","monthlyShare","personalMessages","close","marquee","motherRegister","memberHome","checkinModule"
   ];
+  const deferredFeatureScripts = [
+    "marquee-mode-guard.js?v=20260821-1",
+    "native-form-trace.js?v=20260821-1",
+    "marquee-ui-fix.js?v=20260821-1",
+    "marquee-standalone.js?v=20260821-1",
+    "registration-total-preview.js?v=total-preview1",
+    "registration-attachment-fix.js?v=attachment-fix3",
+    "custom-line-id-field-fix.js?v=line-id-fix1",
+    "custom-id-card-field-fix.js?v=id-card-fix1",
+    "manager-save-optimizer.js?v=save-opt2",
+    "card-ocr-progress.js?v=ocr-progress1",
+    "form-builder-edit-guard.js?v=edit-guard1",
+    "activity-edit-canonical-hotfix.js?v=canonical-hotfix2",
+    "liff-entry-access-log.js?v=entry-log1",
+    "activity-edit-fast-save.js?v=fast-save1",
+    "member-name-search.js?v=name-roster1",
+    "roster-single-entry-only.js?v=single-entry1",
+    "member-single-crud.js?v=single-crud1",
+    "roster-anomaly-list.js?v=anomaly2",
+    "admin-registration-query.js?v=restore1",
+    "smart-activity.js?v=v2split1",
+    "smart-activity-publish.js?v=publish3",
+    "smart-activity-staged.js?v=staged1",
+    "smart-activity-intelligence.js?v=rules2",
+    "smart-activity-docs.js?v=docs1",
+    "smart-activity-points.js?v=points1"
+  ];
   const scriptVersions = [
     "activity-canonical-editor.js?v=canonical4",
-    "app.js?v=activity-editor8",
+    "app.js?v=activity-editor10",
     "catalog-pricing.js?v=catalog2",
     "catalog-pricing-editor.js?v=catalog2",
     "line-zone.js?v=access-label1",
@@ -106,10 +134,18 @@
   }
   async function loadApp() {
     document.body.classList.remove("admin-login-body");
+    await loadDeferredFeatureScripts();
     const files = isPublicMode() ? publicScriptVersions() : scriptVersions;
     for (const file of files) {
       await loadScript(file).catch((error) => { if (!file.startsWith("line-monitor-link")) throw error; });
     }
+  }
+  async function loadDeferredFeatureScripts() {
+    const loads = deferredFeatureScripts.map((file) => loadScript(file, { ordered: true }).catch((error) => {
+      console.warn(`[deferred-script] ${file}`, error);
+      return null;
+    }));
+    await Promise.all(loads);
   }
   function publicScriptVersions() {
     const params = searchParams();
@@ -120,10 +156,11 @@
     if (params.has("checkinModule")) return ["checkin-module.js?v=identity1"];
     return ["catalog-pricing.js?v=catalog2", "native-form.js?v=catalog2"];
   }
-  function loadScript(src) {
+  function loadScript(src, { ordered = false } = {}) {
     return new Promise((resolve, reject) => {
       const script = document.createElement("script");
       script.src = new URL(src, scriptBase).href;
+      if (ordered) script.async = false;
       script.onload = resolve;
       script.onerror = () => reject(new Error(`script load failed: ${src}`));
       document.body.appendChild(script);

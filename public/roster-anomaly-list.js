@@ -17,26 +17,11 @@
     row?.registrationCompletedAt || row?.registration_completed_at || row?.completedAt || row?.completed_at
   ));
 
-  const stored = (...keys) => {
-    for (const key of keys) {
-      const value = sessionStorage.getItem(key) || localStorage.getItem(key) || "";
-      if (clean(value)) return clean(value);
-    }
-    return "";
-  };
-  const adminHeaders = () => ({
-    accept: "application/json",
-    ...(stored("tdea-admin-email") ? { "x-admin-email": stored("tdea-admin-email").toLowerCase() } : {}),
-    ...(stored("tdea-admin-member-no", "tdea-member-no") ? { "x-admin-member-no": stored("tdea-admin-member-no", "tdea-member-no").toUpperCase() } : {}),
-    ...(stored("tdea-admin-line-user-id", "tdea-line-user-id", "lineUserId") ? { "x-line-user-id": stored("tdea-admin-line-user-id", "tdea-line-user-id", "lineUserId") } : {})
-  });
-
   async function loadAssociationRows() {
-    const response = await fetch("/api/manager-data", { headers: adminHeaders(), cache: "no-store" });
-    const payload = await response.json().catch(() => ({}));
-    if (!response.ok || payload?.success === false) throw new Error(payload?.message || "讀取協會名冊失敗");
-    const data = payload?.data && typeof payload.data === "object" ? payload.data : payload;
-    return Array.isArray(data?.association) ? data.association.filter((row) => row && typeof row === "object") : [];
+    const getRows = window.TDEAApp?.getRosterRows;
+    if (typeof getRows !== "function") throw new Error("協會名冊尚未載入");
+    const rows = await getRows("association");
+    return Array.isArray(rows) ? rows : [];
   }
 
   function anomalyGroups(rows) {

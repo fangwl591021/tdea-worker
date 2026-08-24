@@ -23,6 +23,8 @@
   const state = { view: "dashboard", drawer: "", keywordEditId: "", data: load(), archivedActivities: [], registrationLists: {}, memberRegistrationLists: {}, memberPointAccounts: {}, memberApplications: null, generalMembers: null, generalMembersLoading: false, generalSearch: "", adminWhitelist: null, adminWhitelistMeta: null, motherRegisterRecords: null, motherRegisterSearch: "", motherRegisterLoading: false, motherRegisterLoadedAt: "", rosterSearch: { association: "", vendor: "" } };
   let managerDataSaveTimer = null;
   let managerDataLoading = false;
+  let managerDataReadyResolve;
+  const managerDataReady = new Promise((resolve) => { managerDataReadyResolve = resolve; });
   let lineDraftAutoImporting = false;
   let lineDraftLastAutoImport = 0;
   let rosterCleanupApplied = false;
@@ -309,6 +311,7 @@
   async function loadManagerDataRemote() {
     if (managerDataLoading) return;
     managerDataLoading = true;
+    let managerDataLoaded = false;
     try {
       const response = await fetch(api + "/api/manager-data", { headers: adminHeaders(), cache: "no-store" });
       const result = await response.json().catch(() => ({}));
@@ -318,12 +321,18 @@
         await loadArchivedActivitiesRemote();
         persistLocalSnapshot();
         await loadAdminAccessIntoRoster();
+        managerDataLoaded = true;
         render();
       }
     } catch (_) {
     } finally {
       managerDataLoading = false;
+      if (managerDataReadyResolve) {
+        managerDataReadyResolve();
+        managerDataReadyResolve = null;
+      }
     }
+    if (managerDataLoaded) syncInitialRegistrationStatsOnce();
   }
   function isDefinitelyNonRosterRow(row, type) {
     const memberNo = String(row?.memberNo || "").trim().toUpperCase();
@@ -606,6 +615,7 @@
   }
 
   let registrationSyncing = false;
+  let initialRegistrationSyncStarted = false;
   let monthlyRegistrationMap = null;
   let monthlyRegistrationMapLoadedAt = 0;
 
@@ -700,6 +710,11 @@
   }
   function autoSyncEnabled() { return localStorage.getItem(autoSyncKey) !== "N"; }
   function setAutoSyncEnabled(enabled) { localStorage.setItem(autoSyncKey, enabled ? "Y" : "N"); }
+  function syncInitialRegistrationStatsOnce() {
+    if (initialRegistrationSyncStarted || !autoSyncEnabled()) return;
+    initialRegistrationSyncStarted = true;
+    syncRegistrations().catch(() => undefined);
+  }
   async function syncRegistrations(showMessage = false) {
     if (registrationSyncing || state.view !== "dashboard") return;
     registrationSyncing = true;
@@ -1177,7 +1192,6 @@
       <div class="toast" id="toast"></div>`;
     bind();
     maybeAutoImportLineActivityDrafts();
-    if (autoSyncEnabled()) syncRegistrations();
     if (state.view === "redeem" && !state.redeemRecords) loadRedeemRecords();
     if (state.view === "redeem" && !state.pointLedger) loadPointLedger();
     if (state.view === "dashboard" && state.memberApplications === null) loadMemberApplications();
@@ -3244,6 +3258,11 @@ async function updateRegistrationPayment(registrationId, status, button = null) 
       state.view = id;
       state.drawer = "";
       render();
+    },
+    async getRosterRows(type) {
+      await managerDataReady;
+      if (type !== "association" && type !== "vendor") return [];
+      return visibleRosterRows(type).map((row) => ({ ...row }));
     },
     isView(id) {
       return state.view === id;

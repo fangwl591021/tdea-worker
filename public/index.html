@@ -13,10 +13,6 @@
 </head>
 <body>
   <div id="app"></div>
-  <script src="/marquee-mode-guard.js?v=20260821-1"></script>
-  <script src="/native-form-trace.js?v=20260821-1"></script>
-  <script src="/marquee-ui-fix.js?v=20260821-1"></script>
-  <script src="/marquee-standalone.js?v=20260821-1"></script>
   <script>
     (() => {
       const publicKeys = ["cardCollection", "register", "query", "memberQr", "calendar", "checkin", "redeem", "redeemSession", "monthlyDetail", "personalMessages", "close", "marquee", "motherRegister", "memberHome"];
@@ -36,6 +32,7 @@
       app.innerHTML = '<main data-public-fallback style="max-width:840px;margin:0 auto;padding:24px 16px;font-family:system-ui,-apple-system,BlinkMacSystemFont,&quot;Segoe UI&quot;,sans-serif"><section style="background:#fff;border:1px solid #e4e7ec;border-radius:10px;padding:18px;color:#067647;font-weight:800">載入中...</section></main>';
       setTimeout(() => {
         if (!app.querySelector("[data-public-fallback]")) return;
+        if (window.__tdeaDeferredAppLoader) return;
         if (params.has("marquee") && typeof window.__tdeaMarqueeStandaloneStart === "function") {
           window.__tdeaMarqueeStandaloneStart();
           return;
@@ -121,27 +118,6 @@
       };
     })();
   </script>
-  <script src="/registration-total-preview.js?v=total-preview1"></script>
-  <script src="/registration-attachment-fix.js?v=attachment-fix3"></script>
-  <script src="/custom-line-id-field-fix.js?v=line-id-fix1"></script>
-  <script src="/custom-id-card-field-fix.js?v=id-card-fix1"></script>
-  <script src="/manager-save-optimizer.js?v=save-opt2"></script>
-  <script src="/card-ocr-progress.js?v=ocr-progress1"></script>
-  <script src="/form-builder-edit-guard.js?v=edit-guard1"></script>
-  <script src="/activity-edit-canonical-hotfix.js?v=canonical-hotfix2"></script>
-  <script src="/liff-entry-access-log.js?v=entry-log1"></script>
-  <script src="/admin-login.js?v=admin-entry27"></script>
-  <script src="/activity-edit-fast-save.js?v=fast-save1"></script>
-  <script src="/member-name-search.js?v=name-roster1"></script>
-  <script src="/roster-single-entry-only.js?v=single-entry1"></script>
-  <script src="/member-single-crud.js?v=single-crud1"></script>
-  <script src="/roster-anomaly-list.js?v=anomaly1"></script>
-  <script src="/admin-registration-query.js?v=restore1"></script>
-  <script src="/smart-activity.js?v=v2split1"></script>
-  <script src="/smart-activity-publish.js?v=publish3"></script>
-  <script src="/smart-activity-staged.js?v=staged1"></script>
-  <script src="/smart-activity-intelligence.js?v=rules2"></script>
-  <script src="/smart-activity-docs.js?v=docs1"></script>
-  <script src="/smart-activity-points.js?v=points1"></script>
+  <script src="/admin-login.js?v=admin-entry28"></script>
 </body>
 </html>
