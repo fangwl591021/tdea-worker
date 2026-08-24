@@ -735,7 +735,8 @@
         }
       });
       if (changed) {
-        save();
+        // Registration counts are transient activity summary data. Persisting them through
+        // save() would enqueue an unrelated /api/manager-data PUT and rebase the rosters.
         render();
       } else if (showMessage) {
         toast("目前沒有新的報名同步資料");
