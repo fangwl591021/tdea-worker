@@ -96,6 +96,12 @@
     setStored("tdea-admin-picture-url", pictureUrl);
     return session;
   }
+  function clearIdentity() {
+    try { localStorage.removeItem(sessionKey); } catch (_error) {}
+    try { sessionStorage.removeItem(sessionKey); } catch (_error) {}
+    ["tdea-admin-email", "tdea-admin-member-no", "tdea-admin-line-user-id", "tdea-admin-display-name", "tdea-admin-picture-url"]
+      .forEach((key) => setStored(key, ""));
+  }
   function setStored(key, value) {
     try {
       if (value) { localStorage.setItem(key, value); sessionStorage.setItem(key, value); }
@@ -129,7 +135,7 @@
   }
   async function validateIdentity(identity) {
     if (!identity.email && !identity.memberNo && !identity.lineUserId) return false;
-    const response = await fetch(`${api}/api/admin-whitelist`, { headers: headersFor(identity), cache: "no-store" });
+    const response = await fetch(`${api}/api/admin-login/validate`, { headers: headersFor(identity), cache: "no-store" });
     return response.ok;
   }
   async function loadApp() {
@@ -228,7 +234,13 @@
     }
     const urlIdentity = identityFromUrl();
     if (await validateIdentity(urlIdentity).catch(() => false)) { storeIdentity(urlIdentity); await loadApp(); return; }
-    if (cachedSession()) { await loadApp(); return; }
+    const session = cachedSession();
+    if (session) {
+      if (await validateIdentity(session).catch(() => false)) { await loadApp(); return; }
+      clearIdentity();
+      renderLogin("登入權限已取消或過期，請重新登入。");
+      return;
+    }
     renderLogin();
   }
   boot().catch((error) => renderLogin(error.message || "入口載入失敗"));

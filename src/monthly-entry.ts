@@ -1,4 +1,5 @@
 import { handleCardCollectionApi } from "./card-collection-api";
+import { explicitLoginAccessForRosterRow } from "./admin-access-policy";
 import baseEntry from "./roster-sync-entry4";
 import { handleIdentityApi } from "./identity-api";
 import {
@@ -208,11 +209,17 @@ function adminWhitelistMatches(records: AdminWhitelistRecord[], identity: { emai
 }
 
 async function adminWhitelistFromAssociationRoster(env: Env): Promise<AdminWhitelistRecord[]> {
-  const data = await readManagerData(env);
+  const [data, adminAccess] = await Promise.all([
+    readManagerData(env),
+    readAdminAccess(env)
+  ]);
   const rows = Array.isArray(data?.association) ? data.association : [];
   const fromRoster = rows
     .filter((row): row is Record<string, unknown> => Boolean(row) && typeof row === "object")
-    .filter((row) => memberRowLoginAccess(row))
+    .filter((row) => {
+      const explicit = explicitLoginAccessForRosterRow(adminAccess, row);
+      return explicit === null ? memberRowLoginAccess(row) : explicit;
+    })
     .map((row) => {
       const memberNo = clean(row.memberNo || row.rosterMemberNo).toUpperCase();
       const lineUserId = memberLineUid(row);
@@ -229,7 +236,7 @@ async function adminWhitelistFromAssociationRoster(env: Env): Promise<AdminWhite
       };
     })
     .filter((row) => row.label || row.memberNo || row.email || row.lineUserId);
-  const accessRecords = Object.values(await readAdminAccess(env))
+  const accessRecords = Object.values(adminAccess)
     .filter((record) => record.loginAccess === true)
     .map((record) => ({
       id: clean(record.memberNo || record.lineUserId || record.email || crypto.randomUUID()),
@@ -351,6 +358,12 @@ async function adminLineLoginApi(request: Request, env: Env) {
   return json({ success: true, data: adminSessionPayload({ lineUserId, displayName }) });
 }
 
+async function validateAdminSessionApi(request: Request, env: Env) {
+  const guard = await requireAdmin(request, env);
+  if (guard) return guard;
+  return json({ success: true });
+}
+
 async function listAdminAccessApi(request: Request, env: Env) {
   const guard = await requireAdmin(request, env);
   if (guard) return guard;
@@ -432,7 +445,7 @@ async function updateAdminAccessApi(request: Request, env: Env) {
       if (email && !clean(row.email)) row.email = email;
     }
     await writeAiweMembers(env, rows);
-    if (lineUserId) await upsertBoundMemberToManagerCrm(env, matchedRows[0], lineUserId);
+    if (lineUserId) await upsertBoundMemberToManagerCrm(env, matchedRows[0], lineUserId, Boolean(input.loginAccess));
   }
   return json({ success: true, data: records[memberNo] });
 }
@@ -6531,7 +6544,7 @@ function setAiweRowLineUid(row: Record<string, unknown>, lineUserId: string) {
   if (isSyntheticLineEmail(row.email)) row.email = "";
 }
 
-async function upsertBoundMemberToManagerCrm(env: Env, sourceRow: Record<string, unknown>, lineUserId: string) {
+async function upsertBoundMemberToManagerCrm(env: Env, sourceRow: Record<string, unknown>, lineUserId: string, loginAccess?: boolean) {
   if (!env.ASSETS_BUCKET) return { written: false, reason: "r2-not-configured" };
   const raw = await readManagerDataRaw(env) || {};
   const type = clean(sourceRow.rosterType) === "vendor" ? "vendor" : "association";
@@ -6559,6 +6572,12 @@ async function upsertBoundMemberToManagerCrm(env: Env, sourceRow: Record<string,
     updatedAt: new Date().toISOString(),
     syncSource: "member-checkin"
   };
+  if (typeof loginAccess === "boolean") {
+    next.loginAccess = loginAccess;
+    next.allowLogin = loginAccess;
+    next.canLogin = loginAccess;
+    next.adminAccess = loginAccess;
+  }
   if (type === "vendor") next.companyName = firstClean(existing.companyName, member.companyName, name);
   else next.company = firstClean(existing.company, member.companyName);
   if (index >= 0) rows[index] = next;
@@ -7715,6 +7734,7 @@ export default {
 	    if ((request.method === "GET" || request.method === "POST") && url.pathname === "/api/line-activity-ai-check") return testLineActivityAi(request, env);
 	    if (request.method === "POST" && url.pathname === "/api/admin-login/password") return adminPasswordLoginApi(request, env);
 	    if (request.method === "POST" && url.pathname === "/api/admin-login/line") return adminLineLoginApi(request, env);
+	    if (request.method === "GET" && url.pathname === "/api/admin-login/validate") return validateAdminSessionApi(request, env);
 	    if (request.method === "GET" && url.pathname === "/api/admin-access") return listAdminAccessApi(request, env);
 	    if ((request.method === "PUT" || request.method === "POST") && url.pathname === "/api/admin-access") return updateAdminAccessApi(request, env);
 	    if (request.method === "GET" && url.pathname === "/api/admin-whitelist") return listAdminWhitelistApi(request, env);
