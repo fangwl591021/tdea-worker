@@ -367,7 +367,8 @@
 
   function detailUrlForPage(page) {
     const hydrated = hydratePage(page);
-    return appendIdToUrl(config.detailBaseUrl, hydrated.activityNo || hydrated.activityId, hydrated.id);
+    const target = trim(hydrated.activityNo) || trim(hydrated.activityId) || trim(hydrated.id);
+    return `${api}/monthly-detail/${encodeURIComponent(target)}`;
   }
 
   function registerUrlForPage(page) {

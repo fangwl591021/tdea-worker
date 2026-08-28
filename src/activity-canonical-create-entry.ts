@@ -177,7 +177,7 @@ async function verifyLineIdToken(idToken: string) {
   const result = await response.json().catch(() => ({})) as Row;
 
   if (!response.ok || !clean(result.sub, 200)) {
-    throw new Error(clean(result.error_description || result.error || "LINE ID Token ????", 500));
+    throw new Error(clean(result.error_description || result.error || "LINE ID Token 驗證失敗", 500));
   }
 
   return result;

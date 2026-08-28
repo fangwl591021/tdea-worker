@@ -20,9 +20,10 @@
     motherRegister: ["母站註冊資料", "查看由母站註冊表送回的獨立資料，不併入會員 CRM。"]
   };
   purgeLegacyManagerCache();
-  const state = { view: "dashboard", drawer: "", keywordEditId: "", data: load(), archivedActivities: [], registrationLists: {}, memberRegistrationLists: {}, memberPointAccounts: {}, memberApplications: null, generalMembers: null, generalMembersLoading: false, generalSearch: "", adminWhitelist: null, adminWhitelistMeta: null, motherRegisterRecords: null, motherRegisterSearch: "", motherRegisterLoading: false, motherRegisterLoadedAt: "", rosterSearch: { association: "", vendor: "" } };
+  const state = { view: "dashboard", drawer: "", keywordEditId: "", data: load(), archivedActivities: [], registrationLists: {}, registrationListShowCancelled: {}, memberRegistrationLists: {}, memberPointAccounts: {}, memberApplications: null, generalMembers: null, generalMembersLoading: false, generalSearch: "", adminWhitelist: null, adminWhitelistMeta: null, motherRegisterRecords: null, motherRegisterSearch: "", motherRegisterLoading: false, motherRegisterLoadedAt: "", rosterSearch: { association: "", vendor: "" } };
   let managerDataSaveTimer = null;
   let managerDataLoading = false;
+  let managerDataReadyPromise = Promise.resolve();
   let lineDraftAutoImporting = false;
   let lineDraftLastAutoImport = 0;
   let rosterCleanupApplied = false;
@@ -1622,31 +1623,27 @@
       const paymentStatus = String(payment.status || "").trim();
       const registrationStatus = String(row?.status || "active").trim();
       const amount = Number(payment.amount || 0);
-
       if (registrationStatus === "cancelled") {
-        if (paymentStatus === "refunded") {
-          return `<span class="muted">\u9000\u6b3e\u5b8c\u6210</span>`;
-        }
-
-        if (paymentStatus === "cancelled" && amount > 0) {
-          return `<button class="link" data-refund-registration="${esc(row.id)}">\u78ba\u8a8d\u5df2\u9000\u6b3e</button>`;
-        }
-
-        return `<span class="muted">\u5df2\u53d6\u6d88</span>`;
+        if (paymentStatus === "refunded") return `<span class="muted">退款完成</span>`;
+        if (paymentStatus === "cancelled" && amount > 0) return `<button class="link" data-refund-registration="${esc(row.id)}">確認已退款</button>`;
+        return `<span class="muted">-</span>`;
       }
+      if (paymentStatus === "paid") return `<span class="muted">已收款</span>`;
+      if (amount > 0) return `<button class="link" data-payment-registration="${esc(row.id)}" data-payment-status="paid">確認收款</button>`;
+      return `<span class="muted">-</span>`;
+    };
 
-      if (paymentStatus === "paid") {
-        return `<button class="link" data-cancel-registration="${esc(row.id)}">\u53d6\u6d88\u4e26\u9000\u6b3e</button>`;
-      }
-
-      if (amount > 0) {
-        return `
-          <button class="link" data-payment-registration="${esc(row.id)}" data-payment-status="paid">\u78ba\u8a8d\u6536\u6b3e</button>
-          <button class="link" data-cancel-registration="${esc(row.id)}">\u5f37\u5236\u53d6\u6d88</button>
-        `;
-      }
-
-      return `<button class="link" data-cancel-registration="${esc(row.id)}">\u5f37\u5236\u53d6\u6d88</button>`;
+    const registrationActionCell = (row) => {
+      const payment = row?.payment || {};
+      const status = String(row?.status || "active").trim();
+      if (status !== "cancelled") return `<button class="link" data-cancel-registration="${esc(row.id)}">隱藏（取消）</button>`;
+      const paymentStatus = String(payment.status || "").trim();
+      const hasPaymentAudit = ["reported", "paid", "cancelled", "refunded"].includes(paymentStatus) || payment.remittanceLast5 || payment.reportedAt || payment.paidAt || payment.verifiedAt || (Array.isArray(payment.transactions) && payment.transactions.length);
+      const hasOperationalAudit = row.checkedInAt || row.pointsSyncedAt || (Array.isArray(row.pointResults) && row.pointResults.length);
+      const canRestore = !["cancelled", "refunded"].includes(paymentStatus);
+      const restore = canRestore ? `<button class="link" data-restore-registration="${esc(row.id)}">恢復</button>` : "";
+      const remove = !hasPaymentAudit && !hasOperationalAudit ? `<button class="link danger-link" data-delete-registration="${esc(row.id)}">永久刪除</button>` : `<span class="muted">保留稽核紀錄</span>`;
+      return [restore, remove].filter(Boolean).join('<span class="muted"> / </span>');
     };
 
     const detailAliases = {
@@ -1726,6 +1723,10 @@
       </details>`;
     };
 
+    const cancelledCount = rows.filter((row) => String(row?.status || "active").trim() === "cancelled").length;
+    const showCancelled = Boolean(state.registrationListShowCancelled[rowId]);
+    const visibleRows = showCancelled ? rows : rows.filter((row) => String(row?.status || "active").trim() !== "cancelled");
+
     const rowHtml = (row) => {
       const answers = row.answers || {};
       const payment = row.payment || {};
@@ -1747,6 +1748,7 @@
 
         <td>${esc(registrationStatusLabel(row))}</td>
         <td style="white-space:nowrap">${paymentActionCell(row)}</td>
+        <td style="white-space:nowrap">${registrationActionCell(row)}</td>
 
         <td>${esc(checkin)}</td>
         <td>${detailHtml(row)}</td>
@@ -1761,6 +1763,7 @@
         <h2 class="panel-title">${esc(activity.name || "\u6d3b\u52d5")} \u5831\u540d\u540d\u55ae</h2>
 
         <div class="actions">
+          ${cancelledCount ? `<button class="btn" data-toggle-cancelled-registrations="${esc(rowId)}">${showCancelled ? "隱藏已取消" : `顯示已取消（${cancelledCount}）`}</button>` : ""}
           <button class="btn" data-export-registrations="${esc(rowId)}">Excel</button>
           <button class="btn" data-refresh-registration-list="${esc(rowId)}">\u91cd\u65b0\u8f09\u5165</button>
         </div>
@@ -1777,6 +1780,7 @@
               <th>\u532f\u6b3e\u672b\u4e94\u78bc</th>
               <th>\u5831\u540d\u72c0\u614b</th>
               <th>\u5e33\u52d9\u64cd\u4f5c</th>
+              <th>名單操作</th>
               <th>\u7c3d\u5230\u72c0\u614b</th>
               <th>\u5831\u540d\u5167\u5bb9</th>
               <th>\u96fb\u8a71</th>
@@ -1786,7 +1790,7 @@
           </thead>
 
           <tbody>
-            ${rows.map(rowHtml).join("")}
+            ${visibleRows.map(rowHtml).join("") || `<tr><td colspan="13" class="muted">目前沒有有效報名；可按「顯示已取消」查看取消資料。</td></tr>`}
           </tbody>
         </table>
       </div>
@@ -2215,7 +2219,7 @@
   function bind() {
     ensureActivityEditorFields();
     const enhancedActivityForm = document.querySelector("#drawer-activity");
-    if (enhancedActivityForm && !enhancedActivityForm.dataset.enhancedSubmitReady) {
+    if (enhancedActivityForm && !window.__tdeaCanonicalActivitySaveOwner && !enhancedActivityForm.dataset.enhancedSubmitReady) {
       enhancedActivityForm.dataset.enhancedSubmitReady = "true";
       enhancedActivityForm.addEventListener("submit", async (event) => {
         event.preventDefault();
@@ -2329,13 +2333,14 @@ const structuredCustomFields = structuredEditorPresent ? [...form.querySelectorA
 }).filter((field) => field.label) : [];
 const customFields = structuredEditorPresent ? structuredCustomFields : textareaCustomFields;
 const managedFieldKeys = new Set(["gender", "isMember", "meal", "imageUpload"]);
+const systemBaseFieldKeys = new Set([...defaultRegistrationFieldKeys, ...managedFieldKeys]);
 const structuredBaseFields = (Array.isArray(builderSettings.fields) ? existingStructuredFields : (Array.isArray(defaults.fields) ? defaults.fields : []))
-  .filter((field) =>
-    !managedFieldKeys.has(String(field?.key || "")) &&
-    !customFields.some((customField) =>
-      String(customField?.label || "").trim() === String(field?.label || "").trim()
-    )
-  );
+  .filter((field) => {
+    const key = String(field?.key || "").trim();
+    // 自訂題目完全以目前編輯器畫面為準。舊邏輯會把畫面上已刪除的
+    // 自訂題目當成基礎欄位保留，導致儲存後又被寫回正式報名表。
+    return systemBaseFieldKeys.has(key) && !managedFieldKeys.has(key);
+  });
 if (builderSettings.genderField !== "none") {
   structuredBaseFields.push({ key: "gender", label: "\u6027\u5225", type: "choice", options: ["\u7537", "\u5973", "\u4e0d\u4fbf\u900f\u9732"], required: builderSettings.genderField === "required" });
 }
@@ -2352,20 +2357,27 @@ registrationSettings = { ...builderSettings, customFields, fields: [...structure
           form.__tdeaRegistrationSettings = registrationSettings;
           const nativeSaved = await ensureNativeFormForActivity(activity, email, registrationSettings, { update: true });
           if (!nativeSaved) throw new Error("自訂問題未寫入報名表");
-          if (customFields.length) {
-            const verifyFormId = nativeFormIdentifier(activity);
-            const verifyResponse = await fetch(api + "/api/native-forms/" + encodeURIComponent(verifyFormId), { headers: adminHeaders(), cache: "no-store" });
-            const verifyResult = await verifyResponse.json().catch(() => ({}));
-            if (!verifyResponse.ok || !verifyResult.success) throw new Error(verifyResult.message || "無法驗證自訂問題是否已儲存");
-            const verifyData = verifyResult.data?.form || verifyResult.data || {};
-            const verifyFields = Array.isArray(verifyData.fields) ? verifyData.fields : [];
-            const verifyLabels = new Set(
-              verifyFields.map((field) => String(field?.label || "").trim())
-            );
-            const missing = customFields.filter(
-              (field) => !verifyLabels.has(String(field.label || "").trim())
-            );
-            if (missing.length) throw new Error("自訂問題未寫入報名表：" + missing.map((field) => field.label).join("、"));
+          const verifyFormId = nativeFormIdentifier(activity);
+          const verifyResponse = await fetch(api + "/api/native-forms/" + encodeURIComponent(verifyFormId), { headers: adminHeaders(), cache: "no-store" });
+          const verifyResult = await verifyResponse.json().catch(() => ({}));
+          if (!verifyResponse.ok || !verifyResult.success) throw new Error(verifyResult.message || "無法驗證自訂問題是否已儲存");
+          const verifyData = verifyResult.data?.form || verifyResult.data || {};
+          const verifyFields = Array.isArray(verifyData.fields) ? verifyData.fields : [];
+          const savedCustomFields = verifyFields.filter((field) =>
+            !systemBaseFieldKeys.has(String(field?.key || "").trim())
+          );
+          const fieldSignature = (field) => JSON.stringify({
+            label: String(field?.label || "").trim(),
+            type: String(field?.type || "text").trim(),
+            required: field?.required === true,
+            options: Array.isArray(field?.options)
+              ? field.options.map((option) => String(option || "").trim()).filter(Boolean)
+              : []
+          });
+          const expectedSignatures = customFields.map(fieldSignature).sort();
+          const savedSignatures = savedCustomFields.map(fieldSignature).sort();
+          if (JSON.stringify(expectedSignatures) !== JSON.stringify(savedSignatures)) {
+            throw new Error("自訂問題儲存後與畫面不一致，已停止完成動作，請重新整理後再試");
           }
         } catch (error) {
           toast(error?.message || "報名表處理失敗");
@@ -2536,8 +2548,11 @@ registrationSettings = { ...builderSettings, customFields, fields: [...structure
     document.querySelectorAll("[data-registration-list]").forEach(b => b.onclick = () => openRegistrationList(b.dataset.registrationList));
     document.querySelectorAll("[data-export-registrations]").forEach(b => b.onclick = () => downloadRegistrationExcel(b.dataset.exportRegistrations, b));
     document.querySelectorAll("[data-refresh-registration-list]").forEach(b => b.onclick = () => loadRegistrationList(b.dataset.refreshRegistrationList, true));
+    document.querySelectorAll("[data-toggle-cancelled-registrations]").forEach(b => b.onclick = () => { const id = b.dataset.toggleCancelledRegistrations; state.registrationListShowCancelled[id] = !state.registrationListShowCancelled[id]; render(); });
     document.querySelectorAll("[data-payment-registration]").forEach(b => b.onclick = () => updateRegistrationPayment(b.dataset.paymentRegistration, b.dataset.paymentStatus, b));
     document.querySelectorAll("[data-cancel-registration]").forEach(b => b.onclick = () => adminCancelRegistration(b.dataset.cancelRegistration, b));
+    document.querySelectorAll("[data-restore-registration]").forEach(b => b.onclick = () => adminRestoreRegistration(b.dataset.restoreRegistration, b));
+    document.querySelectorAll("[data-delete-registration]").forEach(b => b.onclick = () => adminDeleteRegistration(b.dataset.deleteRegistration, b));
     document.querySelectorAll("[data-refund-registration]").forEach(b => b.onclick = () => adminConfirmRefund(b.dataset.refundRegistration, b));
     document.querySelectorAll("[data-load-member-applications]").forEach(b => b.onclick = () => loadMemberApplications(true));
     const autoSync = document.querySelector("[data-auto-sync]"); if (autoSync) autoSync.onchange = () => { setAutoSyncEnabled(autoSync.checked); toast(autoSync.checked ? "已開啟自動同步" : "已關閉自動同步"); };
@@ -3037,10 +3052,10 @@ registrationSettings = { ...builderSettings, customFields, fields: [...structure
     try {
       await ensureMonthlyRegistrationMap(true);
       const keys = registrationCandidates(activity).map(encodeURIComponent).join(",");
-      const res = await fetch(api + "/api/registrations/list?keys=" + keys, { cache: "no-store" });
+      const res = await fetch(api + "/api/registrations/list?includeCancelled=1&keys=" + keys, { headers: adminHeaders(), cache: "no-store" });
       const result = await res.json().catch(() => ({}));
       state.registrationLists[rowId] = Array.isArray(result.data) ? result.data : [];
-      activity.reg = state.registrationLists[rowId].length;
+      activity.reg = state.registrationLists[rowId].filter((row) => String(row?.status || "active").trim() !== "cancelled").length;
       save();
       if (showMessage) toast("名單已同步");
     } catch (_) {
@@ -3105,6 +3120,7 @@ registrationSettings = { ...builderSettings, customFields, fields: [...structure
   
   async function adminCancelRegistration(registrationId, button = null) {
     if (!registrationId) return;
+    if (!confirm("確定要隱藏（取消）這筆報名？取消後預設名單、抽獎與有效人數都不會包含此筆。")) return;
 
     const originalText = button?.textContent || "";
 
@@ -3148,6 +3164,42 @@ registrationSettings = { ...builderSettings, customFields, fields: [...structure
       }
 
       toast(err?.message || "\u53d6\u6d88\u5831\u540d\u5931\u6557");
+    }
+  }
+
+  async function adminRestoreRegistration(registrationId, button = null) {
+    if (!registrationId || !confirm("確定恢復這筆報名？恢復後會重新列入有效名單。")) return;
+    const originalText = button?.textContent || "恢復";
+    if (button) { button.disabled = true; button.textContent = "恢復中…"; }
+    try {
+      const response = await fetch(api + "/api/native-registrations/restore", { method: "POST", headers: adminHeaders({ "content-type": "application/json" }), body: JSON.stringify({ registrationId }) });
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok || !result.success) throw new Error(result.message || "恢復報名失敗");
+      const activityId = state.drawer?.startsWith("registrations:") ? state.drawer.split(":")[1] : "";
+      if (activityId) await loadRegistrationList(activityId, true); else render();
+      toast("已恢復報名");
+    } catch (err) {
+      if (button) { button.disabled = false; button.textContent = originalText; }
+      toast(err?.message || "恢復報名失敗");
+    }
+  }
+
+  async function adminDeleteRegistration(registrationId, button = null) {
+    if (!registrationId) return;
+    if (!confirm("永久刪除會移除這筆測試報名及其查詢、核銷索引，且無法復原。確定繼續？")) return;
+    if (prompt("為避免誤刪，請輸入「永久刪除」") !== "永久刪除") return;
+    const originalText = button?.textContent || "永久刪除";
+    if (button) { button.disabled = true; button.textContent = "刪除中…"; }
+    try {
+      const response = await fetch(api + "/api/native-registrations/delete", { method: "DELETE", headers: adminHeaders({ "content-type": "application/json" }), body: JSON.stringify({ registrationId }) });
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok || !result.success) throw new Error(result.message || "永久刪除失敗");
+      const activityId = state.drawer?.startsWith("registrations:") ? state.drawer.split(":")[1] : "";
+      if (activityId) await loadRegistrationList(activityId, true); else render();
+      toast("測試報名已永久刪除");
+    } catch (err) {
+      if (button) { button.disabled = false; button.textContent = originalText; }
+      toast(err?.message || "永久刪除失敗");
     }
   }
 
@@ -3239,6 +3291,30 @@ async function updateRegistrationPayment(registrationId, status, button = null) 
     } catch (_) {}
   }
   function toast(text) { const el = document.querySelector("#toast"); if (!el) return; el.textContent = text; el.classList.add("show"); setTimeout(() => el.classList.remove("show"), 1800); }
+  window.addEventListener("tdea:activity-canonical-saved", (event) => {
+    const detail = event.detail && typeof event.detail === "object" ? event.detail : {};
+    const savedActivity = detail.activity && typeof detail.activity === "object" ? detail.activity : null;
+    const savedForm = detail.form && typeof detail.form === "object" ? detail.form : null;
+    if (!savedActivity?.id) return;
+    const index = state.data.activities.findIndex((item) => item.id === savedActivity.id);
+    if (index >= 0) state.data.activities[index] = { ...state.data.activities[index], ...savedActivity };
+    else state.data.activities.unshift(savedActivity);
+    if (savedForm) {
+      state.data.formSettings ||= {};
+      const snapshot = {
+        ...(savedForm.settings || {}),
+        fields:Array.isArray(savedForm.fields) ? savedForm.fields : [],
+        sessions:Array.isArray(savedForm.sessions) ? savedForm.sessions : [],
+        nativeFormId:detail.formId || savedActivity.nativeFormId || savedActivity.formId || "",
+        nativeFormUrl:savedForm.formUrl || savedActivity.nativeFormUrl || savedActivity.formUrl || ""
+      };
+      [savedActivity.id, savedActivity.activityNo, detail.formId].filter(Boolean).forEach((id) => {
+        state.data.formSettings[id] = snapshot;
+      });
+    }
+    persistLocalSnapshot();
+  });
+
   window.TDEAApp = {
     navigate(id) {
       state.view = id;
@@ -3247,10 +3323,24 @@ async function updateRegistrationPayment(registrationId, status, button = null) 
     },
     isView(id) {
       return state.view === id;
+    },
+    whenManagerDataReady() {
+      return managerDataReadyPromise.then(() => state.data);
+    },
+    getLotteryData() {
+      return {
+        activities: Array.isArray(state.data.activities) ? state.data.activities : [],
+        lottery: state.data.lottery && typeof state.data.lottery === "object" ? state.data.lottery : {}
+      };
+    },
+    async saveLotteryData(lottery) {
+      state.data.lottery = lottery && typeof lottery === "object" ? lottery : {};
+      persistLocalSnapshot();
+      return saveManagerDataRemoteChecked();
     }
   };
   render();
-  loadManagerDataRemote();
+  managerDataReadyPromise = loadManagerDataRemote();
   setTimeout(() => {
     cleanupRosterData();
     if (state.view === "association" || state.view === "vendor") render();

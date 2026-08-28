@@ -40,7 +40,7 @@ type RegistrationRecord = { activityId?: string; activityNo?: string; activityNa
 type RegistrationSummary = { updatedAt?: string; activities: Record<string, RegistrationRecord> };
 type PaymentStatus = "free" | "unpaid" | "reported" | "paid" | "cancelled" | "refunded";
 type RegistrationPayment = { status: PaymentStatus; method?: "free" | "bank_transfer" | "cash" | "manual"; amount: number; currency?: string; remittanceLast5?: string; reportedAt?: string; paidAt?: string; verifiedBy?: string; verifiedAt?: string; note?: string; updatedAt?: string; transactions?: Array<Record<string, unknown>> };
-type RegistrationEntry = { id: string; sourceId?: string; formId?: string; submittedAt?: string; updatedAt?: string; activity?: Record<string, unknown>; answers?: Record<string, unknown>; status?: string; checkedInAt?: string; sessionId?: string; queryCode?: string; checkinToken?: string; cancelledAt?: string; lineUserId?: string; identityKey?: string; identityKind?: string; pointsSyncedAt?: string; pointResults?: unknown[]; payment?: RegistrationPayment; catalogQuote?: CatalogQuote };
+type RegistrationEntry = { id: string; sourceId?: string; formId?: string; submittedAt?: string; updatedAt?: string; activity?: Record<string, unknown>; answers?: Record<string, unknown>; status?: string; checkedInAt?: string; sessionId?: string; queryCode?: string; checkinToken?: string; cancelledAt?: string; lineUserId?: string; identityKey?: string; identityKind?: string; pointsSyncedAt?: string; pointResults?: unknown[]; payment?: RegistrationPayment; catalogQuote?: CatalogQuote; cancellationHistory?: Array<Record<string, unknown>> };
 type ManagedSubmission = { formId?: string; sourceId?: string; submittedAt?: string; activity: Record<string, unknown>; answers: Record<string, unknown>; raw?: unknown };
 type NativeField = { key: string; label: string; type: string; required?: boolean; options?: string[]; description?: string; placeholder?: string };
 type NativeSession = { id: string; name: string; startTime?: string; endTime?: string; capacity?: number; status?: string };
@@ -467,7 +467,7 @@ async function readMonthlySnapshot(env: Env): Promise<MonthlyConfig | null> {
   if (!object) return null;
   const data = await object.json().catch(() => null) as MonthlyConfig | null;
   if (!data || typeof data !== "object") return null;
-  const normalized = normalizeConfig(data);
+  const normalized = canonicalMonthlyDetailUrls(data);
   return normalized.pages?.length ? normalized : null;
 }
 
@@ -501,14 +501,131 @@ function cleanActivityId(value: unknown) {
   return clean(value).replace(/[^\w.-]/g, "_").slice(0, 120);
 }
 
+function activityUrlList(value: unknown) {
+  const seen = new Set<string>();
+  const values = Array.isArray(value) ? value.flat(Infinity) : String(value ?? "").split(/[\n,]+/);
+  return values
+    .map((item) => clean(item))
+    .filter((item) => /^https?:\/\//i.test(item))
+    .filter((item) => {
+      if (seen.has(item)) return false;
+      seen.add(item);
+      return true;
+    });
+}
+
+function activityFormSettings(record: Record<string, unknown>): Record<string, unknown> {
+  const value = record.formSettings;
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : {};
+}
+
+function managerFormSettingsForActivity(manager: Record<string, unknown> | null, activity: Record<string, unknown>): Record<string, unknown> {
+  const map = manager?.formSettings && typeof manager.formSettings === "object" && !Array.isArray(manager.formSettings)
+    ? manager.formSettings as Record<string, unknown>
+    : {};
+  const keys = [activity.id, activity.activityId, activity.activityNo, activity.nativeFormId, activity.formId]
+    .map((value) => clean(value))
+    .filter(Boolean);
+  return keys.reduce<Record<string, unknown>>((output, key) => {
+    const value = map[key];
+    return value && typeof value === "object" && !Array.isArray(value)
+      ? { ...output, ...(value as Record<string, unknown>) }
+      : output;
+  }, {});
+}
+
+function hasOwnField(source: Record<string, unknown>, key: string) {
+  return Object.prototype.hasOwnProperty.call(source, key);
+}
+
+function explicitText(source: Record<string, unknown>, settings: Record<string, unknown>, keys: string[]) {
+  const values = [
+    ...keys.filter((key) => hasOwnField(source, key)).map((key) => source[key]),
+    ...keys.filter((key) => hasOwnField(settings, key)).map((key) => settings[key])
+  ];
+  return values.length ? firstClean(...values) : null;
+}
+
+function synchronizeActivityFields(record: Record<string, unknown>, explicitInput: Record<string, unknown> = {}): Record<string, unknown> {
+  const currentSettings = activityFormSettings(record);
+  const explicitSettings = activityFormSettings(explicitInput);
+  const nextSettings = { ...currentSettings };
+  const updates: Record<string, unknown> = {};
+
+  const explicitDetail = explicitText(explicitInput, explicitSettings, ["detailText", "description"]);
+  const detailText = explicitDetail === null
+    ? firstClean(record.detailText, record.description, currentSettings.detailText, currentSettings.description)
+    : explicitDetail;
+  if (explicitDetail !== null || detailText) {
+    updates.detailText = detailText;
+    updates.description = detailText;
+    nextSettings.detailText = detailText;
+    nextSettings.description = detailText;
+  }
+
+  const explicitImage = explicitText(explicitInput, explicitSettings, ["imageUrl", "posterUrl"]);
+  const imageUrl = explicitImage === null
+    ? firstClean(record.imageUrl, record.posterUrl, currentSettings.imageUrl, currentSettings.posterUrl)
+    : explicitImage;
+  if (explicitImage !== null || imageUrl) {
+    updates.imageUrl = imageUrl;
+    updates.posterUrl = imageUrl;
+    nextSettings.imageUrl = imageUrl;
+    nextSettings.posterUrl = imageUrl;
+  }
+
+  const galleryExplicit = hasOwnField(explicitInput, "galleryUrls") || hasOwnField(explicitSettings, "galleryUrls");
+  const galleryUrls = galleryExplicit
+    ? activityUrlList(hasOwnField(explicitInput, "galleryUrls") ? explicitInput.galleryUrls : explicitSettings.galleryUrls)
+    : activityUrlList([record.galleryUrls, currentSettings.galleryUrls]);
+  if (galleryExplicit || galleryUrls.length) {
+    updates.galleryUrls = galleryUrls;
+    nextSettings.galleryUrls = galleryUrls;
+  }
+
+  const explicitFormUrl = explicitText(explicitInput, explicitSettings, ["nativeFormUrl", "formUrl"]);
+  const formUrl = explicitFormUrl === null
+    ? firstClean(record.nativeFormUrl, record.formUrl, currentSettings.nativeFormUrl, currentSettings.formUrl)
+    : explicitFormUrl;
+  if (explicitFormUrl !== null || formUrl) {
+    updates.formUrl = formUrl;
+    updates.nativeFormUrl = formUrl;
+    nextSettings.formUrl = formUrl;
+    nextSettings.nativeFormUrl = formUrl;
+  }
+
+  const explicitFormId = explicitText(explicitInput, explicitSettings, ["nativeFormId", "formId"]);
+  const formId = explicitFormId === null
+    ? firstClean(record.nativeFormId, record.formId, currentSettings.nativeFormId, currentSettings.formId)
+    : explicitFormId;
+  if (explicitFormId !== null || formId) {
+    updates.formId = formId;
+    updates.nativeFormId = formId;
+    nextSettings.formId = formId;
+    nextSettings.nativeFormId = formId;
+  }
+
+  return { ...record, ...updates, formSettings: nextSettings };
+}
+
+function hydrateActivityRecord(record: Record<string, unknown>, manager: Record<string, unknown> | null = null): Record<string, unknown> {
+  const linkedSettings = managerFormSettingsForActivity(manager, record);
+  return synchronizeActivityFields({
+    ...record,
+    formSettings: { ...linkedSettings, ...activityFormSettings(record) }
+  });
+}
+
 function activityRecordKey(id: string) {
   return `${activityRecordPrefix}${encodeURIComponent(id)}.json`;
 }
 
-function normalizeActivityRecord(input: Record<string, unknown>, existing: Record<string, unknown> | null, actor: string) {
+function normalizeActivityRecord(input: Record<string, unknown>, existing: Record<string, unknown> | null, actor: string): Record<string, unknown> {
   const now = new Date().toISOString();
   const id = cleanActivityId(input.id || existing?.id) || `id-${crypto.randomUUID()}`;
-  return {
+  return synchronizeActivityFields({
     ...(existing || {}),
     ...input,
     id,
@@ -517,7 +634,7 @@ function normalizeActivityRecord(input: Record<string, unknown>, existing: Recor
     updatedAt: now,
     updatedBy: actor,
     revision: Number(existing?.revision || 0) + 1
-  };
+  }, input);
 }
 
 async function readActivityIndex(env: Env): Promise<string[]> {
@@ -536,13 +653,33 @@ async function writeActivityIndex(env: Env, ids: string[]) {
   return true;
 }
 
-async function readActivityRecord(env: Env, id: string) {
+async function readActivityRecord(env: Env, id: string): Promise<Record<string, unknown> | null> {
   if (!env.ASSETS_BUCKET) return null;
   const cleanId = cleanActivityId(id);
   if (!cleanId) return null;
   const object = await env.ASSETS_BUCKET.get(activityRecordKey(cleanId));
   const data = object ? await object.json().catch(() => null) as Record<string, unknown> | null : null;
-  return data && typeof data === "object" ? data : null;
+  if (!data || typeof data !== "object") return null;
+  return hydrateActivityRecord(data, await readManagerDataRaw(env));
+}
+
+async function syncActivitySettingsIndex(env: Env, activity: Record<string, unknown>) {
+  if (!env.ASSETS_BUCKET) return false;
+  const settings = activityFormSettings(activity);
+  if (!Object.keys(settings).length) return false;
+  const manager = (await readManagerDataRaw(env)) || {};
+  const settingsMap = manager.formSettings && typeof manager.formSettings === "object" && !Array.isArray(manager.formSettings)
+    ? { ...(manager.formSettings as Record<string, unknown>) }
+    : {};
+  const keys = [activity.id, activity.activityId, activity.activityNo, activity.nativeFormId, activity.formId]
+    .map((value) => clean(value))
+    .filter(Boolean);
+  if (!keys.length) return false;
+  for (const key of [...new Set(keys)]) settingsMap[key] = { ...(settingsMap[key] as Record<string, unknown> || {}), ...settings };
+  await env.ASSETS_BUCKET.put(managerDataKey, JSON.stringify({ ...manager, formSettings: settingsMap, updatedAt: new Date().toISOString() }, null, 2), {
+    httpMetadata: { contentType: "application/json; charset=utf-8", cacheControl: "no-store" }
+  });
+  return true;
 }
 
 async function upsertActivityRecord(env: Env, input: Record<string, unknown>, actor: string) {
@@ -554,6 +691,7 @@ async function upsertActivityRecord(env: Env, input: Record<string, unknown>, ac
   await env.ASSETS_BUCKET.put(activityRecordKey(id), JSON.stringify(record, null, 2), {
     httpMetadata: { contentType: "application/json; charset=utf-8", cacheControl: "no-store" }
   });
+  await syncActivitySettingsIndex(env, record);
   const index = await readActivityIndex(env);
   if (!index.includes(id)) await writeActivityIndex(env, [id, ...index]);
   return record;
@@ -624,14 +762,16 @@ async function rebuildActivitySnapshot(env: Env) {
   return records;
 }
 
-async function listActivityRecords(env: Env, rawData?: Record<string, unknown> | null, options: { includeArchived?: boolean; forceRebuild?: boolean } = {}) {
+async function listActivityRecords(env: Env, rawData?: Record<string, unknown> | null, options: { includeArchived?: boolean; forceRebuild?: boolean } = {}): Promise<Record<string, unknown>[]> {
+  const manager = rawData ?? await readManagerDataRaw(env);
   if (!env.ASSETS_BUCKET) {
-    const raw = rawData ?? await readManagerDataRaw(env);
-    const rows = Array.isArray(raw?.activities) ? raw.activities as Record<string, unknown>[] : [];
-    return options.includeArchived ? rows : rows.filter((record) => !isArchivedActivityRecord(record));
+    const rows = Array.isArray(manager?.activities) ? manager.activities as Record<string, unknown>[] : [];
+    const hydrated = rows.map((record) => hydrateActivityRecord(record, manager));
+    return options.includeArchived ? hydrated : hydrated.filter((record) => !isArchivedActivityRecord(record));
   }
   const rows = options.forceRebuild ? await rebuildActivitySnapshot(env) : (await readActivitySnapshot(env) || await rebuildActivitySnapshot(env));
-  return options.includeArchived ? rows : rows.filter((record) => !isArchivedActivityRecord(record));
+  const hydrated = rows.map((record) => hydrateActivityRecord(record, manager));
+  return options.includeArchived ? hydrated : hydrated.filter((record) => !isArchivedActivityRecord(record));
 }
 
 async function deleteActivityRecord(env: Env, id: string, actor: string) {
@@ -688,6 +828,10 @@ async function activityRecordsApi(request: Request, env: Env, url: URL) {
   if (request.method === "GET" && url.pathname === "/api/activities") {
     const includeArchived = ["1", "true", "Y", "yes"].includes(clean(url.searchParams.get("includeArchived")).toLowerCase());
     return json({ success: true, data: { activities: await listActivityRecords(env, null, { includeArchived }) } });
+  }
+  if (itemMatch && request.method === "GET") {
+    const record = await readActivityRecord(env, decodeURIComponent(itemMatch[1]));
+    return record ? json({ success: true, data: record }) : json({ success: false, message: "Activity not found" }, 404);
   }
   if (request.method === "POST" && url.pathname === "/api/activities") {
     const guard = await requireAdmin(request, env);
@@ -811,7 +955,7 @@ function mergeMotherUidIntoManagerRoster(data: Record<string, unknown>, motherRo
   }
   return { changed, report };
 }
-async function readManagerData(env: Env) {
+async function readManagerData(env: Env): Promise<Record<string, unknown> | null> {
   const raw = await readManagerDataRaw(env);
   if (!raw) return raw;
   const data = { ...raw };
@@ -871,6 +1015,7 @@ async function writeManagerData(env: Env, input: Record<string, unknown>, actor 
   await env.ASSETS_BUCKET.put(managerDataKey, JSON.stringify(data, null, 2), {
     httpMetadata: { contentType: "application/json; charset=utf-8", cacheControl: "no-store" }
   });
+  if (incomingActivities.length) await refreshMonthlySnapshot(env).catch(() => null);
   return true;
 }
 
@@ -879,8 +1024,8 @@ function normalizeVendorCardConfig(config: VendorCardConfig): VendorCardConfig {
   return {
     enabled: Boolean(config.enabled),
     keyword: vendorCardKeyword,
-    altText: clean(config.altText || "TDEA 撱??”") || "TDEA 撱??”",
-    title: clean(config.title || "TDEA 撱??”") || "TDEA 撱??”",
+    altText: clean(config.altText || "TDEA 廠商列表") || "TDEA 廠商列表",
+    title: clean(config.title || "TDEA 廠商列表") || "TDEA 廠商列表",
     updatedAt: config.updatedAt,
     items: items.slice(0, 40).map((item, index) => {
       const name = clean(item.name || item.label || item.actionText);
@@ -899,7 +1044,7 @@ function normalizeVendorCardConfig(config: VendorCardConfig): VendorCardConfig {
 
 async function readVendorCardConfig(env: Env): Promise<VendorCardConfig> {
   const object = env.ASSETS_BUCKET ? await env.ASSETS_BUCKET.get(vendorCardKey) : null;
-  if (!object) return { enabled: false, keyword: vendorCardKeyword, altText: "TDEA 撱??”", title: "TDEA 撱??”", items: [] };
+  if (!object) return { enabled: false, keyword: vendorCardKeyword, altText: "TDEA 廠商列表", title: "TDEA 廠商列表", items: [] };
   const data = await object.json().catch(() => ({}));
   return normalizeVendorCardConfig(data as VendorCardConfig);
 }
@@ -1025,7 +1170,7 @@ function normalizeRichMenuConfig(input: RichMenuConfig): RichMenuConfig {
   const areas = Array.isArray(input.areas) ? input.areas : [];
   return {
     name: clean(input.name || "TDEA Rich Menu").slice(0, 300) || "TDEA Rich Menu",
-    chatBarText: clean(input.chatBarText || "?詨").slice(0, 14) || "?詨",
+    chatBarText: clean(input.chatBarText || "選單").slice(0, 14) || "選單",
     selected: input.selected !== false,
     size: { width, height },
     imageUrl: clean(input.imageUrl),
@@ -1056,7 +1201,7 @@ function normalizeRichMenuConfig(input: RichMenuConfig): RichMenuConfig {
 
 async function readRichMenuConfig(env: Env): Promise<RichMenuConfig> {
   const object = env.ASSETS_BUCKET ? await env.ASSETS_BUCKET.get(richMenuKey) : null;
-  if (!object) return normalizeRichMenuConfig({ name: "TDEA ???詨", chatBarText: "?詨", selected: true, size: { width: 2500, height: 1686 }, areas: [], deployments: [] });
+  if (!object) return normalizeRichMenuConfig({ name: "TDEA 圖文選單", chatBarText: "選單", selected: true, size: { width: 2500, height: 1686 }, areas: [], deployments: [] });
   const data = await object.json().catch(() => ({}));
   return normalizeRichMenuConfig(data as RichMenuConfig);
 }
@@ -1078,10 +1223,10 @@ function assertRichMenuConfig(config: RichMenuConfig) {
   for (const [index, area] of normalized.areas.entries()) {
     const action = asRecord(area.action);
     const type = clean(action.type);
-    if (type === "uri" && !clean(action.uri)) throw new Error(`???${index + 1} 蝻箏?蝬脣?`);
-    if (type === "message" && !clean(action.text)) throw new Error(`???${index + 1} 蝻箏????`);
-    if (type === "postback" && !clean(action.data)) throw new Error(`???${index + 1} 蝻箏? Postback data`);
-    if (type === "richmenuswitch" && (!clean(action.richMenuAliasId) || !clean(action.data))) throw new Error(`???${index + 1} 蝻箏? rich menu switch ?`);
+    if (type === "uri" && !clean(action.uri)) throw new Error(`第 ${index + 1} 區缺少連結網址`);
+    if (type === "message" && !clean(action.text)) throw new Error(`第 ${index + 1} 區缺少訊息文字`);
+    if (type === "postback" && !clean(action.data)) throw new Error(`第 ${index + 1} 區缺少 Postback data`);
+    if (type === "richmenuswitch" && (!clean(action.richMenuAliasId) || !clean(action.data))) throw new Error(`第 ${index + 1} 區缺少 rich menu switch 參數`);
   }
   return normalized;
 }
@@ -1105,15 +1250,15 @@ async function fetchRichMenuImage(urlValue: string, env: Env) {
     if (!env.ASSETS_BUCKET) throw new Error("R2 bucket is not configured");
     const key = decodeURIComponent(parsed.pathname.replace(/^\/api\/uploads\//, ""));
     const object = await env.ASSETS_BUCKET.get(key);
-    if (!object) throw new Error(`摨?霈?仃??404 (${key})`);
+    if (!object) throw new Error(`圖片讀取失敗：404 (${key})`);
     const contentType = (object.httpMetadata?.contentType || "image/jpeg").split(";")[0].trim().toLowerCase();
-    if (!["image/jpeg", "image/png"].includes(contentType)) throw new Error("LINE ???詨摨??芣??JPG ??PNG");
+    if (!["image/jpeg", "image/png"].includes(contentType)) throw new Error("LINE 圖文選單底圖只支援 JPG 或 PNG");
     return { contentType, body: await object.arrayBuffer() };
   }
   const response = await fetch(url);
-  if (!response.ok) throw new Error(`摨?霈?仃??${response.status}`);
+  if (!response.ok) throw new Error(`圖片讀取失敗：${response.status}`);
   const contentType = (response.headers.get("content-type") || "").split(";")[0].trim().toLowerCase();
-  if (!["image/jpeg", "image/png"].includes(contentType)) throw new Error("LINE ???詨摨??芣??JPG ??PNG");
+  if (!["image/jpeg", "image/png"].includes(contentType)) throw new Error("LINE 圖文選單底圖只支援 JPG 或 PNG");
   return { contentType, body: await response.arrayBuffer() };
 }
 
@@ -1215,7 +1360,7 @@ async function deployRichMenuApi(request: Request, env: Env) {
       body: JSON.stringify(menuObject)
     }) as Record<string, unknown>;
     const richMenuId = clean(created.richMenuId);
-    if (!richMenuId) throw new Error("LINE 瘝?? richMenuId");
+    if (!richMenuId) throw new Error("LINE 未回傳 richMenuId");
     await lineRichMenuRequest(env, `https://api-data.line.me/v2/bot/richmenu/${encodeURIComponent(richMenuId)}/content`, {
       method: "POST",
       headers: { "content-type": image.contentType },
@@ -1554,9 +1699,18 @@ async function listRegistrations(request: Request, env: Env) {
     .split(",")
     .map((key) => key.trim())
     .filter(Boolean);
+  const includeCancelled = url.searchParams.get("includeCancelled") === "1";
+  if (includeCancelled) {
+    const guard = await requireAdmin(request, env);
+    if (guard) return guard;
+  }
   for (const key of keys) {
     const list = dedupeRegistrations(await readRegistrationList(env, key));
-    if (list.length) { const current = await Promise.all(list.map((entry) => refreshRegistrationActivitySnapshot(env, entry))); return json({ success: true, key, data: current.map(publicRegistrationEntry) }); }
+    if (list.length) {
+      const current = await Promise.all(list.map((entry) => refreshRegistrationActivitySnapshot(env, entry)));
+      const visible = includeCancelled ? current : filterActiveStatus(current);
+      return json({ success: true, key, data: visible.map(publicRegistrationEntry) });
+    }
   }
   return json({ success: true, key: keys[0] || "", data: [] });
 }
@@ -1630,6 +1784,7 @@ async function exportRegistrationsExcel(request: Request, env: Env) {
       refreshRegistrationActivitySnapshot(env, entry)
     )
   );
+  if (url.searchParams.get("includeCancelled") !== "1") rows = filterActiveStatus(rows);
 
   const fallbackActivity = rows.find((row) => row.activity)?.activity || {};
   const sourceActivity = activity || fallbackActivity;
@@ -2039,59 +2194,59 @@ function smartFieldHints(labelValue: unknown, keyValue: unknown) {
   const key = clean(keyValue).toLowerCase();
   const text = (label + " " + key).toLowerCase();
 
-  if (text.includes("????") || text.includes("???")) {
+  if (text.includes("釣蝦竿數") || text.includes("釣竿數")) {
     return {
-      description: "?????????????????????????????????????",
-      placeholder: "???1"
+      description: "參加比賽者請填寫使用的釣竿數量；若活動依竿計費，請依活動說明計算費用。",
+      placeholder: "例如：1"
     };
   }
 
-  if (text.includes("??????")) {
+  if (text.includes("比賽餐敘人數")) {
     return {
-      description: "?????????????????????",
-      placeholder: "???2"
+      description: "參加比賽且需要餐敘者，請填寫實際用餐人數。",
+      placeholder: "例如：2"
     };
   }
 
-  if (text.includes("?????")) {
+  if (text.includes("純餐敘人數")) {
     return {
-      description: "???????????????????????",
-      placeholder: "???1"
+      description: "未參加比賽、僅參加餐敘者，請填寫實際用餐人數。",
+      placeholder: "例如：1"
     };
   }
 
-  if (text.includes("??") && (text.includes("???") || text.includes("?5?"))) {
+  if (text.includes("匯款") && (text.includes("末五碼") || text.includes("末5碼"))) {
     return {
-      description: "?????????????? 5 ?????????????",
-      placeholder: "???12345"
+      description: "完成匯款後請填寫匯款帳號末 5 碼，方便主辦單位核對款項。",
+      placeholder: "例如：12345"
     };
   }
 
-  if (text.includes("?????") || text.includes("???")) {
+  if (text.includes("公協會") || text.includes("所屬協會")) {
     return {
-      description: "?????????????????????????????",
+      description: "請選擇您所屬的公協會。",
       placeholder: ""
     };
   }
 
-  if (text.includes("??")) {
+  if (text.includes("備註")) {
     return {
-      description: "???????????????????????",
-      placeholder: "???????????"
+      description: "特殊需求、同行者資訊、飲食需求或其他事項可填寫於此。",
+      placeholder: "如無備註可留空"
     };
   }
 
-  if (text.includes("???") || text.includes("???")) {
+  if (text.includes("身分證") || text.includes("身份證")) {
     return {
-      description: "???????????????????????",
-      placeholder: "???A123456789"
+      description: "請依證件填寫完整身分證字號，英文字母請使用大寫。",
+      placeholder: "例如：A123456789"
     };
   }
 
-  if (text.includes("??")) {
+  if (text.includes("電話") || text.includes("手機")) {
     return {
-      description: "?????????????????????????????",
-      placeholder: "???????"
+      description: "請填寫可聯絡的手機號碼，方便主辦單位聯繫。",
+      placeholder: "例如：0912345678"
     };
   }
 
@@ -2106,7 +2261,7 @@ function normalizeNativeFields(settings: Record<string, unknown>): NativeField[]
     const hints = smartFieldHints(field.label, field.key);
     return {
       key: clean(field.key) || `field_${index + 1}`,
-      label: clean(field.label) || `甈? ${index + 1}`,
+      label: clean(field.label) || `問題 ${index + 1}`,
       type: choice,
       required: Boolean(field.required),
       options: normalizeOptions(field.options).map((option) => clean(option.name)).filter(Boolean)
@@ -2571,7 +2726,7 @@ async function resolvePointBatchLineUserId(
     if (validLineUid(uid)) return uid;
   }
 
-  // 2. ????????
+  // 2. 母站註冊紀錄
   const motherRows = await readMotherRegisterRecords(env).catch(
     () => [] as Array<Record<string, unknown>>
   );
@@ -2954,7 +3109,7 @@ async function createRedeemRequest(request: Request, env: Env) {
   if (guard) return guard;
   if (!env.ASSETS_BUCKET) return json({ success: false, message: "R2 bucket is not configured" }, 503);
   const input = await request.json().catch(() => ({})) as Record<string, unknown>;
-  const vendorName = firstClean(input.vendorName, input.vendor, "??摨振");
+  const vendorName = firstClean(input.vendorName, input.vendor, "合作店家");
   const now = new Date();
   const mode = (["fixed", "manual", "rate"].includes(clean(input.mode)) ? clean(input.mode) : "fixed") as RedeemMode;
   const points = Math.abs(numberValue(input.points));
@@ -3610,14 +3765,14 @@ async function cancelNativeRegistration(request: Request, env: Env) {
 
   const entry = await readNativeRegistration(env, registrationId);
   if (!entry) {
-    return json({ success: false, message: "??????????" }, 404);
+    return json({ success: false, message: "查無報名資料" }, 404);
   }
 
   /*
-   * ???????
+   * 報名者自行取消
    * registrationId + queryCode
    *
-   * ????????
+   * 管理員強制取消
    * registrationId + admin identity
    */
   const selfCancel = Boolean(queryCode && entry.queryCode === queryCode);
@@ -3663,10 +3818,10 @@ async function cancelNativeRegistration(request: Request, env: Env) {
   const payment = normalizeRegistrationPayment(entry);
 
   /*
-   * ?????????????
-   * payment.status = cancelled ????????
+   * 管理員取消已付款報名時
+   * payment.status = cancelled 表示待退款
    *
-   * ???? refunded??????????????
+   * 完成退款後再由管理員改為 refunded
    */
   if (!selfCancel && payment.amount > 0 && payment.status === "paid") {
     entry.payment = {
@@ -3680,7 +3835,7 @@ async function cancelNativeRegistration(request: Request, env: Env) {
           amount: payment.amount,
           at: now,
           by: operator,
-          note: reason || "???????????"
+          note: reason || "管理員取消報名"
         },
         ...(payment.transactions || [])
       ].slice(0, 50)
@@ -3705,6 +3860,84 @@ async function cancelNativeRegistration(request: Request, env: Env) {
         entry.payment.status === "cancelled"
       )
   });
+}
+
+function registrationDeleteBlockReason(entry: RegistrationEntry) {
+  if (clean(entry.status || "active") !== "cancelled") return "請先隱藏（取消）這筆報名，再執行永久刪除";
+  if (clean(entry.checkedInAt)) return "此報名已有簽到紀錄，不能永久刪除";
+  if (clean(entry.pointsSyncedAt) || (Array.isArray(entry.pointResults) && entry.pointResults.length > 0)) return "此報名已有點數紀錄，不能永久刪除";
+  const payment = normalizeRegistrationPayment(entry);
+  const hasPaymentAudit = ["reported", "paid", "cancelled", "refunded"].includes(payment.status) ||
+    Boolean(clean(payment.remittanceLast5 || payment.reportedAt || payment.paidAt || payment.verifiedAt)) ||
+    Boolean(Array.isArray(payment.transactions) && payment.transactions.length > 0);
+  if (hasPaymentAudit) return "此報名已有付款、匯款或退款紀錄，不能永久刪除";
+  return "";
+}
+
+function registrationRestoreBlockReason(entry: RegistrationEntry) {
+  if (clean(entry.status || "active") !== "cancelled") return "此報名目前不是取消狀態";
+  const payment = normalizeRegistrationPayment(entry);
+  if (payment.status === "cancelled" || payment.status === "refunded") return "此報名已有退款流程，不能直接恢復";
+  return "";
+}
+
+function adminRegistrationOperator(request: Request) {
+  return adminEmailFromRequest(request) || adminMemberNoFromRequest(request) || adminLineUserIdFromRequest(request) || "admin";
+}
+
+async function restoreNativeRegistration(request: Request, env: Env) {
+  if (!env.ASSETS_BUCKET) return json({ success: false, message: "R2 bucket is not configured" }, 503);
+  const guard = await requireAdmin(request, env);
+  if (guard) return guard;
+  const input = await request.json().catch(() => ({})) as Record<string, unknown>;
+  const entry = await readNativeRegistration(env, clean(input.registrationId));
+  if (!entry) return json({ success: false, message: "查無報名資料" }, 404);
+  const blockedReason = registrationRestoreBlockReason(entry);
+  if (blockedReason) return json({ success: false, message: blockedReason }, 409);
+
+  const now = new Date().toISOString();
+  const audit = entry as RegistrationEntry & Record<string, unknown>;
+  entry.cancellationHistory = [{
+    cancelledAt: clean(entry.cancelledAt), cancelledBy: clean(audit.cancelledBy),
+    cancelReason: clean(audit.cancelReason), cancelSource: clean(audit.cancelSource),
+    restoredAt: now, restoredBy: adminRegistrationOperator(request)
+  }, ...(entry.cancellationHistory || [])].slice(0, 20);
+  entry.status = "active";
+  entry.updatedAt = now;
+  delete entry.cancelledAt;
+  delete audit.cancelledBy;
+  delete audit.cancelReason;
+  delete audit.cancelSource;
+  await updateRegistrationEverywhere(env, entry);
+  return json({ success: true, data: publicRegistrationEntry(entry) });
+}
+
+async function deleteNativeRegistration(request: Request, env: Env) {
+  if (!env.ASSETS_BUCKET) return json({ success: false, message: "R2 bucket is not configured" }, 503);
+  const guard = await requireAdmin(request, env);
+  if (guard) return guard;
+  const input = await request.json().catch(() => ({})) as Record<string, unknown>;
+  const entry = await readNativeRegistration(env, clean(input.registrationId));
+  if (!entry) return json({ success: false, message: "查無報名資料" }, 404);
+  const blockedReason = registrationDeleteBlockReason(entry);
+  if (blockedReason) return json({ success: false, message: blockedReason }, 409);
+
+  const keys = [...new Set(registrationKeys(entry.activity || {}, clean(entry.formId)))];
+  await Promise.all(keys.map(async (key) => {
+    const list = await readRegistrationList(env, key);
+    await writeRegistrationList(env, key, list.filter((item) => item.id !== entry.id));
+  }));
+  if (entry.lineUserId) {
+    const lineKey = nativeLineUserKey(entry.lineUserId);
+    const object = await env.ASSETS_BUCKET.get(lineKey);
+    const stored = object ? await object.json().catch(() => []) as unknown : [];
+    const ids = Array.isArray(stored) ? stored.map(clean).filter((id) => id && id !== entry.id) : [];
+    if (ids.length) await env.ASSETS_BUCKET.put(lineKey, JSON.stringify(ids.slice(0, 300), null, 2), { httpMetadata: { contentType: "application/json; charset=utf-8", cacheControl: "no-store" } });
+    else await env.ASSETS_BUCKET.delete(lineKey);
+  }
+  const objectKeys = [nativeRegistrationKey(entry.id), entry.queryCode ? nativeQueryKey(entry.queryCode) : "", entry.checkinToken ? nativeTokenKey(entry.checkinToken) : ""].filter(Boolean);
+  await Promise.all(objectKeys.map((key) => env.ASSETS_BUCKET!.delete(key)));
+  return json({ success: true, data: { registrationId: entry.id, deleted: true } });
 }
 
 async function reportNativeRegistrationPayment(request: Request, env: Env) {
@@ -3743,7 +3976,7 @@ async function updateNativeRegistrationPayment(request: Request, env: Env) {
 
   const entry = await readNativeRegistration(env, registrationId);
   if (!entry) {
-    return json({ success: false, message: "??????" }, 404);
+    return json({ success: false, message: "查無報名資料" }, 404);
   }
 
   const payment = normalizeRegistrationPayment(entry);
@@ -3790,8 +4023,8 @@ async function updateNativeRegistrationPayment(request: Request, env: Env) {
     note: clean(input.note || payment.note),
 
     /*
-     * ?????????????????
-     * paidAt / verifiedAt / verifiedBy ??????
+     * 收款確認時記錄核對資訊
+     * paidAt / verifiedAt / verifiedBy 僅於已付款時更新
      */
     paidAt:
       safeStatus === "paid"
@@ -3843,7 +4076,7 @@ async function updateNativeRegistrationPayment(request: Request, env: Env) {
     audit.refundedBy = admin;
     audit.refundAmount = amount;
     audit.refundNote =
-      clean(input.note) || "?????????";
+      clean(input.note) || "管理員確認退款";
   }
 
   await updateRegistrationEverywhere(env, entry);
@@ -3894,9 +4127,9 @@ function opnFormIntroProperties(activity: Record<string, unknown>, settings: Rec
   const posterUrl = firstClean(activity.posterUrl, activity.imageUrl, activity.coverUrl, settings.posterUrl, settings.imageUrl, settings.coverUrl);
   const detailText = firstClean(activity.detailText, settings.detailText, settings.description);
   const blocks: Record<string, unknown>[] = [];
-  if (posterUrl) blocks.push({ id: "tdea_activity_poster", type: "nf-image", name: "瘣餃?瘚瑕", image_block: posterUrl, align: "center", width: "full" });
-  if (detailText) blocks.push({ id: "tdea_activity_description", type: "nf-text", name: "瘣餃?隤芣?", content: `<p>${esc(detailText).replace(/\r?\n/g, "<br>")}</p>` });
-  blocks.push({ id: "tdea_activity_divider", type: "nf-divider", name: "?勗?鞈?" });
+  if (posterUrl) blocks.push({ id: "tdea_activity_poster", type: "nf-image", name: "活動海報", image_block: posterUrl, align: "center", width: "full" });
+  if (detailText) blocks.push({ id: "tdea_activity_description", type: "nf-text", name: "活動說明", content: `<p>${esc(detailText).replace(/\r?\n/g, "<br>")}</p>` });
+  blocks.push({ id: "tdea_activity_divider", type: "nf-divider", name: "內容分隔線" });
   return blocks;
 }
 
@@ -3908,7 +4141,7 @@ function opnFormProperties(activity: Record<string, unknown>, settings: Record<s
     const property: Record<string, unknown> = {
       id: clean(field.key) || `field_${index + 1}`,
       type,
-      name: clean(field.label) || `甈? ${index + 1}`,
+      name: clean(field.label) || `問題 ${index + 1}`,
       required: Boolean(field.required),
       width: "full"
     };
@@ -4264,6 +4497,50 @@ function pageFromActivity(activity: Record<string, unknown>, order: number): Mon
   };
 }
 
+function monthlyActivitySettings(managerData: Record<string, unknown> | null, activity: Record<string, unknown>) {
+  const embedded = activity.formSettings && typeof activity.formSettings === "object" && !Array.isArray(activity.formSettings)
+    ? activity.formSettings as Record<string, unknown>
+    : {};
+  const map = managerData?.formSettings && typeof managerData.formSettings === "object" && !Array.isArray(managerData.formSettings)
+    ? managerData.formSettings as Record<string, unknown>
+    : {};
+  const keys = [activity.id, activity.activityId, activity.activityNo, activity.nativeFormId, activity.formId]
+    .map((value) => clean(value))
+    .filter(Boolean);
+  const linked = keys.reduce<Record<string, unknown>>((output, key) => {
+    const value = map[key];
+    return value && typeof value === "object" && !Array.isArray(value)
+      ? { ...output, ...(value as Record<string, unknown>) }
+      : output;
+  }, {});
+  return { ...linked, ...embedded };
+}
+
+function hydrateMonthlyActivity(activity: Record<string, unknown>, managerData: Record<string, unknown> | null) {
+  const settings = monthlyActivitySettings(managerData, activity);
+  return {
+    ...activity,
+    detailText: firstClean(activity.detailText, activity.description, settings.detailText, settings.description),
+    imageUrl: firstClean(activity.imageUrl, activity.posterUrl, settings.imageUrl, settings.posterUrl),
+    posterUrl: firstClean(activity.posterUrl, activity.imageUrl, settings.posterUrl, settings.imageUrl),
+    galleryUrls: monthlyUrlList([activity.galleryUrls, settings.galleryUrls]),
+    nativeFormUrl: firstClean(activity.nativeFormUrl, settings.nativeFormUrl),
+    formUrl: firstClean(activity.formUrl, settings.formUrl)
+  };
+}
+
+function canonicalMonthlyDetailUrls(config: MonthlyConfig) {
+  const normalized = normalizeConfig(config);
+  return {
+    ...normalized,
+    detailBaseUrl: `${workerBaseUrl}/monthly-detail/{id}`,
+    pages: (normalized.pages || []).map((page) => ({
+      ...page,
+      detailUrl: detailUrlForPage(page, normalized)
+    }))
+  };
+}
+
 async function readEffectiveMonthly(env: Env): Promise<MonthlyConfig> {
   const monthly = await readMonthly(env);
   const managerData = await readManagerData(env);
@@ -4272,9 +4549,9 @@ async function readEffectiveMonthly(env: Env): Promise<MonthlyConfig> {
   const activityPages = activities
     .filter((item): item is Record<string, unknown> => Boolean(item) && typeof item === "object" && activityStatusIsOnline(item as Record<string, unknown>))
     .sort(compareMonthlyActivities)
-    .map((item, index) => pageFromActivity(item, index))
+    .map((item, index) => pageFromActivity(hydrateMonthlyActivity(item, managerData), index))
     .filter((page): page is MonthlyPage => Boolean(page));
-  if (!activityPages.length) return normalizeConfig({ ...monthly, enabled: monthly.enabled !== false && manualPages.length > 0, pages: manualPages });
+  if (!activityPages.length) return canonicalMonthlyDetailUrls({ ...monthly, enabled: monthly.enabled !== false && manualPages.length > 0, pages: manualPages });
 
   const merged = new Map<string, MonthlyPage>();
   activityPages.forEach((page) => merged.set(pageIdentity(page), page));
@@ -4304,7 +4581,7 @@ async function readEffectiveMonthly(env: Env): Promise<MonthlyConfig> {
     });
   });
 
-  return normalizeConfig({
+  return canonicalMonthlyDetailUrls({
     ...monthly,
     enabled: monthly.enabled !== false || merged.size > 0,
     pages: [...merged.values()].sort((a, b) => Number(a.order || 0) - Number(b.order || 0))
@@ -4321,8 +4598,8 @@ function appendIdToUrl(baseUrl: string | undefined, activityNo: string | undefin
 }
 
 function detailUrlForPage(page: MonthlyPage, config: MonthlyConfig) {
-  const generated = appendIdToUrl(config.detailBaseUrl, page.activityNo || page.activityId, page.id);
-  return generated || page.detailUrl || `${workerBaseUrl}/monthly-detail/${encodeURIComponent(String(page.id || ""))}`;
+  const target = firstClean(page.activityNo, page.activityId, page.id);
+  return `${workerBaseUrl}/monthly-detail/${encodeURIComponent(target)}`;
 }
 
 function registerUrlForPage(page: MonthlyPage) {
@@ -4401,7 +4678,7 @@ function buildMonthlyBubble(page: MonthlyPage, config: MonthlyConfig) {
     type: "bubble",
     size: "kilo",
     body: { type: "box", layout: "vertical", paddingAll: "0px", contents: [
-      { type: "image", url: page.imageUrl || "https://developers-resource.landpress.line.me/fx/img/01_1_cafe.png", size: "full", aspectMode: "cover", aspectRatio: "2:3", gravity: "top", action: { type: "uri", label: "報名", uri: formUri } },
+      { type: "image", url: page.imageUrl || "https://developers-resource.landpress.line.me/fx/img/01_1_cafe.png", size: "full", aspectMode: "cover", aspectRatio: "2:3", gravity: "top", action: { type: "uri", label: "詳細說明", uri: detailUri } },
       { type: "box", layout: "vertical", position: "absolute", cornerRadius: "20px", offsetTop: "18px", offsetStart: "18px", backgroundColor: "#ff334b", height: "25px", width: "53px", action: { type: "uri", label: "分享", uri: shareUri }, contents: [{ type: "text", text: "分享", color: "#ffffff", align: "center", size: "xs", offsetTop: "3px", action: { type: "uri", label: "分享", uri: shareUri } }] }
     ] },
     footer: { type: "box", layout: "horizontal", contents: [
@@ -4424,9 +4701,9 @@ function vendorCardLabel(label: string) {
   return text.length > 10 ? text.slice(0, 10) : text;
 }
 
-function monthlyPageImages(page: MonthlyPage) {
+function monthlyGalleryImages(page: MonthlyPage) {
   const seen = new Set<string>();
-  return [page.imageUrl, ...(Array.isArray(page.galleryUrls) ? page.galleryUrls : [])]
+  return (Array.isArray(page.galleryUrls) ? page.galleryUrls : [])
     .map((value) => String(value || "").trim())
     .filter((value) => /^https?:\/\//i.test(value))
     .filter((value) => {
@@ -4434,6 +4711,13 @@ function monthlyPageImages(page: MonthlyPage) {
       seen.add(value);
       return true;
     });
+}
+
+function monthlyPageImages(page: MonthlyPage) {
+  const galleryImages = monthlyGalleryImages(page);
+  if (galleryImages.length) return galleryImages;
+  const imageUrl = String(page.imageUrl || "").trim();
+  return /^https?:\/\//i.test(imageUrl) ? [imageUrl] : [];
 }
 
 function monthlySliderHtml(page: MonthlyPage) {
@@ -4805,7 +5089,7 @@ function lineUserIdFromEvent(event: LineEvent) {
 }
 
 function isLineActivityCancel(text: string) {
-  return ["??", "??銝阮", "TDEA??撱箇?"].some((keyword) => normalizeKeyword(text) === normalizeKeyword(keyword));
+  return ["取消", "取消建立活動", "TDEA取消活動"].some((keyword) => normalizeKeyword(text) === normalizeKeyword(keyword));
 }
 
 function canUseLineActivityMaker(lineUserId: string, env: Env) {
@@ -5559,7 +5843,7 @@ async function handleLineActivityMaker(request: Request, env: Env, rawBody: stri
     const draft = !starts ? await readLineActivityDraft(env, lineUserId) : null;
     if (!starts && draft && event.source?.userId) {
       handled += 1;
-      if (clean(env.OPENAI_API_KEY) && shouldUseLineActivityAi(text, draft) && event.replyToken) messages.push({ event, message: { type: "text", text: "?渡?銝哨?蝔????渡?蝯?..." } });
+      if (clean(env.OPENAI_API_KEY) && shouldUseLineActivityAi(text, draft) && event.replyToken) messages.push({ event, message: { type: "text", text: "正在整理活動資料，請稍候..." } });
       const task = (async () => {
         const finalMessage = await handleLineActivityMakerEvent(event, env, ctx);
         if (!finalMessage) return;
@@ -5657,7 +5941,7 @@ async function testLineActivityAi(request: Request, env: Env) {
   if (guard) return guard;
   const url = new URL(request.url);
   const input = request.method === "POST" ? await request.json().catch(() => ({})) as Record<string, unknown> : {};
-  const text = firstClean(input.text, url.searchParams.get("text"), "蝡臬???嚗?026/06/10 14:00-17:00嚗? 2026/06/05嚗?憿?0嚗隤潮?嚗??塚?蝪賢韐?100嚗????嚗INE?敹怠");
+  const text = firstClean(input.text, url.searchParams.get("text"), "活動名稱：TDEA 企業參訪，活動時間：2026/06/10 14:00-17:00，報名截止：2026/06/05，名額：30，簽到贈點：100，報名方式：LINE 會員登入");
   const draft: LineActivityDraft = { id: "ai-check", lineUserId: "ai-check", step: "name", answers: {}, status: "active", createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() };
   try {
     const result = await extractLineActivityWithOpenAI(text, draft, env);
@@ -7691,9 +7975,12 @@ async function monthlyDetail(env: Env, id: string) {
   const config = await readEffectiveMonthly(env);
   const page = (config.pages || []).find((item) => String(item.id) === id || String(item.activityNo) === id || String(item.activityId) === id);
   if (!page) return new Response("Not found", { status: 404, headers: { "content-type": "text/plain; charset=utf-8" } });
-  const formUrl = registerUrlForPage(page);
-  const galleryHtml = monthlySliderHtml(page);
-  const html = `<!doctype html><html lang="zh-Hant"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${esc(page.detailTitle || "活動詳細說明")}</title><style>body{margin:0;background:#f4f6f8;color:#111827;font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI","Noto Sans TC",sans-serif}.wrap{max-width:none;margin:0 auto;padding:0}.card{background:transparent;border-radius:0;padding:0;box-shadow:none}img{width:100%;border-radius:0;margin-bottom:16px}.meta{display:inline-flex;margin:0 0 12px;padding:5px 10px;border-radius:999px;background:#eafff1;color:#027a48;font-size:13px;font-weight:800}h1{font-size:24px;margin:0 0 12px}.text{white-space:pre-wrap;line-height:1.7;color:#344054}.btn{display:block;margin-top:18px;padding:13px 16px;border-radius:10px;background:#06c755;color:#fff;text-align:center;text-decoration:none;font-weight:800}.gallery{margin:0 0 18px}.gallery-head{display:flex;align-items:center;justify-content:space-between;margin:0;padding:16px 18px 10px;background:#fff}.gallery-head strong{font-size:16px}.gallery-head span{font-size:12px;color:#667085;font-weight:800}.slider{position:relative;overflow:hidden;border-radius:0;background:#fff;margin-bottom:16px;aspect-ratio:210/297;min-height:0;width:100%}.track{display:flex;transition:transform .35s ease}.slide{min-width:100%;aspect-ratio:210/297;min-height:0;background:#fff}.slide img{display:block;width:100%;height:100%;object-fit:contain;margin:0;border-radius:0;background:#fff}.slider-nav{position:absolute;inset:0;display:flex;align-items:center;justify-content:space-between;pointer-events:none}.slider-nav button{pointer-events:auto;width:36px;height:36px;border:0;border-radius:999px;background:rgba(15,23,42,.62);color:#fff;font-size:18px;font-weight:900;margin:10px}.dots{position:absolute;left:0;right:0;bottom:8px;display:flex;justify-content:center;gap:6px}.dots button{width:8px;height:8px;border:0;border-radius:999px;background:rgba(255,255,255,.55);padding:0}.dots button.active{background:#06c755}@media(max-width:480px){.wrap{padding:0}.card{padding:0}h1,.text,.meta,.btn{margin-left:18px;margin-right:18px}.slider,.slide{min-height:0}}</style></head><body><main class="wrap"><section class="card">${galleryHtml ? `<section class="gallery"><div class="gallery-head"><strong>活動圖集</strong><span>${monthlyPageImages(page).length} 張</span></div>${galleryHtml}</section>` : ""}${page.activityNo ? `<div class="meta">${esc(page.activityNo)}</div>` : ""}<h1>${esc(page.detailTitle || "活動詳細說明")}</h1><div class="text">${esc(page.detailText || "目前沒有詳細說明。")}</div>${formUrl ? `<a class="btn" href="${esc(formUrl)}">前往報名</a>` : ""}</section></main></body></html>`;
+  const galleryImages = monthlyGalleryImages(page);
+  const imageHtml = monthlySliderHtml(page);
+  const mediaHtml = galleryImages.length
+    ? `<section class="gallery"><div class="gallery-head"><strong>活動圖集</strong><span>${galleryImages.length} 張</span></div>${imageHtml}</section>`
+    : imageHtml;
+  const html = `<!doctype html><html lang="zh-Hant"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${esc(page.detailTitle || "活動詳細說明")}</title><style>body{margin:0;background:#f4f6f8;color:#111827;font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI","Noto Sans TC",sans-serif}.wrap{max-width:none;margin:0 auto;padding:0}.card{background:transparent;border-radius:0;padding:0;box-shadow:none}img{width:100%;border-radius:0;margin-bottom:16px}.meta{display:inline-flex;margin:0 0 12px;padding:5px 10px;border-radius:999px;background:#eafff1;color:#027a48;font-size:13px;font-weight:800}h1{font-size:24px;margin:0 0 12px}.text{white-space:pre-wrap;line-height:1.7;color:#344054}.gallery{margin:0 0 18px}.gallery-head{display:flex;align-items:center;justify-content:space-between;margin:0;padding:16px 18px 10px;background:#fff}.gallery-head strong{font-size:16px}.gallery-head span{font-size:12px;color:#667085;font-weight:800}.slider{position:relative;overflow:hidden;border-radius:0;background:#fff;margin-bottom:16px;aspect-ratio:210/297;min-height:0;width:100%}.track{display:flex;transition:transform .35s ease}.slide{min-width:100%;aspect-ratio:210/297;min-height:0;background:#fff}.slide img{display:block;width:100%;height:100%;object-fit:contain;margin:0;border-radius:0;background:#fff}.slider-nav{position:absolute;inset:0;display:flex;align-items:center;justify-content:space-between;pointer-events:none}.slider-nav button{pointer-events:auto;width:36px;height:36px;border:0;border-radius:999px;background:rgba(15,23,42,.62);color:#fff;font-size:18px;font-weight:900;margin:10px}.dots{position:absolute;left:0;right:0;bottom:8px;display:flex;justify-content:center;gap:6px}.dots button{width:8px;height:8px;border:0;border-radius:999px;background:rgba(255,255,255,.55);padding:0}.dots button.active{background:#06c755}@media(max-width:480px){.wrap{padding:0}.card{padding:0}h1,.text,.meta{margin-left:18px;margin-right:18px}.slider,.slide{min-height:0}}</style></head><body><main class="wrap"><section class="card">${mediaHtml}${page.activityNo ? `<div class="meta">${esc(page.activityNo)}</div>` : ""}<h1>${esc(page.detailTitle || "活動詳細說明")}</h1><div class="text">${esc(page.detailText || "目前沒有詳細說明。")}</div></section></main></body></html>`;
   return new Response(html, { headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" } });
 }
 
@@ -7733,9 +8020,9 @@ export default {
 	    if (request.method === "GET" && url.pathname === "/api/personal-messages/admin") return listPersonalMessagesAdminApi(request, env);
 	    if (request.method === "POST" && url.pathname === "/api/personal-messages") return createPersonalMessageApi(request, env);
 	    if (request.method === "POST" && url.pathname === "/api/personal-messages/upload") return uploadPersonalMessageFileApi(request, env);
-	    if (request.method === "GET" && url.pathname === "/api/monthly-activity") return json({ success: true, data: await readMonthlyReplyConfig(env) });
+	    if (request.method === "GET" && url.pathname === "/api/monthly-activity") return json({ success: true, data: await readEffectiveMonthly(env) });
 	    if ((request.method === "PUT" || request.method === "POST") && url.pathname === "/api/monthly-activity") { const guard = await requireAdmin(request, env); if (guard) return guard; if (!env.ASSETS_BUCKET) return json({ success: false, message: "R2 bucket is not configured" }, 503); const config = await request.json().catch(() => ({})) as MonthlyConfig; const validation = validateMonthlyConfigForPublish(config); if (validation) return json({ success: false, message: validation }, 400); await writeMonthly(env, config); const effective = await refreshMonthlySnapshot(env); return json({ success: true, data: effective, flex: buildMonthlyFlex(effective) }); }
-	    if (request.method === "GET" && url.pathname === "/api/monthly-activity/flex") { const config = await readMonthlyReplyConfig(env); return json({ success: true, flex: buildMonthlyFlex(config), data: config }); }
+	    if (request.method === "GET" && url.pathname === "/api/monthly-activity/flex") { const config = await readEffectiveMonthly(env); return json({ success: true, flex: buildMonthlyFlex(config), data: config }); }
 	    if (request.method === "GET" && url.pathname === "/api/monthly-activity/share") return monthlyActivityShareApi(request, env);
 	    if (request.method === "GET" && url.pathname === "/api/line-webhook/status") return lineWebhookStatusApi(request, env);
 	    if (request.method === "GET" && url.pathname === "/api/line-webhook/logs") return lineWebhookLogsApi(request, env);
@@ -7779,6 +8066,8 @@ export default {
 	    if (request.method === "GET" && url.pathname === "/api/native-registrations/me") return queryNativeRegistrationsByLine(request, env);
 	    if (request.method === "POST" && url.pathname === "/api/native-registrations/update") return updateNativeRegistration(request, env);
 	    if (request.method === "POST" && url.pathname === "/api/native-registrations/cancel") return cancelNativeRegistration(request, env);
+	    if (request.method === "POST" && url.pathname === "/api/native-registrations/restore") return restoreNativeRegistration(request, env);
+	    if (request.method === "DELETE" && url.pathname === "/api/native-registrations/delete") return deleteNativeRegistration(request, env);
 	    if (request.method === "POST" && url.pathname === "/api/native-registrations/payment-report") return reportNativeRegistrationPayment(request, env);
 	    if ((request.method === "PUT" || request.method === "POST") && url.pathname === "/api/native-registrations/payment") return updateNativeRegistrationPayment(request, env);
 	    if (request.method === "GET" && url.pathname === "/api/native-checkin/verify") return verifyNativeCheckin(request, env);

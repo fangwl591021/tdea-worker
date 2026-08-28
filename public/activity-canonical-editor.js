@@ -1,4 +1,7 @@
 (() => {
+  // 此腳本是既有活動編輯表單唯一的儲存擁有者。app.js 的舊流程僅在
+  // canonical 編輯器未載入時作為備援，避免兩條路徑互相覆寫欄位。
+  window.__tdeaCanonicalActivitySaveOwner = true;
   const api = "https://tdeawork.fangwl591021.workers.dev";
   const numericKeys = new Set(["capacity","checkinPoints","feePoints","paymentAmount","reg","check"]);
   const systemFieldKeys = new Set(["name","phone","email","company","memberNo","note","gender","isMember","meal","imageUpload","participantUnit"]);
@@ -42,8 +45,69 @@
     return String(value ?? "").trim();
   }
 
+  function isActivityForm(form) {
+    // HTMLFormElement exposes named controls as properties. Because this form
+    // contains <input name="id">, form.id resolves to that input instead of
+    // the form's id attribute in real browsers.
+    return form instanceof HTMLFormElement && form.getAttribute("id") === "drawer-activity";
+  }
+
   function fieldLabelKey(field) {
     return cleanText(field?.label).toLowerCase().replace(/\s+/g, " ");
+  }
+
+  function deletedFieldIdentities(form) {
+    return Array.isArray(form.__tdeaDeletedCustomFields) ? form.__tdeaDeletedCustomFields : [];
+  }
+
+  function rememberDeletedField(form, row) {
+    const key = cleanText(row?.dataset?.fieldKey);
+    const label = cleanText(row?.querySelector("[name='customLabel']")?.value);
+    const identity = { key, label };
+    if (!key && !label) return;
+    const deleted = deletedFieldIdentities(form);
+    if (!deleted.some((item) => cleanText(item.key) === key && fieldLabelKey(item) === fieldLabelKey(identity))) {
+      deleted.push(identity);
+    }
+    form.__tdeaDeletedCustomFields = deleted;
+    const live = form.__tdeaRegistrationSettings;
+    if (live && typeof live === "object") {
+      const keep = (field) => !(key && cleanText(field?.key) === key) && !(label && fieldLabelKey(field) === fieldLabelKey(identity));
+      if (Array.isArray(live.fields)) live.fields = live.fields.filter(keep);
+      if (Array.isArray(live.customFields)) live.customFields = live.customFields.filter(keep);
+    }
+  }
+
+  function deletedOptionRecords(form) {
+    return Array.isArray(form.__tdeaDeletedCustomOptions) ? form.__tdeaDeletedCustomOptions : [];
+  }
+
+  function rememberDeletedOption(form, row, optionRow) {
+    const option = cleanText(optionRow?.querySelector("[name='customOption']")?.value);
+    if (!option) return;
+    const record = {
+      fieldKey:cleanText(row?.dataset?.fieldKey),
+      fieldLabel:cleanText(row?.querySelector("[name='customLabel']")?.value),
+      option
+    };
+    const deleted = deletedOptionRecords(form);
+    if (!deleted.some((item) =>
+      cleanText(item.fieldKey) === record.fieldKey &&
+      fieldLabelKey({ label:item.fieldLabel }) === fieldLabelKey({ label:record.fieldLabel }) &&
+      cleanText(item.option) === record.option
+    )) deleted.push(record);
+    form.__tdeaDeletedCustomOptions = deleted;
+    const live = form.__tdeaRegistrationSettings;
+    if (live && typeof live === "object") {
+      const update = (field) => {
+        const matches = (record.fieldKey && cleanText(field?.key) === record.fieldKey) ||
+          (record.fieldLabel && fieldLabelKey(field) === fieldLabelKey({ label:record.fieldLabel }));
+        if (!matches || !Array.isArray(field.options)) return field;
+        return { ...field, options:field.options.filter((value) => cleanText(value) !== record.option) };
+      };
+      if (Array.isArray(live.fields)) live.fields = live.fields.map(update);
+      if (Array.isArray(live.customFields)) live.customFields = live.customFields.map(update);
+    }
   }
 
   async function uploadFile(file, activityId) {
@@ -53,7 +117,9 @@
     const response = await fetch(`${api}/api/uploads`, { method:"POST", headers:headers(), body });
     const result = await response.json().catch(() => ({}));
     if (!response.ok || !result.success) throw new Error(result.message || "圖片上傳失敗");
-    return result.url || "";
+    const url = cleanText(result.url || result.data?.url);
+    if (!url) throw new Error("圖片已上傳，但伺服器未回傳圖片網址");
+    return url;
   }
 
   function setStatus(form, text, error = false) {
@@ -86,7 +152,7 @@
       next[key] = value;
     });
     next.id = String(fd.get("id") || base.id || "").trim();
-    next.galleryUrls = cleanUrlList(fd.get("galleryUrls") || base.galleryUrls || "");
+    next.galleryUrls = cleanUrlList(fd.has("galleryUrls") ? fd.get("galleryUrls") : (base.galleryUrls || ""));
     if (next.posterUrl) next.imageUrl = next.posterUrl;
     return next;
   }
@@ -218,9 +284,24 @@
     return { settings, fields, sessions };
   }
 
-  document.addEventListener("submit", async (event) => {
+  document.addEventListener("click", (event) => {
+    const optionButton = event.target.closest?.(".custom-option-remove");
+    const optionRow = optionButton?.closest?.(".custom-option-row");
+    const optionField = optionButton?.closest?.("[data-custom-field]");
+    const optionForm = optionButton?.closest?.("form");
+    if (isActivityForm(optionForm) && optionField && optionRow) {
+      rememberDeletedOption(optionForm, optionField, optionRow);
+      return;
+    }
+    const button = event.target.closest?.("[data-remove-custom-field]");
+    const row = button?.closest?.("[data-custom-field]");
+    const form = button?.closest?.("form");
+    if (isActivityForm(form) && row) rememberDeletedField(form, row);
+  }, true);
+
+  async function handleCanonicalActivitySubmit(event) {
     const form = event.target;
-    if (!(form instanceof HTMLFormElement) || form.id !== "drawer-activity") return;
+    if (!isActivityForm(form)) return;
 
     event.preventDefault();
     event.stopImmediatePropagation();
@@ -236,6 +317,8 @@
       setStatus(form, "讀取正式資料...");
       const canonical = await currentCanonical(id);
       const activity = activityFromForm(form, canonical.activity || {});
+      const deletedFields = deletedFieldIdentities(form);
+      const deletedOptions = deletedOptionRecords(form);
 
       if (cleanText(form.querySelector("[name='catalogBillingMode']")?.value) === "catalog_paid") {
         activity.billingMode = "catalog_paid";
@@ -270,28 +353,57 @@
       const response = await fetch(`${api}/api/admin-activities/${encodeURIComponent(id)}/canonical`, {
         method:"PUT",
         headers:headers({ "content-type":"application/json" }),
-        body:JSON.stringify({ formId:canonical.formId, activity, settings, fields, sessions })
+        body:JSON.stringify({ formId:canonical.formId, activity, settings, fields, sessions, deletedFields, deletedOptions })
       });
       const result = await response.json().catch(() => ({}));
       if (!response.ok || !result.success) throw new Error(result.message || "正式資料儲存失敗");
 
       const verify = await currentCanonical(id);
       if (!verify?.form || !Array.isArray(verify.form.fields)) throw new Error("儲存後驗證失敗");
-      const expectedByLabel = new Map(fields.map((field) => [fieldLabelKey(field), field]));
-      for (const saved of verify.form.fields) {
-        const expected = expectedByLabel.get(fieldLabelKey(saved));
-        if (!expected) continue;
+      const savedByLabel = new Map(verify.form.fields.map((field) => [fieldLabelKey(field), field]));
+      for (const expected of fields) {
+        const saved = savedByLabel.get(fieldLabelKey(expected));
+        if (!saved) throw new Error(`欄位「${expected.label}」儲存驗證失敗`);
         const wanted = Array.isArray(expected.options) ? expected.options.map(cleanText) : [];
         const got = Array.isArray(saved.options) ? saved.options.map(cleanText) : [];
         if (wanted.join("\u0001") !== got.join("\u0001")) {
           throw new Error(`欄位「${saved.label}」儲存驗證失敗`);
         }
       }
+      for (const deleted of deletedFields) {
+        const remained = verify.form.fields.find((field) =>
+          (cleanText(deleted.key) && cleanText(field?.key) === cleanText(deleted.key)) ||
+          (fieldLabelKey(deleted) && fieldLabelKey(field) === fieldLabelKey(deleted))
+        );
+        if (remained) throw new Error(`欄位「${deleted.label || remained.label}」刪除驗證失敗`);
+      }
+      for (const deleted of deletedOptions) {
+        const savedField = verify.form.fields.find((field) =>
+          (cleanText(deleted.fieldKey) && cleanText(field?.key) === cleanText(deleted.fieldKey)) ||
+          (fieldLabelKey({ label:deleted.fieldLabel }) && fieldLabelKey(field) === fieldLabelKey({ label:deleted.fieldLabel }))
+        );
+        if (savedField && (savedField.options || []).some((value) => cleanText(value) === cleanText(deleted.option))) {
+          throw new Error(`選項「${deleted.option}」刪除驗證失敗`);
+        }
+      }
+      if (cleanText(verify.activity?.status) !== cleanText(activity.status)) {
+        throw new Error("活動狀態儲存驗證失敗");
+      }
+      const expectedGallery = cleanUrlList(activity.galleryUrls);
+      const savedGallery = cleanUrlList(verify.activity?.galleryUrls);
+      if (expectedGallery.join("\u0001") !== savedGallery.join("\u0001")) {
+        throw new Error("輪播圖儲存驗證失敗");
+      }
       form.__tdeaRegistrationSettings = { ...(verify.form.settings || {}), fields:verify.form.fields, sessions:verify.form.sessions || [] };
       const posterInput = form.querySelector("[name='posterUrl']");
       if (posterInput && verify.activity?.posterUrl) posterInput.value = verify.activity.posterUrl;
       const galleryInput = form.querySelector("[name='galleryUrls']");
       if (galleryInput) galleryInput.value = cleanUrlList(verify.activity?.galleryUrls || []).join("\n");
+      window.dispatchEvent(new CustomEvent("tdea:activity-canonical-saved", {
+        detail: { activity:verify.activity, form:verify.form, formId:verify.formId }
+      }));
+      form.__tdeaDeletedCustomFields = [];
+      form.__tdeaDeletedCustomOptions = [];
       setStatus(form, `已儲存並驗證（${verify.form.fields.length} 個欄位）`);
     } catch (error) {
       setStatus(form, error?.message || "儲存失敗", true);
@@ -299,5 +411,22 @@
       delete form.dataset.canonicalSaving;
       if (button) { button.disabled = false; button.textContent = oldText; }
     }
-  }, true);
+  }
+
+  function bindCanonicalActivityForm(form) {
+    if (!isActivityForm(form) || form.dataset.canonicalSubmitBound === "true") return;
+    form.dataset.canonicalSubmitBound = "true";
+    form.addEventListener("submit", handleCanonicalActivitySubmit);
+  }
+
+  function bindCanonicalActivityForms() {
+    document.querySelectorAll("#drawer-activity").forEach(bindCanonicalActivityForm);
+  }
+
+  // capture listener 處理一般瀏覽器提交；直接綁表單則涵蓋不冒泡的程式化提交，
+  // 並確保 app.js 每次重畫抽屜後產生的新 form 都有唯一 canonical 儲存者。
+  document.addEventListener("submit", handleCanonicalActivitySubmit, true);
+  const formObserver = new MutationObserver(bindCanonicalActivityForms);
+  if (document.body) formObserver.observe(document.body, { childList:true, subtree:true });
+  bindCanonicalActivityForms();
 })();

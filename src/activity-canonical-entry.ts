@@ -1,4 +1,5 @@
 import app from "./native-form-single-save-entry";
+import { removeDeletedFields, removeDeletedOptions } from "./activity-field-deletions";
 
 type Env = { ASSETS_BUCKET?: R2Bucket; [key:string]: unknown };
 type Row = Record<string, any>;
@@ -62,9 +63,12 @@ function customOnly(fields: Row[]) {
 }
 
 async function getActivity(request: Request, env: Env, ctx: ExecutionContext, activityId: string) {
-  const response = await app.fetch(new Request(new URL("/api/activities", request.url), { headers:request.headers, method:"GET" }), env as never, ctx);
+  const response = await app.fetch(new Request(new URL(`/api/activities/${encodeURIComponent(activityId)}`, request.url), { headers:request.headers, method:"GET" }), env as never, ctx);
   const result = await response.json().catch(() => ({})) as Row;
-  const rows = Array.isArray(result?.data?.activities) ? result.data.activities : Array.isArray(result?.activities) ? result.activities : [];
+  if (response.ok && result?.data && typeof result.data === "object" && !Array.isArray(result.data)) return result.data as Row;
+  const listResponse = await app.fetch(new Request(new URL("/api/activities", request.url), { headers:request.headers, method:"GET" }), env as never, ctx);
+  const listResult = await listResponse.json().catch(() => ({})) as Row;
+  const rows = Array.isArray(listResult?.data?.activities) ? listResult.data.activities : Array.isArray(listResult?.activities) ? listResult.activities : [];
   return rows.find((row: Row) => clean(row?.id, 160) === activityId || clean(row?.activityNo, 160) === activityId) || null;
 }
 
@@ -79,7 +83,13 @@ async function saveCanonical(request: Request, env: Env, ctx: ExecutionContext, 
   const currentForm = await readJson(env, `forms/native/${encodeURIComponent(formId)}.json`);
   if (!currentForm) return json({ success:false, message:"找不到正式報名表" }, 404);
 
-  const fields = dedupeFields(input.fields ?? incomingSettings.fields ?? currentForm.fields ?? []);
+  const fields = removeDeletedOptions(
+    removeDeletedFields(
+      dedupeFields(input.fields ?? incomingSettings.fields ?? currentForm.fields ?? []),
+      input.deletedFields
+    ),
+    input.deletedOptions
+  );
   const customFields = customOnly(fields);
   const sessions = Array.isArray(input.sessions) ? input.sessions : Array.isArray(incomingSettings.sessions) ? incomingSettings.sessions : (Array.isArray(currentForm.sessions) ? currentForm.sessions : []);
   const nextActivity = { ...currentActivity, ...incomingActivity, id: clean(currentActivity.id || activityId, 160) || activityId };

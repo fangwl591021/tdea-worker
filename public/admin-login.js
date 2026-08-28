@@ -7,12 +7,12 @@
     "cardCollection","register","query","memberQr","calendar","checkin","redeem","redeemSession","monthlyDetail","monthlyShare","personalMessages","close","marquee","motherRegister","memberHome","checkinModule"
   ];
   const scriptVersions = [
-    "activity-canonical-editor.js?v=canonical4",
-    "app.js?v=activity-editor8",
+    "activity-canonical-editor.js?v=canonical10",
+    "app.js?v=activity-editor10",
     "catalog-pricing.js?v=catalog2",
     "catalog-pricing-editor.js?v=catalog2",
     "line-zone.js?v=access-label1",
-    "lottery.js?v=lottery4",
+    "lottery.js?v=lottery12",
     "activity-types.js?v=types4",
     "form-builder.js?v=form17",
     "google-form-engine.js?v=gform17",
@@ -24,7 +24,7 @@
     "marquee-manager.js?v=ad-points-a4-1",
     "push-manager.js?v=push6",
     "calendar-manager.js?v=calendar3",
-    "monthly-activity.js?v=monthly-add-sync1",
+    "monthly-activity.js?v=monthly-detail-route1",
     "native-form.js?v=registration-options2",
     "liff-detail.js?v=liff-detail14",
     "personal-message.js?v=pm4",
