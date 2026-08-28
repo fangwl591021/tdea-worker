@@ -12,7 +12,7 @@
     "catalog-pricing.js?v=catalog2",
     "catalog-pricing-editor.js?v=catalog2",
     "line-zone.js?v=access-label1",
-    "lottery.js?v=lottery12",
+    "lottery.js?v=lottery11",
     "activity-types.js?v=types4",
     "form-builder.js?v=form17",
     "google-form-engine.js?v=gform17",

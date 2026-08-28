@@ -6,8 +6,8 @@
   const uid = () => "lot-" + Math.random().toString(36).slice(2) + Date.now().toString(36);
   const transitionVideoUrl = "/lottery-transition.mp4?v=20260826-1";
   let prizeAutoSaveTimer = null;
+  let transitionPreload = null;
   let revealActive = false;
-  let drawInProgress = false;
 
   function load() {
     return window.TDEAApp?.getLotteryData?.() || { activities: [], lottery: {} };
@@ -146,32 +146,16 @@
     Promise.resolve().then(action).catch((error) => toast(error?.message || "抽獎資料儲存失敗，請稍後再試"));
   }
 
-  function setDrawBusy(busy) {
-    document.querySelectorAll("[data-lottery-start],[data-lottery-test],[data-lottery-redraw]").forEach((button) => {
-      button.disabled = busy;
-      button.setAttribute("aria-busy", busy ? "true" : "false");
-    });
-  }
-
-  function runDrawAction(action) {
-    if (drawInProgress) return;
-    const returnFocus = document.activeElement;
-    const returnSelector = returnFocus?.hasAttribute?.("data-lottery-test")
-      ? "[data-lottery-test]"
-      : returnFocus?.hasAttribute?.("data-lottery-start")
-        ? "[data-lottery-start]"
-        : "";
-    drawInProgress = true;
-    setDrawBusy(true);
-    Promise.resolve()
-      .then(action)
-      .catch((error) => toast(error?.message || "抽獎資料儲存失敗，請稍後再試"))
-      .finally(() => {
-        drawInProgress = false;
-        setDrawBusy(false);
-        const target = returnFocus?.isConnected ? returnFocus : returnSelector ? document.querySelector(returnSelector) : null;
-        target?.focus?.({ preventScroll: true });
-      });
+  function preloadTransitionVideo() {
+    if (transitionPreload) return;
+    const video = document.createElement("video");
+    video.src = transitionVideoUrl;
+    video.preload = "auto";
+    video.muted = true;
+    video.playsInline = true;
+    video.setAttribute("aria-hidden", "true");
+    transitionPreload = video;
+    video.load();
   }
 
   function confettiHtml() {
@@ -186,7 +170,7 @@
   }
 
   function revealWinner({ winner, prize, test = false }) {
-    if (revealActive) return Promise.reject(new Error("抽獎動畫正在進行，請稍候"));
+    if (revealActive) return Promise.resolve();
     revealActive = true;
     const previousOverflow = document.body.style.overflow;
     document.body.style.overflow = "hidden";
@@ -219,69 +203,34 @@
     const result = overlay.querySelector("[data-lottery-reveal-result]");
     const soundButton = overlay.querySelector("[data-lottery-sound]");
     const skipButton = overlay.querySelector("[data-lottery-skip]");
-    const statusText = overlay.querySelector(".lottery-reveal-toolbar span");
-    const closeButton = overlay.querySelector("[data-lottery-reveal-close]");
     let revealed = false;
-    let slowLoadTimer = null;
+    let fallbackTimer = null;
     const showResult = () => {
       if (revealed) return;
       revealed = true;
-      clearTimeout(slowLoadTimer);
+      clearTimeout(fallbackTimer);
       video.pause();
       overlay.dataset.phase = "result";
       result.hidden = false;
       soundButton.hidden = true;
       skipButton.hidden = true;
-      setTimeout(() => closeButton?.focus(), 80);
-    };
-
-    const handleOverlayKeydown = (event) => {
-      if (event.key === "Escape") {
-        event.preventDefault();
-        if (revealed) closeButton?.click();
-        else showResult();
-        return;
-      }
-      if (event.key !== "Tab") return;
-      const focusable = Array.from(overlay.querySelectorAll("button:not([hidden]):not([disabled])"))
-        .filter((button) => !button.closest("[hidden]") && button.getClientRects().length > 0);
-      if (!focusable.length) return;
-      const first = focusable[0];
-      const last = focusable[focusable.length - 1];
-      if (event.shiftKey && document.activeElement === first) {
-        event.preventDefault();
-        last.focus();
-      } else if (!event.shiftKey && document.activeElement === last) {
-        event.preventDefault();
-        first.focus();
-      } else if (!overlay.contains(document.activeElement)) {
-        event.preventDefault();
-        first.focus();
-      }
+      setTimeout(() => overlay.querySelector("[data-lottery-reveal-close]")?.focus(), 80);
     };
 
     video.addEventListener("ended", showResult, { once: true });
     video.addEventListener("error", showResult, { once: true });
-    video.addEventListener("playing", () => { statusText.textContent = `${test ? "測試抽獎" : "正式抽獎"}進行中`; });
-    video.addEventListener("waiting", () => { statusText.textContent = "影片緩衝中，可略過動畫"; });
-    video.addEventListener("stalled", () => { statusText.textContent = "影片載入較慢，可略過動畫"; });
     skipButton.addEventListener("click", showResult);
     soundButton.addEventListener("click", () => {
       video.muted = !video.muted;
       soundButton.textContent = video.muted ? "開啟聲音" : "關閉聲音";
     });
-    document.addEventListener("keydown", handleOverlayKeydown);
-    slowLoadTimer = setTimeout(() => {
-      if (!revealed && video.readyState < HTMLMediaElement.HAVE_FUTURE_DATA) statusText.textContent = "影片載入較慢，可略過動畫";
-    }, 15000);
-    video.play().catch(() => { statusText.textContent = "無法自動播放，可略過動畫"; });
-    soundButton.focus({ preventScroll: true });
+    fallbackTimer = setTimeout(showResult, 15000);
+    video.play().catch(showResult);
 
     return new Promise((resolve) => {
-      closeButton?.addEventListener("click", () => {
-        clearTimeout(slowLoadTimer);
+      overlay.querySelector("[data-lottery-reveal-close]")?.addEventListener("click", () => {
+        clearTimeout(fallbackTimer);
         video.pause();
-        document.removeEventListener("keydown", handleOverlayKeydown);
         overlay.remove();
         document.body.style.overflow = previousOverflow;
         revealActive = false;
@@ -447,6 +396,7 @@
           </div>
         </div>
       </section>`;
+    preloadTransitionVideo();
     bind(activity.id, registrations);
   }
 
@@ -462,14 +412,14 @@
     document.querySelector("[data-lottery-print]")?.addEventListener("click", () => window.print());
     document.querySelector("[data-lottery-clear]")?.addEventListener("click", () => runAction(() => clearLottery(activityId)));
     document.querySelector("[data-lottery-export]")?.addEventListener("click", () => exportCsv(activityId));
-    document.querySelector("[data-lottery-start]")?.addEventListener("click", () => runDrawAction(() => draw(activityId, registrations)));
-    document.querySelector("[data-lottery-test]")?.addEventListener("click", () => runDrawAction(() => testDraw(activityId, registrations)));
+    document.querySelector("[data-lottery-start]")?.addEventListener("click", () => runAction(() => draw(activityId, registrations)));
+    document.querySelector("[data-lottery-test]")?.addEventListener("click", () => runAction(() => testDraw(activityId, registrations)));
     document.querySelector("[data-prize-template]")?.addEventListener("click", downloadPrizeTemplate);
     document.querySelector("[data-prize-add]")?.addEventListener("click", () => runAction(() => addPrize(activityId, registrations)));
     document.querySelector("[data-prize-save]")?.addEventListener("click", () => runAction(() => savePrizeInputs(activityId, true, true)));
     document.querySelector("[data-prize-file]")?.addEventListener("change", (event) => runAction(() => importPrizeFile(activityId, event)));
     document.querySelectorAll("[data-prize-delete]").forEach((button) => button.addEventListener("click", () => runAction(() => deletePrize(activityId, button.dataset.prizeDelete, registrations))));
-    document.querySelectorAll("[data-lottery-redraw]").forEach((button) => button.addEventListener("click", () => runDrawAction(() => redraw(activityId, registrations, button.dataset.lotteryRedraw))));
+    document.querySelectorAll("[data-lottery-redraw]").forEach((button) => button.addEventListener("click", () => runAction(() => redraw(activityId, registrations, button.dataset.lotteryRedraw))));
     document.querySelectorAll("[data-lottery-remove]").forEach((button) => button.addEventListener("click", () => runAction(() => removeWinner(activityId, button.dataset.lotteryRemove))));
     document.querySelectorAll("[data-prize-name],[data-prize-qty],[data-prize-sort]").forEach((input) => input.addEventListener("input", () => {
       const selectedPrizeId = document.querySelector("[data-lottery-prize]")?.value || "";
@@ -578,7 +528,8 @@
   }
 
   async function testDraw(activityId, registrations) {
-    const data = syncPrizeInputs(activityId);
+    await savePrizeInputs(activityId);
+    const data = normalize(load());
     const record = lotteryState(data, activityId);
     const selectedPrizeId = document.querySelector("[data-lottery-prize]")?.value || "";
     const prize = record.prizes.find((item) => item.id === selectedPrizeId) || { name: "測試獎品" };
