@@ -3304,14 +3304,20 @@ async function adjustMemberPointApi(request: Request, env: Env) {
 async function listPointLedgerApi(request: Request, env: Env) {
   const guard = await requireAdmin(request, env);
   if (guard) return guard;
+  if (!env.TDEA_DESIGN || !env.TDEA_INTERNAL_SECRET) return json({ success: false, message: "TDEA-DESIGN point service is not configured" }, 503);
   const url = new URL(request.url);
   const limit = Math.max(1, Math.min(numberValue(url.searchParams.get("limit")) || 200, 500));
   const lineUserId = clean(url.searchParams.get("lineUserId"));
-  const payload: Record<string, unknown> = lineUserId ? { LINE_user_id: lineUserId, page: 1, per_page: limit } : { shop_id: Number(env.WETW_SHOP_ID || 35), page: 1, per_page: limit };
-  const result = await queryPointBalanceOnce(env, payload) as Record<string, unknown>;
-  if (result.success !== true) return json({ success: false, message: clean(result.message) || clean(result.code) || "mother point ledger query failed", data: [], raw: result }, 502);
-  const list = Array.isArray(result.list) ? result.list.map(asRecord) : [];
-  return json({ success: true, data: pointLogsFromMotherList(list), raw: result });
+  const upstreamUrl = new URL("https://tdea-design.internal/internal/tdea/points/ledger");
+  upstreamUrl.searchParams.set("limit", String(limit));
+  if (lineUserId) upstreamUrl.searchParams.set("lineUserId", lineUserId);
+  const response = await env.TDEA_DESIGN.fetch(upstreamUrl.toString(), {
+    method: "GET",
+    headers: { "x-tdea-internal-secret": env.TDEA_INTERNAL_SECRET, accept: "application/json" }
+  });
+  const result = await response.json().catch(() => ({})) as Record<string, unknown>;
+  if (!response.ok || result.success !== true) return json({ success: false, message: clean(result.error) || "TDEA-DESIGN point ledger query failed", data: [] }, response.status || 502);
+  return json({ success: true, source: "tdea-design-d1", data: Array.isArray(result.data) ? result.data : [] });
 }
 
 
