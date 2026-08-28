@@ -15,8 +15,13 @@ test("永久刪除有管理驗證與帳務稽核保護", () => {
   assert.match(backend, /async function deleteNativeRegistration/);
   assert.match(backend, /const guard = await requireAdmin\(request, env\)/);
   assert.match(backend, /已有付款、匯款或退款紀錄，不能永久刪除/);
+  assert.match(backend, /hasMeaningfulPaymentTransaction/);
+  assert.match(backend, /registrations\/deletion-audit/);
+  assert.match(backend, /status: "completed"/);
+  assert.match(backend, /請填寫永久刪除原因/);
   assert.match(backend, /ASSETS_BUCKET!\.delete/);
   assert.match(frontend, /請輸入「永久刪除」/);
+  assert.match(frontend, /requestId: crypto\.randomUUID\(\)/);
 });
 
 test("取消資料可安全恢復並保留取消歷程", () => {

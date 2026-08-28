@@ -2166,6 +2166,10 @@ function nativeLineUserKey(lineUserId: string) {
   return `registrations/native-line/${encodeURIComponent(lineUserId)}.json`;
 }
 
+function registrationDeletionAuditKey(registrationId: string, requestId: string) {
+  return `registrations/deletion-audit/${encodeURIComponent(registrationId)}/${encodeURIComponent(requestId)}.json`;
+}
+
 function redeemKey(token: string) {
   return `redeem/requests/${encodeURIComponent(token)}.json`;
 }
@@ -3873,9 +3877,10 @@ function registrationDeleteBlockReason(entry: RegistrationEntry) {
   if (clean(entry.checkedInAt)) return "此報名已有簽到紀錄，不能永久刪除";
   if (clean(entry.pointsSyncedAt) || (Array.isArray(entry.pointResults) && entry.pointResults.length > 0)) return "此報名已有點數紀錄，不能永久刪除";
   const payment = normalizeRegistrationPayment(entry);
+  const hasMeaningfulPaymentTransaction = (payment.transactions || []).some((transaction) => clean(transaction?.type) !== "created");
   const hasPaymentAudit = ["reported", "paid", "cancelled", "refunded"].includes(payment.status) ||
     Boolean(clean(payment.remittanceLast5 || payment.reportedAt || payment.paidAt || payment.verifiedAt)) ||
-    Boolean(Array.isArray(payment.transactions) && payment.transactions.length > 0);
+    hasMeaningfulPaymentTransaction;
   if (hasPaymentAudit) return "此報名已有付款、匯款或退款紀錄，不能永久刪除";
   return "";
 }
@@ -3925,8 +3930,32 @@ async function deleteNativeRegistration(request: Request, env: Env) {
   const input = await request.json().catch(() => ({})) as Record<string, unknown>;
   const entry = await readNativeRegistration(env, clean(input.registrationId));
   if (!entry) return json({ success: false, message: "查無報名資料" }, 404);
+  const reason = clean(input.reason || input.note);
+  if (!reason) return json({ success: false, message: "請填寫永久刪除原因" }, 400);
   const blockedReason = registrationDeleteBlockReason(entry);
   if (blockedReason) return json({ success: false, message: blockedReason }, 409);
+
+  const requestIdInput = clean(input.requestId).replace(/[^a-zA-Z0-9_-]/g, "").slice(0, 120);
+  const requestId = requestIdInput || crypto.randomUUID();
+  const deletedAt = new Date().toISOString();
+  const payment = normalizeRegistrationPayment(entry);
+  const auditKey = registrationDeletionAuditKey(entry.id, requestId);
+  const audit = {
+    event: "registration.permanently_deleted",
+    status: "requested",
+    requestId,
+    registrationId: entry.id,
+    activityRef: firstClean(entry.activity?.id, entry.activity?.activityNo, entry.formId),
+    activityName: firstClean(entry.activity?.name, entry.activity?.title),
+    paymentStatus: payment.status,
+    paymentAmount: payment.amount,
+    deletedBy: adminRegistrationOperator(request),
+    reason,
+    deletedAt
+  };
+  await env.ASSETS_BUCKET.put(auditKey, JSON.stringify(audit, null, 2), {
+    httpMetadata: { contentType: "application/json; charset=utf-8", cacheControl: "no-store" }
+  });
 
   const keys = [...new Set(registrationKeys(entry.activity || {}, clean(entry.formId)))];
   await Promise.all(keys.map(async (key) => {
@@ -3943,7 +3972,10 @@ async function deleteNativeRegistration(request: Request, env: Env) {
   }
   const objectKeys = [nativeRegistrationKey(entry.id), entry.queryCode ? nativeQueryKey(entry.queryCode) : "", entry.checkinToken ? nativeTokenKey(entry.checkinToken) : ""].filter(Boolean);
   await Promise.all(objectKeys.map((key) => env.ASSETS_BUCKET!.delete(key)));
-  return json({ success: true, data: { registrationId: entry.id, deleted: true } });
+  await env.ASSETS_BUCKET.put(auditKey, JSON.stringify({ ...audit, status: "completed" }, null, 2), {
+    httpMetadata: { contentType: "application/json; charset=utf-8", cacheControl: "no-store" }
+  });
+  return json({ success: true, data: { registrationId: entry.id, deleted: true, auditId: requestId } });
 }
 
 async function reportNativeRegistrationPayment(request: Request, env: Env) {

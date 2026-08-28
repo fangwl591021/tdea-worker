@@ -1638,7 +1638,7 @@
       const status = String(row?.status || "active").trim();
       if (status !== "cancelled") return `<button class="link" data-cancel-registration="${esc(row.id)}">隱藏（取消）</button>`;
       const paymentStatus = String(payment.status || "").trim();
-      const hasPaymentAudit = ["reported", "paid", "cancelled", "refunded"].includes(paymentStatus) || payment.remittanceLast5 || payment.reportedAt || payment.paidAt || payment.verifiedAt || (Array.isArray(payment.transactions) && payment.transactions.length);
+      const hasPaymentAudit = ["reported", "paid", "cancelled", "refunded"].includes(paymentStatus) || payment.remittanceLast5 || payment.reportedAt || payment.paidAt || payment.verifiedAt || (Array.isArray(payment.transactions) && payment.transactions.some((transaction) => String(transaction?.type || "").trim() !== "created"));
       const hasOperationalAudit = row.checkedInAt || row.pointsSyncedAt || (Array.isArray(row.pointResults) && row.pointResults.length);
       const canRestore = !["cancelled", "refunded"].includes(paymentStatus);
       const restore = canRestore ? `<button class="link" data-restore-registration="${esc(row.id)}">恢復</button>` : "";
@@ -3188,10 +3188,12 @@ registrationSettings = { ...builderSettings, customFields, fields: [...structure
     if (!registrationId) return;
     if (!confirm("永久刪除會移除這筆測試報名及其查詢、核銷索引，且無法復原。確定繼續？")) return;
     if (prompt("為避免誤刪，請輸入「永久刪除」") !== "永久刪除") return;
+    const reason = String(prompt("請填寫永久刪除原因：", "大量測試資料清理") || "").trim();
+    if (!reason) { toast("必須填寫永久刪除原因"); return; }
     const originalText = button?.textContent || "永久刪除";
     if (button) { button.disabled = true; button.textContent = "刪除中…"; }
     try {
-      const response = await fetch(api + "/api/native-registrations/delete", { method: "DELETE", headers: adminHeaders({ "content-type": "application/json" }), body: JSON.stringify({ registrationId }) });
+      const response = await fetch(api + "/api/native-registrations/delete", { method: "DELETE", headers: adminHeaders({ "content-type": "application/json" }), body: JSON.stringify({ registrationId, reason, requestId: crypto.randomUUID() }) });
       const result = await response.json().catch(() => ({}));
       if (!response.ok || !result.success) throw new Error(result.message || "永久刪除失敗");
       const activityId = state.drawer?.startsWith("registrations:") ? state.drawer.split(":")[1] : "";
