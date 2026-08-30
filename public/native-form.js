@@ -886,7 +886,6 @@
 
   async function showCheckin(token) {
     renderLoading("讀取核銷資料...");
-    const operatorReady = loadLiff({ login: false });
     const response = await fetch(`${api}/api/native-checkin/verify?token=${encodeURIComponent(token)}`, { cache: "no-store" });
     const result = await response.json().catch(() => ({}));
     if (!response.ok || !result.success) return renderError(result.message || "核銷資料無效");
@@ -902,17 +901,24 @@
     };
     const attendeeName = pickFrom(answers, "memberName", "name", "姓名", "participantName", "displayName");
     const activityName = pickFrom(activity, "name", "activityName", "活動名稱", "title");
+    const activityTime = pickFrom(activity, "courseTime", "activityTime", "活動時間", "date");
     const alreadyCheckedIn = Boolean(row.checkedInAt);
+    const canCheckIn = row.canCheckIn !== false;
+    const waitingMessage = row.checkinReminder || (row.checkinOpensAtText ? `活動尚未開始，可於 ${row.checkinOpensAtText} 後核銷。` : "活動尚未開始，暫時不能核銷。");
+    const statusClass = alreadyCheckedIn ? "nf-ok" : "nf-alert";
+    const statusText = alreadyCheckedIn ? `已完成報到：${esc(row.checkedInAt)}` : canCheckIn ? "尚未報到" : esc(waitingMessage);
     renderShell(`<section class="nf-card"><div class="nf-body">
       <h1 class="nf-title">活動報到核銷</h1>
-      <div class="${alreadyCheckedIn ? "nf-ok" : "nf-alert"}">${alreadyCheckedIn ? `已完成報到：${esc(row.checkedInAt)}` : "尚未報到"}</div>
+      <div class="${statusClass}">${statusText}</div>
       <table class="nf-table"><tbody>
         <tr><th>人名</th><td>${esc(attendeeName)}</td></tr>
         <tr><th>活動名稱</th><td>${esc(activityName)}</td></tr>
+        <tr><th>活動時間</th><td>${esc(activityTime)}</td></tr>
       </tbody></table>
-      <div class="nf-actions"><button class="nf-btn primary" data-confirm-checkin ${alreadyCheckedIn ? "disabled" : "disabled"}>${alreadyCheckedIn ? "已完成報到" : "準備核銷..."}</button></div>
+      <div class="nf-actions"><button class="nf-btn primary" data-confirm-checkin disabled>${alreadyCheckedIn ? "已完成報到" : canCheckIn ? "準備核銷..." : "尚未開放核銷"}</button></div>
     </div></section>`);
-    if (alreadyCheckedIn) return;
+    if (alreadyCheckedIn || !canCheckIn) return;
+    const operatorReady = loadLiff({ login: false });
     const button = app.querySelector("[data-confirm-checkin]");
     let preparedOperatorLineUserId = "";
     const prepareOperator = async ({ login = false } = {}) => {

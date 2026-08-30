@@ -26,6 +26,7 @@ import {
   vendorCardKeyword
 } from "./line-keywords";
 import { calculateCatalogQuote, normalizeCatalogPricing, type CatalogQuote } from "./catalog-pricing";
+import { nativeCheckinAvailability } from "./native-checkin-window";
 
 type Env = { TDEA_DESIGN?: Fetcher; TDEA_INTERNAL_SECRET?: string; ADMIN_EMAILS?: string; ADMIN_LOGIN_USER?: string; ADMIN_LOGIN_PASSWORD?: string; ASSETS_BUCKET?: R2Bucket; LINE_CHANNEL_SECRET?: string; LINE_CHANNEL_ACCESS_TOKEN?: string; FORWARD_WEBHOOK_URL?: string; GOOGLE_FORMS_SCRIPT_URL?: string; GOOGLE_FORMS_SHARED_SECRET?: string; OPNFORM_API_BASE?: string; OPNFORM_PUBLIC_BASE?: string; OPNFORM_API_TOKEN?: string; OPNFORM_WORKSPACE_ID?: string; OPNFORM_WEBHOOK_SECRET?: string; WETW_POINT_API_KEY?: string; WETW_MEMBER_API_KEY?: string; WETW_TDEA_SHOP_ID?: string; WETW_TDEA_CLIENT_ID?: string; WETW_SHOP_ID?: string; WETW_POINT_TYPE?: string; TDEA_POINT_EXTERNAL_SYNC?: string; TDEA_ADMIN_LINE_USER_IDS?: string; AIWE_WP_USER?: string; AIWE_WP_APP_PASSWORD?: string; OPENAI_API_KEY?: string; OPENAI_MODEL?: string };
 type LineEvent = { type?: string; replyToken?: string; message?: { type?: string; id?: string; text?: string }; postback?: { data?: string }; source?: { type?: string; userId?: string; groupId?: string; roomId?: string } };
@@ -4135,7 +4136,8 @@ async function verifyNativeCheckin(request: Request, env: Env) {
   if (!entry || entry.checkinToken !== token) return json({ success: false, message: "核銷碼無效" }, 404);
   if (clean(entry.status || "active") === "cancelled") return json({ success: false, message: "此報名已取消，不能核銷" }, 409);
   if (!paymentIsSettled(entry)) return json({ success: false, message: "此報名尚未完成付款，不能核銷" }, 409);
-  return json({ success: true, data: publicRegistrationEntry(entry) });
+  const availability = nativeCheckinAvailability(entry.activity || {});
+  return json({ success: true, data: { ...publicRegistrationEntry(entry), ...availability, canCheckIn: Boolean(entry.checkedInAt) || availability.canCheckIn } });
 }
 
 async function confirmNativeCheckin(request: Request, env: Env) {
@@ -4152,6 +4154,10 @@ async function confirmNativeCheckin(request: Request, env: Env) {
   if (!entry || entry.checkinToken !== token) return json({ success: false, message: "核銷碼無效" }, 404);
   if (clean(entry.status || "active") === "cancelled") return json({ success: false, message: "此報名已取消，不能核銷" }, 409);
   if (!paymentIsSettled(entry)) return json({ success: false, message: "此報名尚未完成付款，不能核銷" }, 409);
+  const availability = nativeCheckinAvailability(entry.activity || {});
+  if (!entry.checkedInAt && !availability.canCheckIn) {
+    return json({ success: false, code: "CHECKIN_NOT_OPEN", message: availability.checkinReminder, data: availability }, 409);
+  }
   const firstCheckin = !entry.checkedInAt;
   if (firstCheckin) {
     entry.checkedInAt = new Date().toISOString();
