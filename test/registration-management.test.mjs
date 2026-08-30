@@ -29,3 +29,15 @@ test("取消資料可安全恢復並保留取消歷程", () => {
   assert.match(backend, /cancellationHistory/);
   assert.match(frontend, /data-restore-registration/);
 });
+
+test("活動核銷預覽優先攔截已取消報名", () => {
+  const start = backend.indexOf("async function verifyNativeCheckin");
+  const end = backend.indexOf("async function confirmNativeCheckin", start);
+  const verifyRoute = backend.slice(start, end);
+  const cancelledGuard = verifyRoute.indexOf('entry.status || "active"');
+  const paymentGuard = verifyRoute.indexOf("paymentIsSettled(entry)");
+  assert.ok(start > 0 && end > start);
+  assert.ok(cancelledGuard > 0);
+  assert.ok(cancelledGuard < paymentGuard);
+  assert.match(verifyRoute, /此報名已取消，不能核銷/);
+});

@@ -4133,6 +4133,7 @@ async function verifyNativeCheckin(request: Request, env: Env) {
   const registrationId = object ? await object.text() : "";
   const entry = await readNativeRegistration(env, registrationId);
   if (!entry || entry.checkinToken !== token) return json({ success: false, message: "核銷碼無效" }, 404);
+  if (clean(entry.status || "active") === "cancelled") return json({ success: false, message: "此報名已取消，不能核銷" }, 409);
   if (!paymentIsSettled(entry)) return json({ success: false, message: "此報名尚未完成付款，不能核銷" }, 409);
   return json({ success: true, data: publicRegistrationEntry(entry) });
 }
