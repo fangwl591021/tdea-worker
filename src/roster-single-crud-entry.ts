@@ -1,4 +1,5 @@
 import app from "./roster-contact-entry";
+import { resolveMemberIdentity } from "./member-identity-resolver";
 
 type Env = { ASSETS_BUCKET?: R2Bucket; [key: string]: unknown };
 type Row = Record<string, unknown>;
@@ -138,6 +139,33 @@ function internalRosterRequest(request: Request) {
   if (hostname === "tdea-roster.internal") return true;
   const upstreamWorker = clean(request.headers.get("cf-worker"), 240).toLowerCase();
   return upstreamWorker === "fangwl591021.workers.dev" || upstreamWorker.endsWith(".fangwl591021.workers.dev");
+}
+
+function internalMemberIdentityRequest(request: Request) {
+  return new URL(request.url).hostname.toLowerCase() === "tdea-member.internal";
+}
+
+async function handleMemberIdentityResolve(request: Request, env: Env) {
+  if (!internalMemberIdentityRequest(request)) return json({ success: false, message: "Not found" }, 404);
+  const input = await request.json().catch(() => ({})) as Row;
+  const lineUserId = clean(input.lineUserId, 256);
+  if (!/^U[0-9a-f]{32}$/i.test(lineUserId)) {
+    return json({ success: false, code: "INVALID_LINE_USER_ID", message: "LINE UID 格式錯誤" }, 400);
+  }
+
+  const result = resolveMemberIdentity(await readState(env), lineUserId);
+  if (result.status === "not_found") {
+    return json({ success: false, code: "MEMBER_NOT_FOUND", message: "查無會員資料" }, 404);
+  }
+  if (result.status === "conflict") {
+    return json({
+      success: false,
+      code: "MEMBER_IDENTITY_CONFLICT",
+      message: "此 LINE UID 對應到多筆不同會員資料，請由管理員確認",
+      candidates: result.candidates
+    }, 409);
+  }
+  return json({ success: true, identity: result.identity });
 }
 
 function lookupMatch(row: Row, type: "association" | "vendor") {
@@ -343,6 +371,10 @@ async function handleMemberCrud(request: Request, env: Env, ctx: ExecutionContex
 export default {
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
     const url = new URL(request.url);
+    if (request.method === "POST" && url.pathname === "/api/internal/v1/member-identity/resolve") {
+      try { return await handleMemberIdentityResolve(request, env); }
+      catch (error) { return json({ success: false, message: error instanceof Error ? error.message : String(error) }, 500); }
+    }
     if (request.method === "POST" && url.pathname === "/api/internal/tdea-design/member-number-lookup") {
       try { return await handleMemberNumberLookup(request, env); }
       catch (error) { return json({ success: false, message: error instanceof Error ? error.message : String(error) }, 500); }
