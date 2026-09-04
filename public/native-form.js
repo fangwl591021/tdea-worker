@@ -371,9 +371,13 @@
   }
 
   async function submitLoginRegistration(id, input) {
+    const idToken = window.liff?.getIDToken?.() || "";
     const submitResponse = await fetch(`${api}/api/native-forms/${encodeURIComponent(id)}/login-register`, {
       method: "POST",
-      headers: { "content-type": "application/json" },
+      headers: {
+        "content-type": "application/json",
+        ...(idToken ? { authorization: `Bearer ${idToken}` } : {})
+      },
       body: JSON.stringify(input)
     });
     const submitResult = await submitResponse.json().catch(() => ({}));
@@ -524,6 +528,7 @@
       "company", "companyname", "unit", "公司", "單位", "公司單位",
       "memberno", "membernumber", "rostermemberno", "會員編號",
       "membertype", "role", "身分", "身份",
+      "gender", "sex", "性別",
       "lineuserid", "lineuid", "lineid", "uid"
     ].some((token) => text.includes(token));
   }
@@ -547,7 +552,12 @@
     const catalogHtml = catalogEnabled ? window.TDEACatalogPricing.registrationHtml(catalogPricing) : "";
     const image = activity.posterUrl || activity.imageUrl || "";
 
-    const memberResponse = await fetch(`${api}/api/native-forms/${encodeURIComponent(id)}/login-member?lineUserId=${encodeURIComponent(uid)}`, { cache: "no-store" });
+    const idToken = trim(window.liff?.getIDToken?.());
+    if (!idToken) return renderError("無法驗證 LINE 登入，請從 LINE 重新開啟活動報名頁。");
+    const memberResponse = await fetch(`${api}/api/native-forms/${encodeURIComponent(id)}/login-member?lineUserId=${encodeURIComponent(uid)}`, {
+      cache: "no-store",
+      headers: { authorization: `Bearer ${idToken}` }
+    });
     const memberResult = await memberResponse.json().catch(() => ({}));
     if (!memberResponse.ok || !memberResult.success) {
       if (memberResult.code === "registration_required") {
@@ -605,7 +615,7 @@
       const sessionId = registerForm.elements.sessionId?.value || sessions[0]?.id || "default";
       const submitResponse = await fetch(`${api}/api/native-forms/${encodeURIComponent(id)}`, {
         method: "POST",
-        headers: { "content-type": "application/json" },
+        headers: { "content-type": "application/json", authorization: `Bearer ${idToken}` },
         body: JSON.stringify({ sessionId, lineUserId: uid, answers, ...(catalogEnabled ? {catalogSelections} : {}) })
       });
       const submitResult = await submitResponse.json().catch(() => ({}));

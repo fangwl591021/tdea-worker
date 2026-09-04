@@ -27,6 +27,7 @@ import {
 } from "./line-keywords";
 import { calculateCatalogQuote, normalizeCatalogPricing, type CatalogQuote } from "./catalog-pricing";
 import { nativeCheckinAvailability } from "./native-checkin-window";
+import { verifyLineIdToken } from "./line-login-verify";
 
 type Env = { TDEA_DESIGN?: Fetcher; TDEA_INTERNAL_SECRET?: string; ADMIN_EMAILS?: string; ADMIN_LOGIN_USER?: string; ADMIN_LOGIN_PASSWORD?: string; ASSETS_BUCKET?: R2Bucket; LINE_CHANNEL_SECRET?: string; LINE_CHANNEL_ACCESS_TOKEN?: string; FORWARD_WEBHOOK_URL?: string; GOOGLE_FORMS_SCRIPT_URL?: string; GOOGLE_FORMS_SHARED_SECRET?: string; OPNFORM_API_BASE?: string; OPNFORM_PUBLIC_BASE?: string; OPNFORM_API_TOKEN?: string; OPNFORM_WORKSPACE_ID?: string; OPNFORM_WEBHOOK_SECRET?: string; WETW_POINT_API_KEY?: string; WETW_MEMBER_API_KEY?: string; WETW_TDEA_SHOP_ID?: string; WETW_TDEA_CLIENT_ID?: string; WETW_SHOP_ID?: string; WETW_POINT_TYPE?: string; TDEA_POINT_EXTERNAL_SYNC?: string; TDEA_ADMIN_LINE_USER_IDS?: string; AIWE_WP_USER?: string; AIWE_WP_APP_PASSWORD?: string; OPENAI_API_KEY?: string; OPENAI_MODEL?: string };
 type LineEvent = { type?: string; replyToken?: string; message?: { type?: string; id?: string; text?: string }; postback?: { data?: string }; source?: { type?: string; userId?: string; groupId?: string; roomId?: string } };
@@ -2312,7 +2313,32 @@ function nativeLoginEnabled(form: NativeForm) {
 }
 
 function nativeMemberAutoFieldKeys() {
-  return new Set(["line_user_id", "lineuserid", "lineid", "line_id", "lineuid", "line_uid", "uid", "name", "phone", "mobile", "email", "company", "memberno", "gender", "ismember", "membertype", "participantunit"]);
+  return new Set(["lineuserid", "lineid", "lineuid", "uid", "name", "fullname", "membername", "phone", "mobile", "email", "company", "companyname", "unit", "memberno", "membernumber", "rostermemberno", "gender", "sex", "ismember", "membertype", "role", "participantunit", "qualification"]);
+}
+
+function isNativeMemberAutoField(field: NativeField) {
+  const normalize = (value: unknown) => clean(value).toLowerCase().replace(/[\s_\/-]+/g, "");
+  const key = normalize(field.key);
+  const label = normalize(field.label);
+  return nativeMemberAutoFieldKeys().has(key) || new Set([
+    "lineid", "lineuid", "lineuserid", "姓名", "全名", "會員姓名",
+    "手機", "電話", "行動電話", "email", "電子郵件", "信箱",
+    "公司", "單位", "公司單位", "會員編號", "性別", "是否為會員",
+    "會員類型", "身分", "身份", "資格"
+  ]).has(label);
+}
+
+async function verifiedNativeLineUserId(request: Request, claimedLineUserId = "") {
+  const authorization = String(request.headers.get("authorization") || "").trim().slice(0, 9000);
+  const idToken = authorization.toLowerCase().startsWith("bearer ")
+    ? authorization.slice(7).trim()
+    : "";
+  const verified = await verifyLineIdToken({ LINE_LOGIN_CHANNEL_ID: "2005868456" }, idToken);
+  const claimed = clean(claimedLineUserId).toLowerCase();
+  if (claimed && claimed !== verified.lineUserId.toLowerCase()) {
+    throw new Error("LINE 登入身分不一致，請重新開啟活動報名頁");
+  }
+  return verified.lineUserId;
 }
 
 async function resolveLineLoginMember(env: Env, lineUserId: string): Promise<LineLoginMember | null> {
@@ -3457,8 +3483,13 @@ async function getNativeLoginMember(request: Request, env: Env, formId: string) 
   const form = await readNativeForm(env, formId);
   if (!form) return json({ success: false, message: "找不到報名表" }, 404);
   const url = new URL(request.url);
-  const lineUserId = firstClean(url.searchParams.get("lineUserId"), url.searchParams.get("uid"), url.searchParams.get("LINE_user_id"));
-  if (!lineUserId) return json({ success: false, message: "缺少 LINE UID" }, 400);
+  const claimedLineUserId = firstClean(url.searchParams.get("lineUserId"), url.searchParams.get("uid"), url.searchParams.get("LINE_user_id"));
+  let lineUserId = "";
+  try {
+    lineUserId = await verifiedNativeLineUserId(request, claimedLineUserId);
+  } catch (error) {
+    return json({ success: false, code: "line_login_required", message: error instanceof Error ? error.message : "LINE 登入驗證失敗" }, 401);
+  }
   const resolved = await resolveTdeaRegisteredIdentity(env, lineUserId);
   if (resolved.success !== true) return json({ success: false, code: "member_service_unavailable", message: clean(resolved.message) || "會員服務暫時無法使用" }, 502);
   if (resolved.registered !== true || !resolved.identity) {
@@ -3486,10 +3517,8 @@ function validateNativeLoginAnswers(form: NativeForm, answers: Record<string, un
   const errors: string[] = [];
   const session = form.sessions.find((item) => item.id === sessionId);
   if (!session) errors.push("請選擇有效場次");
-  const autoKeys = nativeMemberAutoFieldKeys();
   for (const field of form.fields) {
-    const key = clean(field.key).toLowerCase();
-    if (autoKeys.has(key)) continue;
+    if (isNativeMemberAutoField(field)) continue;
     const value = answers[field.key];
     const hasValue = Array.isArray(value) ? value.length > 0 : clean(value) !== "";
     if (field.required && !hasValue) errors.push(`${field.label} 為必填`);
@@ -3512,8 +3541,13 @@ async function submitNativeForm(request: Request, env: Env, formId: string) {
   const input = await request.json().catch(() => ({})) as Record<string, unknown>;
   const rawAnswers = asRecord(input.answers);
   const answers = normalizeAnswersRecord(rawAnswers);
-  const lineUserId = firstClean(input.lineUserId, rawAnswers.LINE_user_id, rawAnswers.lineUserId, rawAnswers.line_user_id, rawAnswers.uid, rawAnswers.UID);
-  if (!lineUserId) return json({ success: false, code: "line_login_required", message: "請先使用 LINE 登入後再報名活動。" }, 401);
+  const claimedLineUserId = firstClean(input.lineUserId, rawAnswers.LINE_user_id, rawAnswers.lineUserId, rawAnswers.line_user_id, rawAnswers.uid, rawAnswers.UID);
+  let lineUserId = "";
+  try {
+    lineUserId = await verifiedNativeLineUserId(request, claimedLineUserId);
+  } catch (error) {
+    return json({ success: false, code: "line_login_required", message: error instanceof Error ? error.message : "LINE 登入驗證失敗" }, 401);
+  }
   const __memberStart = Date.now();
   const resolved = await resolveTdeaRegisteredIdentity(env, lineUserId);
   console.log("REG_PERF", "member_identity", Date.now() - __memberStart, "total", Date.now() - __perfStart);
@@ -3666,8 +3700,13 @@ async function submitNativeLoginRegistration(request: Request, env: Env, formId:
   const form = await readNativeForm(env, formId);
   if (!form) return json({ success: false, message: "找不到報名表" }, 404);
   const input = await request.json().catch(() => ({})) as Record<string, unknown>;
-  const lineUserId = firstClean(input.lineUserId, input.uid, input.LINE_user_id);
-  if (!lineUserId) return json({ success: false, message: "請透過 LINE Login 取得身份" }, 400);
+  const claimedLineUserId = firstClean(input.lineUserId, input.uid, input.LINE_user_id);
+  let lineUserId = "";
+  try {
+    lineUserId = await verifiedNativeLineUserId(request, claimedLineUserId);
+  } catch (error) {
+    return json({ success: false, code: "line_login_required", message: error instanceof Error ? error.message : "LINE 登入驗證失敗" }, 401);
+  }
   const sessionId = clean(input.sessionId || "default");
   const session = form.sessions.find((item) => item.id === sessionId);
   if (!session) return json({ success: false, message: "請選擇有效場次" }, 400);

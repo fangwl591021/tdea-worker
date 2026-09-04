@@ -54,6 +54,10 @@
   }
 
   async function ensureVisible() {
+    if (document.querySelector('[data-login-member-preview]')) {
+      document.querySelector('[data-custom-line-id-fix="1"]')?.remove();
+      return;
+    }
     const field = await loadField();
     if (!field) return;
     const form = document.querySelector('form.nf-form, .nf-form form, form[data-native-form]');
@@ -91,7 +95,7 @@
     try {
       const url = typeof resource === 'string' ? resource : resource?.url || '';
       const method = String(options?.method || (typeof resource !== 'string' ? resource?.method : '') || 'GET').toUpperCase();
-      if (customLineField && method === 'POST' && url.includes(`/api/native-forms/${encodeURIComponent(formId)}`) && options?.body && typeof options.body === 'string') {
+      if (customLineField && !document.querySelector('[data-login-member-preview]') && method === 'POST' && url.includes(`/api/native-forms/${encodeURIComponent(formId)}`) && options?.body && typeof options.body === 'string') {
         const payload = JSON.parse(options.body);
         if (payload && typeof payload === 'object') {
           payload.answers = payload.answers && typeof payload.answers === 'object' ? payload.answers : {};
